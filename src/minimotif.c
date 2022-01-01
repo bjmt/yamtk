@@ -118,7 +118,10 @@
     for (int Xi = 0; Xi < LEN; Xi++) ARR[Xi] = 0;               \
   } while (0)
 
-void usage() {
+#define MIN(a,b) (((a)<(b))?(a):(b))
+#define MAX(a,b) (((a)>(b))?(a):(b))
+
+void usage(void) {
   printf(
     "minimotif v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay              \n"
     "                                                                              \n"
@@ -152,7 +155,7 @@ void usage() {
     " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
     "            time. Reading sequences from stdin is disabled. If scanning many  \n"
     "            smaller sequences with large numbers of motifs, the impact on     \n"
-    "            performance will be very significant.                             \n"
+    "            performance may be significant. Cannot be used without -m or -1.  \n"
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
     "            messages printed by -w. Note that it's only useful if there is    \n"
     "            more than one input motif.                                        \n"
@@ -307,6 +310,7 @@ motif_info_t motif_info = {
 
 typedef struct seq_info_t {
   int     n;
+  int     line_count;
   int     total_bases;
   int     unknowns;
   double  gc_pct;
@@ -314,6 +318,7 @@ typedef struct seq_info_t {
 
 seq_info_t seq_info = {
   .n = 0,
+  .line_count = -1,
   .total_bases = 0,
   .unknowns = 0,
   .gc_pct = 0.0
@@ -327,7 +332,7 @@ int              *seq_line_nums;
 void free_seqs(void) {
   for (int i = 0; i < seq_info.n; i++) {
     free(seq_names[i]);
-    free(seqs[i]);
+    if (!args.low_mem) free(seqs[i]);
   }
   free(seq_names);
   free(seq_sizes);
@@ -635,7 +640,7 @@ int detect_motif_fmt(void) {
   return file_fmt;
 }
 
-int add_motif() {
+int add_motif(void) {
   motif_t **tmp_ptr = realloc(motifs, sizeof(*motifs) * (motif_info.n + 1));
   if (tmp_ptr == NULL) {
     fprintf(stderr, "Error: Failed to allocate memory for motifs.");
@@ -886,6 +891,7 @@ void parse_meme_name(const char *line, const int motif_i) {
     motifs[motif_i]->name[j] = line[i];
     j++; i++;
   }
+  motifs[motif_i]->name[j] = '\0';
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
 }
 
@@ -1039,6 +1045,7 @@ void parse_homer_name(const char *line, const int motif_i) {
     motifs[motif_i]->name[j] = line[k];
     j++;
   }
+  motifs[motif_i]->name[j] = '\0';
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
 }
 
@@ -1111,7 +1118,7 @@ void fill_pwm_rc(motif_t *motif) {
   }
 }
 
-void complete_motifs() {
+void complete_motifs(void) {
   for (int i = 0; i < motif_info.n; i++) {
     motifs[i]->min = get_pwm_min(motifs[i]);
     motifs[i]->max = get_pwm_max(motifs[i]);
@@ -1358,7 +1365,7 @@ void read_jaspar(void) {
   }
 }
 
-void load_motifs() {
+void load_motifs(void) {
   switch (detect_motif_fmt()) {
     case FMT_MEME:
       read_meme();
@@ -1395,7 +1402,7 @@ void count_bases_single(const unsigned char *seq, const int len) {
   for (int i = 0; i < len; i++) char_counts[seq[i]]++;
 }
 
-static inline int standard_base_count() {
+static inline int standard_base_count(void) {
   return
     char_counts['A'] + char_counts['a'] +
     char_counts['C'] + char_counts['c'] +
@@ -1411,7 +1418,40 @@ double calc_gc(void) {
   return gc;
 }
 
-void load_seqs() {
+int load_next_seq(const int seq_i, int line_num) {
+  int line_len = 0, tmp_count = 0, j = 0, last_line;
+  char *line = NULL;
+  size_t len = 0;
+  ssize_t read;
+  if (seq_i + 1 == seq_info.n) {
+    last_line = seq_info.line_count + 1;
+  } else {
+    last_line = seq_line_nums[seq_i + 1];
+  }
+  while((read = getline(&line, &len, files.s)) != -1) {
+    line_num++;
+    if (line_num == last_line) break;
+    if (!count_nonempty_chars(line)) continue;
+    if (line[read - 2] == '\r') {
+      line_len = read - 2;
+    } else if (line[read - 1] == '\n') {
+      line_len = read - 1;
+    } else {
+      line_len = read;
+    }
+    j = 0;
+    for (int i = 0; i < line_len; i++) {
+      if (line[i] != ' ') {
+        seqs[0][j + tmp_count] = line[i]; j++;
+      }
+    }
+    tmp_count += j;
+  }
+  free(line);
+  return line_num;
+}
+
+int peak_through_seqs(void) {
   int name_loaded = 0, line_len = 0, seq_i = -1, line_num = 0, line_len_no_spaces = 0;
   char *line = NULL;
   size_t len = 0;
@@ -1425,6 +1465,125 @@ void load_seqs() {
     } else if (line[read - 1] == '\n') {
       line[read - 1] = '\0';
       line_len = read - 1;
+    } else {
+      line_len = read;
+    }
+    if (!line_len) continue;
+    if (line[0] == '>') {
+      seq_i++;
+      char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * (1 + seq_i));
+      if (tmp_ptr1 == NULL) {
+        free(line);
+        badexit("Error: Failed to allocate memory for sequence names.");
+      } else {
+        seq_names = tmp_ptr1;
+      }
+      int *tmp_ptr3 = realloc(seq_sizes, sizeof(*seq_sizes) * (1 + seq_i));
+      if (tmp_ptr3 == NULL) {
+        free(line);
+        badexit("Error: Failed to allocate memory for sequence sizes.");
+      } else {
+        seq_sizes = tmp_ptr3;
+      }
+      seq_sizes[seq_i] = 0;
+      int *tmp_ptr5 = realloc(seq_line_nums, sizeof(*seq_line_nums) * (1 + seq_i));
+      if (tmp_ptr5 == NULL) {
+        free(line);
+        badexit("Error: Failed to allocate memory for sequence line numbers.");
+      } else {
+        seq_line_nums = tmp_ptr5;
+      }
+      seq_line_nums[seq_i] = line_num;
+      seq_names[seq_i] = malloc(sizeof(**seq_names) * SEQ_NAME_MAX_CHAR);
+      if (seq_names[seq_i] == NULL) {
+        free(line);
+        badexit("Error: Failed to allocate memory for sequence name.");
+      }
+      ERASE_ARRAY(seq_names[seq_i], SEQ_NAME_MAX_CHAR);
+      for (int i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
+        if (line[i + 1] == '\0') break;
+        seq_names[seq_i][i] = line[i + 1];
+      }
+      name_loaded = 1;
+      seq_sizes[seq_i] = 0;
+    } else if (name_loaded) {
+      line_len_no_spaces = 0;
+      for (int i = 0; i < line_len; i++) {
+        if (line[i] != ' ') {
+          line_len_no_spaces++;
+          char_counts[(unsigned char) line[i]]++;
+        }
+      }
+      seq_sizes[seq_i] += line_len_no_spaces;
+    }
+  }
+  seq_info.line_count = line_num;
+  free(line);
+  rewind(files.s);
+  if (seq_i == -1) {
+    badexit("Error: Sequences don't appear to be fasta-formatted.");
+  }
+  seq_info.n = seq_i + 1;
+  int seq_len_total = 0;
+  for (int i = 0; i < seq_info.n; i++) seq_len_total += seq_sizes[i];
+  if (!seq_len_total) {
+    badexit("Error: Only encountered empty sequences.");
+  }
+  seq_info.total_bases = seq_len_total;
+  seq_info.unknowns = seq_len_total - standard_base_count();
+  seq_info.gc_pct = calc_gc() * 100.0;
+  double unknowns_pct = 100.0 * seq_info.unknowns / seq_len_total;
+  if (seq_info.unknowns == seq_len_total) {
+    badexit("Error: Failed to read any standard DNA/RNA bases.");
+  } else if (unknowns_pct >= 90.0) {
+    fprintf(stderr, "!!! Warning: Non-standard base count is extremely high!!! (%.2f%%)\n",
+      unknowns_pct);
+  } else if (unknowns_pct >= 50.0 && args.v) {
+    fprintf(stderr, "Warning: Non-standard base count is very high! (%.2f%%)\n",
+      unknowns_pct);
+  } else if (unknowns_pct >= 10.0 && args.v) {
+    fprintf(stderr, "Warning: Non-standard base count seems high. (%.2f%%)\n",
+      unknowns_pct);
+  }
+  if (char_counts[32] && args.v) {
+    fprintf(stderr,
+      "Internal warning: Found spaces (%'d) in loaded sequences, alert maintainer.\n",
+      char_counts[32]);
+  }
+  int max_seq_size = 0;
+  for (int i = 0; i < seq_info.n; i++) {
+    max_seq_size = MAX(max_seq_size, seq_sizes[i]);
+  }
+  if (args.v) {
+    fprintf(stderr, "Found %'d sequence(s).\n    size=%'d    GC=%.2f%%\n",
+      seq_info.n, seq_len_total, seq_info.gc_pct);
+    if (seq_info.unknowns) {
+      fprintf(stderr, "Found %'d (%.2f%%) non-standard bases.\n",
+        seq_info.unknowns, unknowns_pct);
+    }
+    fprintf(stderr, "Approx. max memory usage by sequence(s): %'.2f MB\n",
+      b2mb(sizeof(unsigned char) * max_seq_size + sizeof(int) * seq_info.n +
+        sizeof(char) * SEQ_NAME_MAX_CHAR * seq_info.n));
+  }
+  return max_seq_size;
+}
+
+void load_seqs(void) {
+  int name_loaded = 0, line_len = 0, seq_i = -1, line_num = 0, line_len_no_spaces = 0;
+  char *line = NULL;
+  size_t len = 0;
+  ssize_t read;
+  while ((read = getline(&line, &len, files.s)) != -1) {
+    line_num++;
+    if (!count_nonempty_chars(line)) continue;
+    if (line[read - 2] == '\r') {
+      line[read - 2] = '\0';
+      line_len = read - 2;
+    } else if (line[read - 1] == '\n') {
+      line[read - 1] = '\0';
+      line_len = read - 1;
+    } else {
+      line_len = read;
     }
     if (!line_len) continue;
     if (line[0] == '>') {
@@ -1462,7 +1621,7 @@ void load_seqs() {
       seq_names[seq_i] = malloc(sizeof(**seq_names) * SEQ_NAME_MAX_CHAR);
       if (seq_names[seq_i] == NULL) {
         free(line);
-        badexit("Error: Failed to allocate memory for sequence names.");
+        badexit("Error: Failed to allocate memory for sequence name.");
       }
       ERASE_ARRAY(seq_names[seq_i], SEQ_NAME_MAX_CHAR);
       for (int i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
@@ -1498,6 +1657,7 @@ void load_seqs() {
       seq_sizes[seq_i] += line_len_no_spaces;
     }
   }
+  seq_info.line_count = line_num;
   free(line);
   if (seq_i == -1) {
     badexit("Error: Sequences don't appear to be fasta-formatted.");
@@ -1590,7 +1750,7 @@ int dedup_char_array(char *arr, const int arr_max_len, const int L, const int N)
   return success;
 }
 
-void find_motif_dupes() {
+void find_motif_dupes(void) {
   if (motif_info.n == 1) return;
   int *is_dup = malloc(sizeof(int) * motif_info.n);
   if (is_dup == NULL) {
@@ -1644,7 +1804,7 @@ void find_motif_dupes() {
   }
 }
 
-void find_seq_dupes() {
+void find_seq_dupes(void) {
   if (seq_info.n == 1) return;
   int *is_dup = malloc(sizeof(int) * seq_info.n);
   ERASE_ARRAY(is_dup, seq_info.n);
@@ -1709,14 +1869,14 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
   }
 }
 
-void score_seq(const int motif_i, const int seq_i) {
+void score_seq(const int motif_i, const int seq_i, const int seq_loc) {
   if (seq_sizes[seq_i] < motifs[motif_i]->size ||
       motifs[motif_i]->threshold == INT_MAX) {
     return;
   }
   int score = INT_MIN;
   for (int i = 0; i <= seq_sizes[seq_i] - motifs[motif_i]->size; i++) {
-    score_subseq(motifs[motif_i], seqs[seq_i], i, &score); 
+    score_subseq(motifs[motif_i], seqs[seq_loc], i, &score); 
     if (score >= motifs[motif_i]->threshold) {
       fprintf(files.o, "%s\t%i\t%i\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
         seq_names[seq_i],
@@ -1727,12 +1887,12 @@ void score_seq(const int motif_i, const int seq_i) {
         score / PWM_INT_MULTIPLIER,
         100.0 * score / motifs[motif_i]->max_score,
         motifs[motif_i]->size,
-        seqs[seq_i] + i);
+        seqs[seq_loc] + i);
     }
   }
   if (args.scan_rc) {
     for (int i = 0; i <= seq_sizes[seq_i] - motifs[motif_i]->size; i++) {
-      score_subseq_rc(motifs[motif_i], seqs[seq_i], i, &score); 
+      score_subseq_rc(motifs[motif_i], seqs[seq_loc], i, &score); 
       if (score >= motifs[motif_i]->threshold) {
         fprintf(files.o, "%s\t%i\t%i\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_names[seq_i],
@@ -1743,7 +1903,7 @@ void score_seq(const int motif_i, const int seq_i) {
           score / PWM_INT_MULTIPLIER,
           100.0 * score / motifs[motif_i]->max_score,
           motifs[motif_i]->size,
-          seqs[seq_i] + i);
+          seqs[seq_loc] + i);
       }
     }
   }
@@ -1849,6 +2009,7 @@ int main(int argc, char **argv) {
   char *user_bkg, *consensus;
   int has_motifs = 0, has_seqs = 0, has_consensus = 0;
   int use_stdout = 1, use_stdin = 0;
+  int max_seq_size;
 
   int opt;
 
@@ -1967,6 +2128,10 @@ int main(int argc, char **argv) {
     has_motifs = 1;
   }
 
+  if (!has_motifs && args.low_mem) {
+    badexit("Error: The -l flag can only be used for scanning.");
+  }
+
   if (has_motifs) {
     if (!has_consensus) {
       load_motifs();
@@ -1992,9 +2157,14 @@ int main(int argc, char **argv) {
   if (has_seqs) {
     time_t time1 = time(NULL);
     if (args.v) {
-      fprintf(stderr, "Reading sequences ...\n");
+      if (args.low_mem) fprintf(stderr, "Peaking through sequences ...\n");
+      else fprintf(stderr, "Reading sequences ...\n");
     }
-    load_seqs();
+    if (args.low_mem) {
+      max_seq_size = peak_through_seqs();
+    } else {
+      load_seqs();
+    }
     if (args.trim_names) trim_seq_names();
     find_seq_dupes();
     time_t time2 = time(NULL);
@@ -2030,6 +2200,12 @@ int main(int argc, char **argv) {
     fprintf(files.o, 
       "##seqname\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
 
+    if (args.low_mem) {
+      seqs[0] = malloc(sizeof(**seqs) * max_seq_size);
+      if (seqs[0] == NULL) {
+        badexit("Error: Failed to allocate memory for sequence.");
+      }
+    }
     if (args.v) fprintf(stderr, "Scanning ...\n");
     time_t time1 = time(NULL);
     for (int i = 0; i < motif_info.n; i++) {
@@ -2041,15 +2217,28 @@ int main(int argc, char **argv) {
       fill_cdf(motifs[i]);
       set_threshold(motifs[i]);
       if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
-      for (int j = 0; j < seq_info.n; j++) {
-        if (!args.progress && args.w) {
-          fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
+      if (args.low_mem) {
+        int line_num = 0;
+        for (int j = 0; j < seq_info.n; j++) {
+          if (!args.progress && args.w) {
+            fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
+          }
+          line_num = load_next_seq(j, line_num);
+          score_seq(i, j, 0);
         }
-        score_seq(i, j);
+        rewind(files.s);
+      } else {
+        for (int j = 0; j < seq_info.n; j++) {
+          if (!args.progress && args.w) {
+            fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
+          }
+          score_seq(i, j, j);
+        }
       }
       free(motifs[i]->cdf);
       motifs[i]->cdf_size = 0;
     }
+    if (args.low_mem) free(seqs[0]);
     if (args.progress) fprintf(stderr, "\n");
     time_t time2 = time(NULL);
     time_t time3 = difftime(time2, time1);
