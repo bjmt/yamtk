@@ -148,7 +148,11 @@ void usage() {
     " -n <int>   Number of motif sites used in PWM generation. Default: %d.         \n"
     " -d         Deduplicate motif/sequence names. Default: abort. Duplicates will \n"
     "            have the motif/sequence and line numbers appended.                \n"
-    " -r         Trim motif (JASPAR only) and sequence names to the first word.   \n"
+    " -r         Trim motif (JASPAR only) and sequence names to the first word.    \n"
+    " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
+    "            time. Reading sequences from stdin is disabled. If scanning many  \n"
+    "            smaller sequences with large numbers of motifs, the impact on     \n"
+    "            performance will be very significant.                             \n"
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
     "            messages printed by -w. Note that it's only useful if there is    \n"
     "            more than one input motif.                                        \n"
@@ -254,6 +258,7 @@ typedef struct args_t {
   int      trim_names;
   int      use_user_bkg;
   int      progress;
+  int      low_mem;
   int      v;
   int      w;
 } args_t;
@@ -268,6 +273,7 @@ args_t args = {
   .trim_names      = 0,
   .use_user_bkg    = 0,
   .progress        = 0,
+  .low_mem         = 0,
   .v               = 0,
   .w               = 0
 };
@@ -1288,7 +1294,10 @@ void pcm_to_pwm(motif_t *motif) {
   for (int j = 0; j < motif->size; j++) {
     for (int i = 0; i < 4; i++) {
       set_score(motif, lets[i], j,
-          calc_score((double) get_score_i(motif, i, j) / (double) nsites, args.bkg[i]));
+          calc_score(
+            (args.pseudocount / 4.0 + ((double) get_score_i(motif, i, j))) /
+            (args.pseudocount + ((double) nsites)),
+            args.bkg[i]));
     }
   }
 }
@@ -1838,7 +1847,8 @@ int main(int argc, char **argv) {
   }
 
   char *user_bkg, *consensus;
-  int use_stdout = 1, has_motifs = 0, has_seqs = 0, has_consensus = 0;
+  int has_motifs = 0, has_seqs = 0, has_consensus = 0;
+  int use_stdout = 1, use_stdin = 0;
 
   int opt;
 
@@ -1867,6 +1877,7 @@ int main(int argc, char **argv) {
         has_seqs = 1;
         if (optarg[0] == '-' && optarg[1] == '\0') {
           files.s = stdin;
+          use_stdin = 1;
         } else {
           files.s = fopen(optarg, "r");
           if (files.s == NULL) {
@@ -1916,6 +1927,9 @@ int main(int argc, char **argv) {
       case 'g':
         args.progress = 1;
         break;
+      case 'l':
+        args.low_mem = 1;
+        break;
       case 'w':
         args.w = 1;
       case 'v':
@@ -1932,6 +1946,10 @@ int main(int argc, char **argv) {
   if (use_stdout) {
     files.o = stdout;
     files.o_open = 1;
+  }
+
+  if (use_stdin && args.low_mem) {
+    badexit("Error: Sequences cannot be read from stdin with -l.");
   }
 
   if (!has_seqs && !has_motifs && !has_consensus) {
@@ -1956,7 +1974,8 @@ int main(int argc, char **argv) {
     }
     if (!has_seqs) {
       if (args.v) {
-        fprintf(stderr, "No sequences provided, parsing + printing motifs before exit.\n");
+        fprintf(stderr,
+          "No sequences provided, parsing + printing motifs before exit.\n");
       }
       for (int i = 0; i < motif_info.n; i++) {
         fill_cdf(motifs[i]);
@@ -2005,9 +2024,9 @@ int main(int argc, char **argv) {
     int motif_size = 0;
     for (int i = 0; i < motif_info.n; i++) motif_size += motifs[i]->size;
     fprintf(files.o,
-        "##MotifCount=%d MotifSize=%d SeqCount=%d SeqSize=%d GC=%.2f%% Ns=%d\n",
-        motif_info.n, motif_size, seq_info.n, seq_info.total_bases, seq_info.gc_pct,
-        seq_info.unknowns);
+      "##MotifCount=%d MotifSize=%d SeqCount=%d SeqSize=%d GC=%.2f%% Ns=%d\n",
+      motif_info.n, motif_size, seq_info.n, seq_info.total_bases, seq_info.gc_pct,
+      seq_info.unknowns);
     fprintf(files.o, 
       "##seqname\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
 

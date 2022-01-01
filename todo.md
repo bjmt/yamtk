@@ -13,20 +13,16 @@
 - No overlaps (as a separate program)
 
 
-First sort results with:
-
-```
-(head -n3 res.txt && tail -n+4 res.txt | LC_ALL=C sort -t$'\t' -r -k7,7n) > res.sorted.txt
-```
-
-Alternatively, don't sort and instead use intervals and a Pval table:
-
 ```
 for (int i = PvalLen - 1; i > -1; i--) {
   Qval[i] = max(min(Pval[i] * nPossibleHits / rank, Qval[i+1]), 0.0)
-  rank += PvalCount[i];
+  // rank += PvalCount[i]; // --> Maybe do this before hand? Just a simple cumsum.
+                           // Though maybe this is necessary to keep tables separate
+                           // per motif.
 }
 ```
+
+Should there be one Pval table per motif? Or a single one?
 
 Creating a Pval table:
 
@@ -36,3 +32,6 @@ Table size: ~300 * 1000 = 300,000
 
             300,000 x 8 bytes = 2,400,000 => 2.4 megabytes
 
+            
+           ~300 * 100 = 30,000
+           30,000 x 8 bytes = 240,000 => 0.23 megabytes
