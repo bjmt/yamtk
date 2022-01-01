@@ -1,0 +1,38 @@
+## Todo
+
+- Low memory mode: only read in a single sequence at a time
+
+- multithreading
+
+- Qvalues (as a separate program)
+  + BH pvalues: `min(pvals / ((rank(pvals) / nPossibleHits) * 100), 1)`
+  + Bonferroni pvalues: `min(pvals * nPossibleHits, 1)`
+  + Do a first pass of file to create a Qval table, then read through
+    a second time to re-generate results with added Q-values
+
+- No overlaps (as a separate program)
+
+
+First sort results with:
+
+```
+(head -n3 res.txt && tail -n+4 res.txt | LC_ALL=C sort -t$'\t' -r -k7,7n) > res.sorted.txt
+```
+
+Alternatively, don't sort and instead use intervals and a Pval table:
+
+```
+for (int i = PvalLen - 1; i > -1; i--) {
+  Qval[i] = max(min(Pval[i] * nPossibleHits / rank, Qval[i+1]), 0.0)
+  rank += PvalCount[i];
+}
+```
+
+Creating a Pval table:
+
+  `PvalCount[round(abs(log10(pvalue)) * 1000)]++;`
+
+Table size: ~300 * 1000 = 300,000
+
+            300,000 x 8 bytes = 2,400,000 => 2.4 megabytes
+
