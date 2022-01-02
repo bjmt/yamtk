@@ -155,7 +155,7 @@ void usage(void) {
     " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
     "            time. Reading sequences from stdin is disabled. If scanning many  \n"
     "            smaller sequences with large numbers of motifs, the impact on     \n"
-    "            performance may be significant. Cannot be used without -m or -1.  \n"
+    "            performance may be significant.                                   \n"
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
     "            messages printed by -w. Note that it's only useful if there is    \n"
     "            more than one input motif.                                        \n"
@@ -1909,6 +1909,19 @@ void score_seq(const int motif_i, const int seq_i, const int seq_loc) {
   }
 }
 
+void print_seq_stats_single(FILE *whereto, const int seq_i, const int seq_j) {
+  ERASE_ARRAY(char_counts, 256);
+  count_bases_single(seqs[seq_i], seq_sizes[seq_j]);
+  fprintf(whereto, "%d\t%d\t%s\t", seq_j + 1, seq_line_nums[seq_j], seq_names[seq_j]);
+  fprintf(whereto, "%d\t", seq_sizes[seq_j]);
+  if (!seq_sizes[seq_j]) {
+    fprintf(whereto, "nan\t");
+  } else {
+    fprintf(whereto, "%.2f\t", calc_gc() * 100.0);
+  }
+  fprintf(whereto, "%d\n", seq_sizes[seq_j] - standard_base_count());
+}
+
 void print_seq_stats(FILE *whereto) {
   for (int i = 0; i < seq_info.n; i++) {
     ERASE_ARRAY(char_counts, 256);
@@ -2128,8 +2141,8 @@ int main(int argc, char **argv) {
     has_motifs = 1;
   }
 
-  if (!has_motifs && args.low_mem) {
-    badexit("Error: The -l flag can only be used for scanning.");
+  if (!has_motifs && !use_stdin) {
+    args.low_mem = 1;
   }
 
   if (has_motifs) {
@@ -2180,7 +2193,22 @@ int main(int argc, char **argv) {
         fprintf(stderr, "No motifs provided, printing sequence stats before exit.\n");
       }
       fprintf(files.o, "##seqnum\tline_num\tseqname\tsize\tgc_pct\tn_count\n");
-      print_seq_stats(files.o);
+
+      if (args.low_mem) {
+        seqs[0] = malloc(sizeof(**seqs) * max_seq_size);
+        if (seqs[0] == NULL) {
+          badexit("Error: Failed to allocate memory for sequence.");
+        }
+        int line_num = 0;
+        for (int j = 0; j < seq_info.n; j++) {
+          line_num = load_next_seq(j, line_num);
+          print_seq_stats_single(files.o, 0, j);
+        }
+        free(seqs[0]);
+      } else {
+        print_seq_stats(files.o);
+      }
+
     }
   }
 

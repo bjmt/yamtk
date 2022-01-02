@@ -7,6 +7,8 @@
 
 - No overlaps (as a separate program)
 
+- Allow low-mem mode for printing sequence stats
+
 - multithreading
 
 - Qvalues (as a separate program)
