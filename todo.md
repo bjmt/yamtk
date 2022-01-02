@@ -1,6 +1,11 @@
 ## Todo
 
-- Low memory mode: only read in a single sequence at a time
+- Consider storing sequences as a single char array, instead of an array of
+  arrays. This would result in fewer mallocs. However one potential downside
+  is that this would instead mean constantly realloc'ing one giant array.
+  Perhaps this would actually be more punishing, perfomance-wise?
+
+- No overlaps (as a separate program)
 
 - multithreading
 
@@ -9,8 +14,6 @@
   + Bonferroni pvalues: `min(pvals * nPossibleHits, 1)`
   + Do a first pass of file to create a Qval table, then read through
     a second time to re-generate results with added Q-values
-
-- No overlaps (as a separate program)
 
 
 ```
@@ -34,4 +37,8 @@ Table size: ~300 * 1000 = 300,000
 
             
            ~300 * 100 = 30,000
-           30,000 x 8 bytes = 240,000 => 0.23 megabytes
+
+            
+           ~300 * 10 = 3,000
+           3,000 x 8 bytes = 24,000 => 0.23 megabytes
+           3,000 x 8 bytes = 24,000 => 0.23 megabytes

@@ -17,28 +17,38 @@ rather problematic when results are in the millions. (fimo has the option to
 output results immediately and skip Q-value calculation, but even so fimo is
 quite slow.) Secondly, minimotif loads input sequences completely into memory.
 This means that you are scanning the human genome, be prepared that minimotif
-will need over 3GB of memory.
+will need over 3GB of memory. (Alternatively, use the `-l` flag to limit this
+to about 250MB and sacrifice a bit of performance in some cases.)
+
+## Installation
+
+```sh
+git clone https://github.com/bjmt/minimotif
+cd minimotif
+make
+```
+
+This will create the final binary as `bin/minimotif` within the project folder.
 
 ## Usage
 
 ```
 minimotif v1.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
 
-Usage:  minimotif [options] -m motifs.txt -s sequences.fa
+Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
  -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,
             JASPAR, HOMER. Must be 1-50 bases wide.
  -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters
-            are allowed. Must be 1-50 bases wide. The -b, -t, -p, -n and -d
-            flags are unused.
+            are allowed. Must be 1-50 bases wide. The -b, -t, -p and -n flags
+            are unused.
  -s <str>   Filename of fasta-formatted file containing DNA/RNA sequences to
             scan. Use '-' for stdin. Omitting -s will cause minimotif to print
             the parsed motifs instead of scanning. Alternatively, solely
             providing -s and not -m/-1 will cause minimotif to return sequence
-            stats. Sequences should _not_ contain spaces. minimotif will still
-            scan if it finds spaces, but they will be treated as actual gaps
-            and thus may cause some possibly valid matches to be lost. Non-
-            standard letters (i.e. other than ACGTU) will be silently ignored.
+            stats. Any spaces found are not read into the final scanned
+            sequence. Non-standard characters (i.e. other than ACGTU) will be
+            read but are treated as gaps during scanning.
  -o <str>   Filename to output results. By default output goes to stdout.
  -b <dbl>   Comma-separated background probabilities for A,C,G,T. By default
             the background probability values from the motif file (MEME only)
@@ -51,7 +61,14 @@ Usage:  minimotif [options] -m motifs.txt -s sequences.fa
  -n <int>   Number of motif sites used in PWM generation. Default: 1000.
  -d         Deduplicate motif/sequence names. Default: abort. Duplicates will
             have the motif/sequence and line numbers appended.
- -r         Trim sequence names to the first word.
+ -r         Trim motif (JASPAR only) and sequence names to the first word.
+ -l         Low memory mode. Only allows a single sequence in memory at a
+            time. Reading sequences from stdin is disabled. If scanning many
+            smaller sequences with large numbers of motifs, the impact on
+            performance may be significant. Cannot be used without -m or -1.
+ -g         Print a progress bar during scanning. This turns off some of the
+            messages printed by -w. Note that it's only useful if there is
+            more than one input motif.
  -v         Verbose mode. Recommended when using for the first time with new
             motifs/sequences, as warnings about potential issues will only be
             printed when -v/-w are set.
@@ -70,22 +87,56 @@ coordinates are 1-based.
 Example output:
 
 ```
-##minimotif v1.0 [ -t 0.04 -m motif.txt -s seqs.fa ]
-##MotifCount=1 MotifAvgSize=5
-##SeqCount=2 SeqAvgSize=62 GC=47.20% Ns=0
+##minimotif v1.0 [ -r -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##seqname	start	end	strand	motif	pvalue	score	score_pct	match
-1	30	34	+	motif	0.00899010468	4.802	72.5	CTCGC
-1	31	35	-	motif	0.0386759633	2.332	35.2	TCGCG
-2	4	8	+	motif	0.0150010168	3.855	58.2	GTCGA
-2	42	46	+	motif	0.0179392515	3.751	56.6	GTCTA
-2	16	20	-	motif	0.00899010468	4.802	72.5	GCGAG
-2	43	47	-	motif	0.0129631201	3.928	59.3	TCTAG
+1  	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
+1  	31	35	-	1-motifA	0.0341796875	2.482	37.4	TCGCG
+2	4	8	+	1-motifA	0.0166015625	3.860	58.2	GTCGA
+2	42	46	+	1-motifA	0.01953125	3.725	56.1	GTCTA
+2	16	20	-	1-motifA	0.0078125	4.874	73.4	GCGAG
+2	43	47	-	1-motifA	0.015625	3.867	58.3	TCTAG
+3	28	32	+	1-motifA	0.01953125	3.725	56.1	GTCTA
 ```
+
+One can also use minimotif to get basic information about motifs and sequences.
+By only using minimotif with one of these at a time, the following is output:
+
+```sh
+$ bin/minimotif -m test/motif.jaspar
+----------------------------------------
+Motif: 1-motifA (N1 L1)
+MaxScore=6.64	Threshold=[exceeds max]
+Motif PWM:
+	A	C	G	T
+1:	-3.74	1.66	-1.12	-1.73
+2:	-7.23	0.38	-2.81	1.35
+3:	-1.43	1.34	-2.59	-0.09
+4:	-3.06	-7.23	1.02	0.88
+5:	1.27	-0.49	-0.36	-3.36
+Score=-24.14	-->     p=1
+Score=-12.07	-->     p=0.82
+Score=0.00	-->     p=0.11
+Score=3.32	-->     p=0.022
+Score=6.64	-->     p=0.00098
+----------------------------------------
+
+$ bin/minimotif -r -s test/dna.fa
+##seqnum	line_num	seqname	size	gc_pct	n_count
+1	1	1  	55	49.09	0
+2	5	2	70	45.71	0
+3	10	3	33	39.39	0
+```
+
+This mode shows the internal PWM representation of motifs, as well P-values
+for the min and max possible scores (with some in-between scores). Basic
+information about sequences is output, including size, GC percent, and the
+number of non-DNA/RNA letters found.
 
 ## Benchmarking
 
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to
-record time elapsed and peak memory usage:
+record time elapsed and peak memory usage (Q-values turned off in fimo):
 
 ```sh
 time -v minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
