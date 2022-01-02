@@ -1428,6 +1428,10 @@ int load_next_seq(const int seq_i, int line_num) {
   } else {
     last_line = seq_line_nums[seq_i + 1];
   }
+  while (line_num < seq_line_nums[seq_i]) {
+    read = getline(&line, &len, files.s);
+    line_num++;
+  }
   while((read = getline(&line, &len, files.s)) != -1) {
     line_num++;
     if (line_num == last_line) break;
