@@ -468,9 +468,7 @@ void fill_cdf(motif_t *motif) {
     for (int j = 0; j < 4; j++) {
       s = get_score_i(motif, j, i) - motif->min;
       for (size_t k = 0; k <= max_step; k++) {
-        if (tmp_pdf[k] != 0.0) {
-          motif->cdf[k+s] = motif->cdf[k+s] + tmp_pdf[k] * args.bkg[j];
-        }
+        motif->cdf[k+s] += tmp_pdf[k] * args.bkg[j];
       }
     }
   }
