@@ -1,13 +1,6 @@
 ## Todo
 
-- Consider storing sequences as a single char array, instead of an array of
-  arrays. This would result in fewer mallocs. However one potential downside
-  is that this would instead mean constantly realloc'ing one giant array.
-  Perhaps this would actually be more punishing, perfomance-wise?
-
 - No overlaps (as a separate program)
-
-- Allow low-mem mode for printing sequence stats
 
 - multithreading
 
@@ -16,7 +9,6 @@
   + Bonferroni pvalues: `min(pvals * nPossibleHits, 1)`
   + Do a first pass of file to create a Qval table, then read through
     a second time to re-generate results with added Q-values
-
 
 ```
 for (int i = PvalLen - 1; i > -1; i--) {

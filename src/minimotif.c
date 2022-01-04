@@ -26,8 +26,8 @@
 #include <limits.h>
 #include <time.h>
 
-#define MINIMOTIF_VERSION                 "1.0"
-#define MINIMOTIF_YEAR                     2022
+#define MINIMOTIF_VERSION                  "1.0"
+#define MINIMOTIF_YEAR                      2022
 
 /* These defaults can be safely changed. The only effects of doing so will be
  * on performance. Depending on whether your motifs are extremely large, or
@@ -308,6 +308,10 @@ motif_info_t motif_info = {
   .n = 0
 };
 
+size_t cdf_real_size = 0;
+double *cdf;
+double *tmp_pdf;
+
 typedef struct seq_info_t {
   size_t     n;
   size_t     line_count;
@@ -342,10 +346,11 @@ void free_seqs(void) {
 
 void free_motifs(void) {
   for (size_t i = 0; i < motif_info.n; i++) {
-    if (motifs[i]->cdf_size) free(motifs[i]->cdf);
     free(motifs[i]);
   }
   free(motifs);
+  free(cdf);
+  free(tmp_pdf);
 }
 
 typedef struct files_t {
@@ -428,24 +433,31 @@ void fill_cdf(motif_t *motif) {
         MIN_BKG_VALUE);
     badexit("");
   }
-  double *tmp_pdf = malloc(pdf_size * sizeof(double));
-  if (tmp_pdf == NULL) {
-    badexit("Error: Memory allocation for motif PDF failed.");
+  /* Instead of allocating and freeing a CDF for every motif, instead share a
+   * single one for all motifs -- just reset it every time and realloc to a
+   * larger size if needed.
+   */
+  if (cdf_real_size < pdf_size) {
+    double *cdf_rl = realloc(cdf, pdf_size * sizeof(double));
+    if (cdf_rl == NULL) {
+      badexit("Error: Memory re-allocation for motif CDF failed.");
+    }
+    cdf = cdf_rl;
+    double *tmp_pdf_rl = realloc(tmp_pdf, pdf_size * sizeof(double));
+    if (cdf_rl == NULL) {
+      badexit("Error: Memory re-allocation for temporary motif PDF failed.");
+    }
+    tmp_pdf = tmp_pdf_rl;
+    cdf_real_size = pdf_size;
   }
-  motif->cdf = malloc(pdf_size * sizeof(double));
-  if (motif->cdf == NULL) {
-    free(tmp_pdf);
-    badexit("Error: Memory allocation for motif CDF failed.");
-  }
+  motif->cdf = cdf;
   for (size_t i = 0; i < pdf_size; i++) motif->cdf[i] = 1.0;
   for (size_t i = 0; i < motif->size; i++) {
     max_step = i * max_score;
     for (size_t j = 0; j < pdf_size; j++) {
       tmp_pdf[j] = motif->cdf[j];
     }
-    for (size_t j = 0; j < max_step + max_score + 1; j++) {
-      motif->cdf[j] = 0.0;
-    }
+    memset(motif->cdf, 0, sizeof(double) * (max_step + max_score + 1));
     for (int j = 0; j < 4; j++) {
       s = get_score_i(motif, j, i) - motif->min;
       for (size_t k = 0; k <= max_step; k++) {
@@ -455,7 +467,6 @@ void fill_cdf(motif_t *motif) {
       }
     }
   }
-  free(tmp_pdf);
   for (size_t i = 0; i < pdf_size; i++) pdf_sum += motif->cdf[i];
   if (fabs(pdf_sum - 1.0) > 0.0001) {
     if (args.w) {
@@ -592,10 +603,16 @@ int check_line_contains(const char *line, const char *substring) {
 }
 
 size_t count_nonempty_chars(const char *line) {
+  /* Other whitespace characters: \v, \f. Assuming these would never show up. */
   size_t total_chars = 0, i = 0;
-  while (line[i] != '\0') {
-    if (line[i] != ' ' && line[i] != '\t' && line[i] != '\r' && line[i] != '\n') {
-      total_chars++;
+  for (;;) {
+    switch (line[i]) {
+      case ' ':
+      case '\t':
+      case '\r':
+      case '\n': break;
+      case '\0': return total_chars;
+      default: total_chars++;
     }
     i++;
   }
@@ -655,11 +672,8 @@ int add_motif(void) {
 }
 
 int check_char_is_one_of(const char c, const char *list) {
-  size_t i = 0;
-  for (;;) {
-    if (list[i] == '\0') break;
+  for (size_t i = 0; i < strlen(list); i++) {
     if (list[i] == c) return 1;
-    i++;
   }
   return 0;
 }
@@ -1816,6 +1830,7 @@ void find_motif_dupes(void) {
       badexit("");
     }
   }
+  free(is_dup);
 }
 
 void find_seq_dupes(void) {
@@ -2033,6 +2048,15 @@ int main(int argc, char **argv) {
   if (seq_line_nums == NULL) {
     badexit("Error: Failed to allocate memory for sequence line numbers.");
   }
+  cdf = malloc(sizeof(double));
+  if (cdf == NULL) {
+    badexit("Error: Failed to allocate memory for motif CDF.");
+  }
+  cdf_real_size = 1;
+  tmp_pdf = malloc(sizeof(double));
+  if (tmp_pdf == NULL) {
+    badexit("Error: Failed to allocate memory for temp motif PDF.");
+  }
 
   char *user_bkg, *consensus;
   int has_motifs = 0, has_seqs = 0, has_consensus = 0;
@@ -2156,9 +2180,11 @@ int main(int argc, char **argv) {
     has_motifs = 1;
   }
 
+  /*
   if (!has_motifs && !use_stdin) {
     args.low_mem = 1;
   }
+  */
 
   if (has_motifs) {
     if (!has_consensus) {
@@ -2176,7 +2202,6 @@ int main(int argc, char **argv) {
         if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
         fprintf(files.o, "----------------------------------------\n");
         print_motif(motifs[i], i + 1);
-        free(motifs[i]->cdf);
         motifs[i]->cdf_size = 0;
       }
       fprintf(files.o, "----------------------------------------\n");
@@ -2278,7 +2303,6 @@ int main(int argc, char **argv) {
           score_seq(i, j, j);
         }
       }
-      free(motifs[i]->cdf);
       motifs[i]->cdf_size = 0;
     }
     if (args.low_mem) free(seqs[0]);

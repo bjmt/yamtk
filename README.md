@@ -145,12 +145,12 @@ time -v fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
 |                                          |     `minimotif`    |   `minimotif -l`  |      `fimo`      |
 |:----------------------------------------:|:------------------:|:-----------------:|:----------------:|
-|         100 x 1Kbp (100Kbp) +  10 motifs |    0.06s,  8.78MB  |    0.06s, 10.75MB |    0.23s, 3.92MB |
-|         100 x 1Kbp (100Kbp) + 100 motifs |    0.29s, 15.22MB  |    0.31s, 17.88MB |    1.96s, 4.44MB |
-|         100 x 10Kbp (1Mbp)  +  10 motifs |    0.15s,  9.00MB  |    0.15s, 11.14MB |    2.44s, 4.20MB |
-|         100 x 10Kbp (1Mbp)  + 100 motifs |    1.16s, 18.61MB  |    1.27s, 18.63MB |   23.24s, 4.77MB |
-| Arabidopsis genome (120Mbp) +  10 motifs |   12.03s, 159.48MB |   13.63s, 39.75MB | 4m41.99s, 4.01MB |
-| Arabidopsis genome (120Mbp) + 100 motifs | 1m55.30s, 160.52MB | 2m15.92s, 48.25MB |     (not run)    |
+|         100 x 1Kbp (100Kbp) +  10 motifs |    0.05s,  4.42MB  |    0.06s,  4.28MB |    0.23s, 3.92MB |
+|         100 x 1Kbp (100Kbp) + 100 motifs |    0.22s,  6.05MB  |    0.27s,  7.00MB |    1.96s, 4.44MB |
+|          100 x 10Kbp (1Mbp) +  10 motifs |    0.15s,  5.38MB  |    0.16s,  4.34MB |    2.44s, 4.20MB |
+|          100 x 10Kbp (1Mbp) + 100 motifs |    1.13s,  6.89MB  |    1.25s,  6.98MB |   23.24s, 4.77MB |
+| Arabidopsis genome (120Mbp) +  10 motifs |   12.12s, 150.50MB |   13.75s, 33.39MB | 4m41.99s, 4.01MB |
+| Arabidopsis genome (120Mbp) + 100 motifs | 1m58.48s, 157.90MB | 2m17.56s, 33.58MB |     (not run)    |
 
 From the benchmarks the speed advantage of minimotif over fimo is clear. Also
 obvious however, is the associated high memory usage costs. By sacrificing a
@@ -160,7 +160,7 @@ sequence is ever kept in memory, meaning that the max memory usage will be tied
 to the size of the largest single sequence within the fasta file, instead of
 the size of all sequences added together. In the example benchmark above when
 scanning the Arabidopsis genome, minimotif only requests enough memory to hold
-the largest chromsome (~30Mbp) rather then the entire genome (~120Mbp).
+the largest chromosome (~30Mbp) rather then the entire genome (~120Mbp).
 
 ## Compatible motif formats
 
