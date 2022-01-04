@@ -159,7 +159,7 @@ void usage(void) {
     " -r         Trim motif (JASPAR only) and sequence names to the first word.    \n"
     " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
     "            time. Reading sequences from stdin is disabled. This will have a  \n"
-    "            slight increase on performance, which gets worse with increasing  \n"
+    "            slight impact on performance, which gets worse with increasing    \n"
     "            motif counts.                                                     \n"
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
     "            messages printed by -w. Note that it's only useful if there is    \n"
