@@ -63,9 +63,9 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             have the motif/sequence and line numbers appended.
  -r         Trim motif (JASPAR only) and sequence names to the first word.
  -l         Low memory mode. Only allows a single sequence in memory at a
-            time. Reading sequences from stdin is disabled. If scanning many
-            smaller sequences with large numbers of motifs, the impact on
-            performance may be significant.
+            time. Reading sequences from stdin is disabled. This will have a
+            slight increase on performance, which gets worse with increasing
+            motif counts.
  -g         Print a progress bar during scanning. This turns off some of the
             messages printed by -w. Note that it's only useful if there is
             more than one input motif.
