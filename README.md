@@ -65,7 +65,7 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
  -l         Low memory mode. Only allows a single sequence in memory at a
             time. Reading sequences from stdin is disabled. If scanning many
             smaller sequences with large numbers of motifs, the impact on
-            performance may be significant. Cannot be used without -m or -1.
+            performance may be significant.
  -g         Print a progress bar during scanning. This turns off some of the
             messages printed by -w. Note that it's only useful if there is
             more than one input motif.

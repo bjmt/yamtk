@@ -158,9 +158,9 @@ void usage(void) {
     "            have the motif/sequence and line numbers appended.                \n"
     " -r         Trim motif (JASPAR only) and sequence names to the first word.    \n"
     " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
-    "            time. Reading sequences from stdin is disabled. If scanning many  \n"
-    "            smaller sequences with large numbers of motifs, the impact on     \n"
-    "            performance may be significant.                                   \n"
+    "            time. Reading sequences from stdin is disabled. This will have a  \n"
+    "            slight increase on performance, which gets worse with increasing  \n"
+    "            motif counts.                                                     \n"
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
     "            messages printed by -w. Note that it's only useful if there is    \n"
     "            more than one input motif.                                        \n"
@@ -582,21 +582,9 @@ void parse_user_bkg(const char *bkg_usr) {
   }
 }
 
-/*
-double b2kb(const int x) {
-  return x / 1024.0;
-}
-*/
-
 static inline double b2mb(const size_t x) {
   return (x / 1024.0) / 1024.0;
 }
-
-/*
-int calc_motif_size(const motif_t *motif) {
-  return sizeof(motif_t) + sizeof(double) * motif->cdf_size;
-}
-*/
 
 int check_line_contains(const char *line, const char *substring) {
   size_t ss_len = strlen(substring);
@@ -1151,8 +1139,6 @@ void complete_motifs(void) {
 }
 
 void print_motif(motif_t *motif, const size_t n) {
-  /* fprintf(files.o, "Motif: %s (%'.2f KB)\n", motif->name, */
-  /*   b2kb(calc_motif_size(motif))); */
   fprintf(files.o, "Motif: %s (N%zu L%zu)\n", motif->name, n, motif->file_line_num);
   if (motif->threshold == INT_MAX) {
     fprintf(files.o, "MaxScore=%.2f\tThreshold=%s\n",
@@ -1169,16 +1155,6 @@ void print_motif(motif_t *motif, const size_t n) {
       get_score(motif, 'G', i) / PWM_INT_MULTIPLIER,
       get_score(motif, 'T', i) / PWM_INT_MULTIPLIER);
   }
-  /*
-  fprintf(files.o, "Reverse complement:\n\tA\tC\tG\tT\n");
-  for (int i = 0; i < motif->size; i++) {
-    fprintf(files.o, "%zu:\t%.2f\t%.2f\t%.2f\t%.2f\n", i + 1,
-      get_score_rc(motif, 'A', i) / PWM_INT_MULTIPLIER,
-      get_score_rc(motif, 'C', i) / PWM_INT_MULTIPLIER,
-      get_score_rc(motif, 'G', i) / PWM_INT_MULTIPLIER,
-      get_score_rc(motif, 'T', i) / PWM_INT_MULTIPLIER);
-  }
-  */
   fprintf(files.o, "Score=%.2f\t-->     p=1\n",
       motif->min_score / PWM_INT_MULTIPLIER);
   fprintf(files.o, "Score=%.2f\t-->     p=%.2g\n",
@@ -2194,12 +2170,6 @@ int main(int argc, char **argv) {
     add_consensus_motif(consensus);
     has_motifs = 1;
   }
-
-  /*
-  if (!has_motifs && !use_stdin) {
-    args.low_mem = 1;
-  }
-  */
 
   if (has_motifs) {
     if (!has_consensus) {
