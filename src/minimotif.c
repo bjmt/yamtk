@@ -90,6 +90,11 @@
 #define DEFAULT_PVALUE                   0.00001
 #define DEFAULT_PSEUDOCOUNT                    1
 
+/* Minimum amount of additional memory to request when reading sequences and
+ * more memory is needed. Current default: request memory in 1/2 MB chunks.
+ */
+#define SEQ_REALLOC_SIZE                  524288
+
 #define VEC_ADD(VEC, X, VEC_LEN)                                \
   do {                                                          \
     for (size_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] += X;       \
@@ -331,6 +336,7 @@ seq_info_t seq_info = {
 char            **seq_names;
 unsigned char   **seqs;
 size_t           *seq_sizes;
+size_t           *seq_real_sizes;
 size_t           *seq_line_nums;
 
 void free_seqs(void) {
@@ -339,6 +345,7 @@ void free_seqs(void) {
     if (!args.low_mem) free(seqs[i]);
   }
   free(seq_names);
+  free(seq_real_sizes);
   free(seq_sizes);
   free(seq_line_nums);
   free(seqs);
@@ -1638,6 +1645,14 @@ void load_seqs(void) {
         seq_sizes = tmp_ptr3;
       }
       seq_sizes[seq_i] = 0;
+      size_t *tmp_ptr6 = realloc(seq_real_sizes, sizeof(*seq_real_sizes) * (1 + seq_i));
+      if (tmp_ptr6 == NULL) {
+        free(line);
+        badexit("Error: Failed to allocate memory for real sequence sizes.");
+      } else {
+        seq_real_sizes = tmp_ptr6;
+      }
+      seq_real_sizes[seq_i] = 0;
       size_t *tmp_ptr5 = realloc(seq_line_nums, sizeof(*seq_line_nums) * (1 + seq_i));
       if (tmp_ptr5 == NULL) {
         free(line);
@@ -1657,21 +1672,23 @@ void load_seqs(void) {
         seq_names[seq_i][i] = line[i + 1];
       }
       name_loaded = 1;
-      seq_sizes[seq_i] = 0;
     } else if (name_loaded) {
       line_len_no_spaces = 0;
       for (size_t i = 0; i < line_len; i++) if (line[i] != ' ') line_len_no_spaces++;
-      if (seq_sizes[seq_i]) {
+      if (seq_sizes[seq_i] && (seq_sizes[seq_i] + line_len_no_spaces) > seq_real_sizes[seq_i]) {
+        size_t rl_size = MAX(SEQ_REALLOC_SIZE, line_len_no_spaces);
         unsigned char *tmp_ptr4 = realloc(seqs[seq_i],
-          sizeof(**seqs) * (seq_sizes[seq_i] + line_len_no_spaces));
+          sizeof(**seqs) * (seq_real_sizes[seq_i] + rl_size));
         if (tmp_ptr4 == NULL) {
           free(line);
           badexit("Error: Failed to allocate memory for sequences.");
-        } else {
-          seqs[seq_i] = tmp_ptr4;
         }
-      } else {
-        seqs[seq_i] = malloc(sizeof(**seqs) * line_len_no_spaces);
+        seqs[seq_i] = tmp_ptr4;
+        seq_real_sizes[seq_i] += rl_size;
+      } else if (!seq_sizes[seq_i]) {
+        size_t rl_size = MAX(SEQ_REALLOC_SIZE, line_len_no_spaces);
+        seqs[seq_i] = malloc(sizeof(**seqs) * rl_size);
+        seq_real_sizes[seq_i] += rl_size;
         if (seqs[seq_i] == NULL) {
           free(line);
           badexit("Error: Failed to allocate memory for sequences.");
