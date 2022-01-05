@@ -1,5 +1,7 @@
 ## Todo
 
+- Consider just using isspace() instead of manually checking for spaces/tabs
+
 - No overlaps (as a separate program)
 
 - multithreading
@@ -36,3 +38,19 @@ Table size: ~300 * 1000 = 300,000
            ~300 * 10 = 3,000
            3,000 x 8 bytes = 24,000 => 0.23 megabytes
            3,000 x 8 bytes = 24,000 => 0.23 megabytes
+
+
+Alternative Q-value strat:
+
+- Make in internal interval P-value count table, but instead of using those
+  rounded interval values to calculate Q-values instead use that to know how
+  which P-values to read into memory in order to sort and get the rank value
+  for. Step 1: find the largest P-value which includes the most P-values
+  allowed to be read into memory at once, read those into memory, sort them,
+  get the ranks, calculate and output the P-values. Then read the next set of
+  P-values and repeat.
+  + Need to have enough memory for two things (24 bytes total on 64bit machines):
+    > array of P-values (long double, 16 bytes)
+    > array of line numbers (size_t, 8 bytes)
+  + 1 million P-values => 24MB
+

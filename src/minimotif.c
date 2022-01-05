@@ -48,6 +48,9 @@
  * This value is also used when performing memory allocation for new motifs,
  * regardless of the actual size of the motif (thus sticking to lower values
  * may be better for performance).
+ * Note: Motif size cannot exceed INT_MAX, since it has to be casted to an int
+ * in order to print the match (see score_seq). But realistically having such
+ * a big motif will cause the max score to overflow long before then.
  */
 #define MAX_MOTIF_SIZE            ((size_t) 250)    /* 5 rows per position */
 #define AMBIGUITY_SCORE                -10000000
@@ -193,24 +196,7 @@ const unsigned char char2index[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
 };
 
-size_t char_counts[] = {
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
+size_t char_counts[256];
 
 const double consensus2probs[] = {
   1.0,   0.0,   0.0,   0.0,        /*  0. A */
@@ -423,6 +409,9 @@ void badexit(const char *msg) {
   exit(EXIT_FAILURE);
 }
 
+/* For the motif half of minimotif, this function is (by far) where it spends
+ * most of its time.
+ */
 void fill_cdf(motif_t *motif) {
   int max_score = motif->max - motif->min;
   size_t pdf_size = motif->size * max_score + 1;
@@ -440,7 +429,7 @@ void fill_cdf(motif_t *motif) {
         MIN_BKG_VALUE);
     badexit("");
   }
-  /* Instead of allocating and freeing a CDF for every motif, instead share a
+  /* Instead of allocating and freeing a CDF for every motif, share a
    * single one for all motifs -- just reset it every time and realloc to a
    * larger size if needed.
    */
@@ -467,6 +456,7 @@ void fill_cdf(motif_t *motif) {
     memset(motif->cdf, 0, sizeof(double) * (max_step + max_score + 1));
     for (int j = 0; j < 4; j++) {
       s = get_score_i(motif, j, i) - motif->min;
+      /* This loop is where the majority of time is spent for motif-related code. */
       for (size_t k = 0; k <= max_step; k++) {
         motif->cdf[k+s] += tmp_pdf[k] * args.bkg[j];
       }
