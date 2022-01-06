@@ -144,10 +144,10 @@ Using GNU Time on my MacbookPro M1 and the following equivalent commands to
 record time elapsed and peak memory usage (Q-values turned off in fimo):
 
 ```sh
-time -v minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
-time -v minimotif -l -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
-time -v minimotif -j 4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
-time -v fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
+minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+minimotif -l -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+minimotif -j 4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
 
 |                                          |     `minimotif`    |   `minimotif -l`  |  `minimotif -j4`  |      `fimo`      |
