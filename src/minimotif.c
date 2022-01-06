@@ -572,6 +572,7 @@ void set_threshold(motif_t *motif) {
     }
     motif->threshold = INT_MAX;
   }
+  if (motif_info.is_consensus) motif->threshold = motif->max_score;
 }
 
 int check_and_load_bkg(double *bkg) {
@@ -2062,7 +2063,6 @@ void *scan_sub_process(void *thread_i) {
       }
       fill_cdf(motifs[i]);
       set_threshold(motifs[i]);
-      if (motif_info.is_consensus) motifs[i]->threshold = motifs[i]->max_score;
       for (size_t j = 0; j < seq_info.n; j++) {
         score_seq(i, j, j);
       }
@@ -2258,7 +2258,6 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < motif_info.n; i++) {
       fill_cdf(motifs[i]);
       set_threshold(motifs[i]);
-      if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
       fprintf(files.o, "----------------------------------------\n");
       print_motif(motifs[i], i + 1);
     }
@@ -2343,7 +2342,6 @@ int main(int argc, char **argv) {
         }
         fill_cdf(motifs[i]);
         set_threshold(motifs[i]);
-        if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
         size_t line_num = 0;
         for (size_t j = 0; j < seq_info.n; j++) {
           if (args.w) {
