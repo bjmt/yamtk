@@ -161,7 +161,7 @@ void usage(void) {
     "            motif counts. Requires a single thread.                           \n"
     " -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that\n"
     "            increasing this number will also increase memory usage slightly.  \n"
-    "            The max number of threads is limited by the number of motifs being\n"
+    "            The number of threads is limited by the number of motifs being    \n"
     "            scanned.                                                          \n"
     " -v         Verbose mode. Recommended when using for the first time with new  \n"
     "            motifs/sequences, as warnings about potential issues will only be \n"

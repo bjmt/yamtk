@@ -72,7 +72,7 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             motif counts. Requires a single thread.
  -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that
             increasing this number will also increase memory usage slightly.
-            The max number of threads is limited by the number of motifs being
+            The number of threads is limited by the number of motifs being
             scanned.
  -v         Verbose mode. Recommended when using for the first time with new
             motifs/sequences, as warnings about potential issues will only be
