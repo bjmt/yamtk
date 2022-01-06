@@ -25,6 +25,7 @@
 #include <math.h>
 #include <limits.h>
 #include <time.h>
+#include <pthread.h>
 
 #define MINIMOTIF_VERSION                  "1.0"
 #define MINIMOTIF_YEAR                      2022
@@ -80,12 +81,6 @@
 /* Max size of sequence names
  */
 #define SEQ_NAME_MAX_CHAR         ((size_t) 256)
-
-/* Size of progress bar
- */
-#define PROGRESS_BAR_WIDTH                    60
-#define PROGRESS_BAR_STRING                    \
-  "============================================================"
 
 /* Front-facing defaults.
  */
@@ -163,10 +158,11 @@ void usage(void) {
     " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
     "            time. Reading sequences from stdin is disabled. This will have a  \n"
     "            slight impact on performance, which gets worse with increasing    \n"
-    "            motif counts.                                                     \n"
-    " -g         Print a progress bar during scanning. This turns off some of the  \n"
-    "            messages printed by -w. Note that it's only useful if there is    \n"
-    "            more than one input motif.                                        \n"
+    "            motif counts. Requires a single thread.                           \n"
+    " -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that\n"
+    "            increasing this number will also increase memory usage slightly.  \n"
+    "            The max number of threads is limited by the number of motifs being\n"
+    "            scanned.                                                          \n"
     " -v         Verbose mode. Recommended when using for the first time with new  \n"
     "            motifs/sequences, as warnings about potential issues will only be \n"
     "            printed when -v/-w are set.                                       \n"
@@ -196,6 +192,7 @@ const unsigned char char2index[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
 };
 
+/* Global variables are 0-initiated */
 size_t char_counts[256];
 
 const double consensus2probs[] = {
@@ -251,8 +248,8 @@ typedef struct args_t {
   int      dedup;
   int      trim_names;
   int      use_user_bkg;
-  int      progress;
   int      low_mem;
+  int      nthreads;
   int      v;
   int      w;
 } args_t;
@@ -266,8 +263,8 @@ args_t args = {
   .dedup           = 0,
   .trim_names      = 0,
   .use_user_bkg    = 0,
-  .progress        = 0,
   .low_mem         = 0,
+  .nthreads        = 1,
   .v               = 0,
   .w               = 0
 };
@@ -280,28 +277,67 @@ typedef struct motif_t {
   int       max_score;                   /* Largest total PWM score   */
   int       min_score;                   /* Smallest total PWM score  */
   size_t    cdf_size;
+  int       cdf_max;
+  size_t    thread;
   size_t    file_line_num;
   char      name[MAX_NAME_SIZE];
   int       pwm[MAX_MOTIF_SIZE];
   int       pwm_rc[MAX_MOTIF_SIZE];
   double   *cdf;
+  double   *tmp_pdf;
 } motif_t;
 
 motif_t **motifs;
 
 typedef struct motif_info_t {
+  int     is_consensus;
   int     fmt;
   size_t  n;
 } motif_info_t;
 
 motif_info_t motif_info = {
+  .is_consensus = 0,
   .fmt = 0,
   .n = 0
 };
 
-size_t cdf_real_size = 0;
-double *cdf;
-double *tmp_pdf;
+size_t   *cdf_real_size;
+double  **cdf;
+double  **tmp_pdf;
+
+int alloc_cdf(void) {
+  cdf_real_size = malloc(sizeof(size_t) * args.nthreads);
+  if (cdf_real_size == NULL) {
+    fprintf(stderr, "Error: Failed to allocate memory for real CDF sizes.");
+    return 1;
+  }
+  for (size_t i = 0; i < args.nthreads; i++) {
+    cdf_real_size[i] = 1;
+  }
+  cdf = malloc(sizeof(double *) * args.nthreads);
+  if (cdf == NULL) {
+    fprintf(stderr, "Error: Failed to allocate memory for CDFs.");
+    return 1;
+  }
+  tmp_pdf = malloc(sizeof(double *) * args.nthreads);
+  if (tmp_pdf == NULL) {
+    fprintf(stderr, "Error: Failed to allocate memory for temporary PDFs.");
+    return 1;
+  }
+  for (size_t i = 0; i < args.nthreads; i++) {
+    cdf[i] = malloc(sizeof(double));
+    if (cdf[i] == NULL) {
+      fprintf(stderr, "Error: Failed to allocate memory for CDF (#%zu).", i);
+      return 1;
+    }
+    tmp_pdf[i] = malloc(sizeof(double));
+    if (tmp_pdf[i] == NULL) {
+      fprintf(stderr, "Error: Failed to allocate memory for temporary PDF (#%zu).", i);
+      return 1;
+    }
+  }
+  return 0;
+}
 
 typedef struct seq_info_t {
   size_t     n;
@@ -342,9 +378,19 @@ void free_motifs(void) {
     free(motifs[i]);
   }
   free(motifs);
+}
+
+void free_cdf(void) {
+  for (size_t i = 0; i < args.nthreads; i++) {
+    free(cdf[i]);
+    free(tmp_pdf[i]);
+  }
   free(cdf);
   free(tmp_pdf);
+  free(cdf_real_size);
 }
+
+pthread_t   *threads;
 
 typedef struct files_t {
   FILE   *m;
@@ -367,10 +413,17 @@ void init_motif(motif_t *motif) {
   ERASE_ARRAY(motif->name, MAX_NAME_SIZE);
   motif->name[0] = 'm'; motif->name[1] = 'o';
   motif->name[2] = 't'; motif->name[3] = 'i';
-  motif->name[4] = 'f';
-  motif->size = 0; motif->threshold = 0; motif->max_score = 0;
-  motif->min = 0; motif->max = 0; motif->cdf_size = 0;
-  motif->file_line_num = 0; motif->min_score = 0;
+  motif->name[4] = 'f'; motif->name[5] = '\0';
+  motif->size = 0;
+  motif->threshold = 0;
+  motif->max_score = 0;
+  motif->min = 0;
+  motif->max = 0;
+  motif->cdf_size = 0;
+  motif->file_line_num = 0;
+  motif->min_score = 0;
+  motif->cdf_max = 0;
+  motif->thread = 0;
   for (size_t i = 0; i < MAX_MOTIF_SIZE; i++) {
     motif->pwm[i] = 0;
     motif->pwm_rc[i] = 0;
@@ -403,6 +456,7 @@ static inline int get_score_rc(const motif_t *motif, const unsigned char let, co
 
 void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun minimotif -h to see usage.\n", msg);
+  free(threads);
   free_motifs();
   free_seqs();
   close_files();
@@ -413,18 +467,20 @@ void badexit(const char *msg) {
  * most of its time.
  */
 void fill_cdf(motif_t *motif) {
-  int max_score = motif->max - motif->min;
-  size_t pdf_size = motif->size * max_score + 1;
-  motif->cdf_size = pdf_size;
   size_t max_step, s;
   double pdf_sum = 0.0;
-  if (args.w) fprintf(stderr, "    Generating CDF for [%s] (n=%'zu) ... ",
-      motif->name, pdf_size);
-  if (pdf_size > MAX_CDF_SIZE) {
-    if (args.w) fprintf(stderr, "\n");
+  if (args.w && args.nthreads == 1) {
+    fprintf(stderr, "        Generating CDF for [%s] (n=%'zu) ... ",
+      motif->name, motif->cdf_size);
+  } else if (args.w) {
+    fprintf(stderr, "        Generating CDF for [%s] (n=%'zu)\n",
+      motif->name, motif->cdf_size);
+  }
+  if (motif->cdf_size > MAX_CDF_SIZE) {
+    if (args.w&& args.nthreads == 1) fprintf(stderr, "\n");
     fprintf(stderr,
         "Internal error: Requested CDF size for [%s] is too large (%'zu>%'zu).\n",
-        motif->name, pdf_size, MAX_CDF_SIZE);
+        motif->name, motif->cdf_size, MAX_CDF_SIZE);
     fprintf(stderr, "    Make sure no background values are below %f.",
         MIN_BKG_VALUE);
     badexit("");
@@ -433,49 +489,50 @@ void fill_cdf(motif_t *motif) {
    * single one for all motifs -- just reset it every time and realloc to a
    * larger size if needed.
    */
-  if (cdf_real_size < pdf_size) {
-    double *cdf_rl = realloc(cdf, pdf_size * sizeof(double));
-    if (cdf_rl == NULL) {
-      badexit("Error: Memory re-allocation for motif CDF failed.");
+    if (cdf_real_size[motif->thread] < motif->cdf_size) {
+      double *cdf_rl = realloc(cdf[motif->thread], motif->cdf_size * sizeof(double));
+      if (cdf_rl == NULL) {
+        badexit("Error: Memory re-allocation for motif CDF failed.");
+      }
+      cdf[motif->thread] = cdf_rl;
+      double *tmp_pdf_rl = realloc(tmp_pdf[motif->thread], motif->cdf_size * sizeof(double));
+      if (cdf_rl == NULL) {
+        badexit("Error: Memory re-allocation for temporary motif PDF failed.");
+      }
+      tmp_pdf[motif->thread] = tmp_pdf_rl;
+      cdf_real_size[motif->thread] = motif->cdf_size;
     }
-    cdf = cdf_rl;
-    double *tmp_pdf_rl = realloc(tmp_pdf, pdf_size * sizeof(double));
-    if (cdf_rl == NULL) {
-      badexit("Error: Memory re-allocation for temporary motif PDF failed.");
-    }
-    tmp_pdf = tmp_pdf_rl;
-    cdf_real_size = pdf_size;
-  }
-  motif->cdf = cdf;
-  for (size_t i = 0; i < pdf_size; i++) motif->cdf[i] = 1.0;
+    motif->cdf = cdf[motif->thread];
+    motif->tmp_pdf = tmp_pdf[motif->thread];
+  for (size_t i = 0; i < motif->cdf_size; i++) motif->cdf[i] = 1.0;
   for (size_t i = 0; i < motif->size; i++) {
-    max_step = i * max_score;
-    for (size_t j = 0; j < pdf_size; j++) {
-      tmp_pdf[j] = motif->cdf[j];
+    max_step = i * motif->cdf_max;
+    for (size_t j = 0; j < motif->cdf_size; j++) {
+      motif->tmp_pdf[j] = motif->cdf[j];
     }
-    memset(motif->cdf, 0, sizeof(double) * (max_step + max_score + 1));
+    memset(motif->cdf, 0, sizeof(double) * (max_step + motif->cdf_max + 1));
     for (int j = 0; j < 4; j++) {
       s = get_score_i(motif, j, i) - motif->min;
       /* This loop is where the majority of time is spent for motif-related code. */
       for (size_t k = 0; k <= max_step; k++) {
-        motif->cdf[k+s] += tmp_pdf[k] * args.bkg[j];
+        motif->cdf[k+s] += motif->tmp_pdf[k] * args.bkg[j];
       }
     }
   }
-  for (size_t i = 0; i < pdf_size; i++) pdf_sum += motif->cdf[i];
+  for (size_t i = 0; i < motif->cdf_size; i++) pdf_sum += motif->cdf[i];
   if (fabs(pdf_sum - 1.0) > 0.0001) {
-    if (args.w) {
+    if (args.w && args.nthreads == 1) {
       fprintf(stderr, "Internal warning: sum(PDF)!= 1.0 for [%s] (sum=%.2g)\n",
           motif->name, pdf_sum);
     }
-    for (size_t i = 0; i < pdf_size; i++) {
+    for (size_t i = 0; i < motif->cdf_size; i++) {
       motif->cdf[i] /= pdf_sum;
     }
   }
-  for (size_t i = pdf_size - 2; i >= 0 && i < -1; i--) {
+  for (size_t i = motif->cdf_size - 2; i >= 0 && i < -1; i--) {
     motif->cdf[i] += motif->cdf[i + 1];
   }
-  if (args.w) fprintf(stderr, "done.\n");
+  if (args.w && args.nthreads == 1) fprintf(stderr, "done.\n");
 }
 
 static inline double score2pval(const motif_t *motif, const int score) {
@@ -510,7 +567,7 @@ void set_threshold(motif_t *motif) {
       fprintf(stderr,
         "Warning: Min possible pvalue for [%s] is greater than the threshold,\n",
         motif->name);
-      fprintf(stderr, "    motif will not be scored (%g>%g).\n",
+      fprintf(stderr, "  motif will not be scored (%g>%g).\n",
         min_pvalue, args.pvalue);
     }
     motif->threshold = INT_MAX;
@@ -1125,6 +1182,8 @@ void complete_motifs(void) {
     motifs[i]->min = get_pwm_min(motifs[i]);
     motifs[i]->max = get_pwm_max(motifs[i]);
     fill_pwm_rc(motifs[i]);
+    motifs[i]->cdf_max = motifs[i]->max - motifs[i]->min;
+    motifs[i]->cdf_size = motifs[i]->size * motifs[i]->cdf_max + 1;
   }
 }
 
@@ -1995,12 +2054,22 @@ void add_consensus_motif(const char *consensus) {
   complete_motifs();
 }
 
-void print_pb(const double prog) {
-  int left = prog * PROGRESS_BAR_WIDTH;
-  int right = PROGRESS_BAR_WIDTH - left;
-  fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
-      (int) (prog * 100.0));
-  fflush(stderr);
+void *scan_sub_process(void *thread_i) {
+  for (size_t i = 0; i < motif_info.n; i++) {
+    if (*((int *) thread_i) == motifs[i]->thread) {
+      if (args.w) {
+        fprintf(stderr, "    Scanning motif: %s\n", motifs[i]->name);
+      }
+      fill_cdf(motifs[i]);
+      set_threshold(motifs[i]);
+      if (motif_info.is_consensus) motifs[i]->threshold = motifs[i]->max_score;
+      for (size_t j = 0; j < seq_info.n; j++) {
+        score_seq(i, j, j);
+      }
+    }
+  }
+  free(thread_i);
+  return NULL;
 }
 
 int main(int argc, char **argv) {
@@ -2029,14 +2098,9 @@ int main(int argc, char **argv) {
   if (seq_line_nums == NULL) {
     badexit("Error: Failed to allocate memory for sequence line numbers.");
   }
-  cdf = malloc(sizeof(double));
-  if (cdf == NULL) {
-    badexit("Error: Failed to allocate memory for motif CDF.");
-  }
-  cdf_real_size = 1;
-  tmp_pdf = malloc(sizeof(double));
-  if (tmp_pdf == NULL) {
-    badexit("Error: Failed to allocate memory for temp motif PDF.");
+  threads = malloc(sizeof(pthread_t));
+  if (threads == NULL) {
+    badexit("Error: Failed to allocate memory for threads.");
   }
 
   char *user_bkg, *consensus;
@@ -2046,7 +2110,7 @@ int main(int argc, char **argv) {
 
   int opt;
 
-  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:gdrvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:drvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (has_consensus) {
@@ -2112,14 +2176,16 @@ int main(int argc, char **argv) {
           badexit("Error: -n must be a positive integer.");
         }
         break;
+      case 'j':
+        args.nthreads = atoi(optarg);
+        if (!args.nthreads) {
+          badexit("Error: -j must be a positive integer.");
+        }
       case 'd':
         args.dedup = 1;
         break;
       case 'r':
         args.trim_names = 1;
-        break;
-      case 'g':
-        args.progress = 1;
         break;
       case 'l':
         args.low_mem = 1;
@@ -2159,29 +2225,47 @@ int main(int argc, char **argv) {
     args.pseudocount = 1;
     add_consensus_motif(consensus);
     has_motifs = 1;
+    motif_info.is_consensus = 1;
+  } else if (has_motifs) {
+    load_motifs();
+    find_motif_dupes();
+  }
+
+  if (has_consensus || !has_seqs || !has_motifs || args.low_mem || motif_info.n == 1) {
+    if (args.nthreads > 1) {
+      fprintf(stderr, "Only using 1 thread.\n");
+    }
+    args.nthreads = 1;
   }
 
   if (has_motifs) {
-    if (!has_consensus) {
-      load_motifs();
-      find_motif_dupes();
+    pthread_t *tmp_threads = realloc(threads, sizeof(pthread_t) * args.nthreads);
+    if (tmp_threads == NULL) {
+      badexit("Error: Failed to re-allocate memory for threads.");
     }
-    if (!has_seqs) {
-      if (args.v) {
-        fprintf(stderr,
-          "No sequences provided, parsing + printing motifs before exit.\n");
-      }
-      for (size_t i = 0; i < motif_info.n; i++) {
-        fill_cdf(motifs[i]);
-        set_threshold(motifs[i]);
-        if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
-        fprintf(files.o, "----------------------------------------\n");
-        print_motif(motifs[i], i + 1);
-        motifs[i]->cdf_size = 0;
-      }
-      fprintf(files.o, "----------------------------------------\n");
+    threads = tmp_threads;
+    for (size_t i = 0; i < motif_info.n; i++) {
+      motifs[i]->thread = ((double) i / motif_info.n) * args.nthreads;
     }
   }
+
+  if (has_motifs && !has_seqs) {
+    if (args.v) {
+      fprintf(stderr,
+        "No sequences provided, parsing + printing motifs before exit.\n");
+    }
+    if (alloc_cdf()) badexit("");
+    for (size_t i = 0; i < motif_info.n; i++) {
+      fill_cdf(motifs[i]);
+      set_threshold(motifs[i]);
+      if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
+      fprintf(files.o, "----------------------------------------\n");
+      print_motif(motifs[i], i + 1);
+    }
+    fprintf(files.o, "----------------------------------------\n");
+    free_cdf();
+  }
+
   if (has_seqs) {
     time_t time1 = time(NULL);
     if (args.v) {
@@ -2251,37 +2335,40 @@ int main(int argc, char **argv) {
     }
     if (args.v) fprintf(stderr, "Scanning ...\n");
     time_t time1 = time(NULL);
-    for (size_t i = 0; i < motif_info.n; i++) {
-      if (args.progress) {
-        print_pb((i + 1.0) / motif_info.n);
-      } else if (args.w) {
-        fprintf(stderr, "    Scanning motif: %s\n", motifs[i]->name);
-      }
-      fill_cdf(motifs[i]);
-      set_threshold(motifs[i]);
-      if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
-      if (args.low_mem) {
+    if (alloc_cdf()) badexit("");
+    if (args.low_mem) {
+      for (size_t i = 0; i < motif_info.n; i++) {
+        if (args.w) {
+          fprintf(stderr, "    Scanning motif: %s\n", motifs[i]->name);
+        }
+        fill_cdf(motifs[i]);
+        set_threshold(motifs[i]);
+        if (has_consensus) motifs[0]->threshold = motifs[0]->max_score;
         size_t line_num = 0;
         for (size_t j = 0; j < seq_info.n; j++) {
-          if (!args.progress && args.w) {
+          if (args.w) {
             fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
           }
           line_num = load_next_seq(j, line_num);
           score_seq(i, j, 0);
         }
         rewind(files.s);
-      } else {
-        for (size_t j = 0; j < seq_info.n; j++) {
-          if (!args.progress && args.w) {
-            fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
-          }
-          score_seq(i, j, j);
-        }
       }
-      motifs[i]->cdf_size = 0;
+      if (args.low_mem) free(seqs[0]);
+    } else {
+      for (size_t t = 0; t < args.nthreads; t++) {
+        size_t *thread_i = malloc(sizeof(size_t *));
+        if (thread_i == NULL) {
+          badexit("Error: Failed to allocate memory for thread index.");
+        }
+        *thread_i = t;
+        pthread_create(&threads[t], NULL, scan_sub_process, thread_i);
+      }
+      for (size_t t = 0; t < args.nthreads; t++) {
+        pthread_join(threads[t], NULL);
+      }
     }
-    if (args.low_mem) free(seqs[0]);
-    if (args.progress) fprintf(stderr, "\n");
+    free_cdf();
     time_t time2 = time(NULL);
     time_t time3 = difftime(time2, time1);
     if (args.v) fprintf(stderr, "Done.\n");
@@ -2291,6 +2378,7 @@ int main(int argc, char **argv) {
   }
 
   close_files();
+  free(threads);
   free_motifs();
   free_seqs();
 

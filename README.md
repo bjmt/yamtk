@@ -18,9 +18,13 @@ output results immediately and skip Q-value calculation, but even so fimo is
 quite slow.) Secondly, minimotif loads input sequences completely into memory.
 This means that you are scanning the human genome, be prepared that minimotif
 will need over 3GB of memory. (Alternatively, use the `-l` flag to limit this
-to about 250MB and sacrifice a bit of performance in some cases.)
+to about 250MB and sacrifice a bit of performance in some cases.) In addition,
+minimotif is multithread-capable, thus allowing for further time savings in
+exchange for higher CPU usage.
 
 ## Installation
+
+Requires POSIX threads.
 
 ```sh
 git clone https://github.com/bjmt/minimotif
@@ -65,10 +69,11 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
  -l         Low memory mode. Only allows a single sequence in memory at a
             time. Reading sequences from stdin is disabled. This will have a
             slight impact on performance, which gets worse with increasing
-            motif counts.
- -g         Print a progress bar during scanning. This turns off some of the
-            messages printed by -w. Note that it's only useful if there is
-            more than one input motif.
+            motif counts. Requires a single thread.
+ -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that
+            increasing this number will also increase memory usage slightly.
+            The max number of threads is limited by the number of motifs being
+            scanned.
  -v         Verbose mode. Recommended when using for the first time with new
             motifs/sequences, as warnings about potential issues will only be
             printed when -v/-w are set.
@@ -141,16 +146,18 @@ record time elapsed and peak memory usage (Q-values turned off in fimo):
 ```sh
 time -v minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 time -v minimotif -l -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+time -v minimotif -j 4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 time -v fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
-|                                          |     `minimotif`    |   `minimotif -l`  |      `fimo`      |
-|:----------------------------------------:|:------------------:|:-----------------:|:----------------:|
-|         100 x 1Kbp (100Kbp) +  10 motifs |    0.05s,  4.42MB  |    0.06s,  4.28MB |    0.23s, 3.92MB |
-|         100 x 1Kbp (100Kbp) + 100 motifs |    0.22s,  6.05MB  |    0.27s,  7.00MB |    1.96s, 4.44MB |
-|          100 x 10Kbp (1Mbp) +  10 motifs |    0.15s,  5.38MB  |    0.16s,  4.34MB |    2.44s, 4.20MB |
-|          100 x 10Kbp (1Mbp) + 100 motifs |    1.13s,  6.89MB  |    1.25s,  6.98MB |   23.24s, 4.77MB |
-| Arabidopsis genome (120Mbp) +  10 motifs |   12.12s, 150.50MB |   13.75s, 33.39MB | 4m41.99s, 4.01MB |
-| Arabidopsis genome (120Mbp) + 100 motifs | 1m58.48s, 157.90MB | 2m17.56s, 33.58MB |     (not run)    |
+
+|                                          |     `minimotif`    |   `minimotif -l`  |  `minimotif -j4`  |      `fimo`      |
+|:----------------------------------------:|:------------------:|:-----------------:|:-----------------:|:----------------:|
+|         100 x 1Kbp (100Kbp) +  10 motifs |    0.05s,   4.42MB |    0.06s,  4.28MB |   0.02s,  11.08MB |    0.23s, 3.92MB |
+|         100 x 1Kbp (100Kbp) + 100 motifs |    0.22s,   6.05MB |    0.27s,  7.00MB |   0.09s,  13.80MB |    1.96s, 4.44MB |
+|          100 x 10Kbp (1Mbp) +  10 motifs |    0.15s,   5.38MB |    0.16s,  4.34MB |   0.07s,  11.89MB |    2.44s, 4.20MB |
+|          100 x 10Kbp (1Mbp) + 100 motifs |    1.13s,   6.89MB |    1.25s,  6.98MB |   0.33s,  16.23MB |   23.24s, 4.77MB |
+| Arabidopsis genome (120Mbp) +  10 motifs |   12.12s, 150.50MB |   13.75s, 33.39MB |   4.42s, 140.70MB | 4m41.99s, 4.01MB |
+| Arabidopsis genome (120Mbp) + 100 motifs | 1m58.48s, 157.90MB | 2m17.56s, 33.58MB |  32.83s, 156.20MB |     (not run)    |
 
 From the benchmarks the speed advantage of minimotif over fimo is clear. Also
 obvious however, is the associated high memory usage costs. By sacrificing a
@@ -161,6 +168,9 @@ to the size of the largest single sequence within the fasta file, instead of
 the size of all sequences added together. In the example benchmark above when
 scanning the Arabidopsis genome, minimotif only requests enough memory to hold
 the largest chromosome (~30Mbp) rather then the entire genome (~120Mbp).
+However the downsides to this include sequences can no longer be able to be
+provided via `stdin`, performance degradation with higher motif counts, and
+restricting thread usage to 1.
 
 ## Compatible motif formats
 
