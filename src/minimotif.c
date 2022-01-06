@@ -271,15 +271,16 @@ args_t args = {
 
 typedef struct motif_t {
   size_t    size;
+  size_t    cdf_size;
+  size_t    thread;
+  size_t    file_line_num;
   int       threshold;
   int       min;                         /* Smallest single PWM score */
   int       max;                         /* Largest single PWM score  */
   int       max_score;                   /* Largest total PWM score   */
   int       min_score;                   /* Smallest total PWM score  */
-  size_t    cdf_size;
   int       cdf_max;
-  size_t    thread;
-  size_t    file_line_num;
+  int       cdf_offset;
   char      name[MAX_NAME_SIZE];
   int       pwm[MAX_MOTIF_SIZE];
   int       pwm_rc[MAX_MOTIF_SIZE];
@@ -536,7 +537,7 @@ void fill_cdf(motif_t *motif) {
 }
 
 static inline double score2pval(const motif_t *motif, const int score) {
-  return motif->cdf[score - motif->min * motif->size];
+  return motif->cdf[score - motif->cdf_offset];
 }
 
 void set_threshold(motif_t *motif) {
@@ -1182,6 +1183,7 @@ void complete_motifs(void) {
   for (size_t i = 0; i < motif_info.n; i++) {
     motifs[i]->min = get_pwm_min(motifs[i]);
     motifs[i]->max = get_pwm_max(motifs[i]);
+    motifs[i]->cdf_offset = motifs[i]->min * motifs[i]->size;
     fill_pwm_rc(motifs[i]);
     motifs[i]->cdf_max = motifs[i]->max - motifs[i]->min;
     motifs[i]->cdf_size = motifs[i]->size * motifs[i]->cdf_max + 1;
@@ -1939,41 +1941,69 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
   }
 }
 
-void score_seq(const size_t motif_i, const size_t seq_i, const size_t seq_loc) {
-  if (seq_sizes[seq_i] < motifs[motif_i]->size ||
-      motifs[motif_i]->threshold == INT_MAX) {
-    return;
-  }
+void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
+  /* Performance notes:
+   * - Tried generating unrolled score_subseq functions for each possible motif size,
+   *   made it slower
+   * - Tried using decreasing loops (i--) in score_subseq, didn't help
+   * - Tried instrument profiling, didn't help/made it slower
+   * - Slight improvement when using -O3/-Ofast versus -O2
+   * - Slight improvements when using local const variables
+   * - Slight improvement for RC when stuffing both strands in the same loop
+   * - No improvement when calculating pvalue locally with pre-computed offset
+   * - At this point I think the only thing that might help would be to change the
+   *   basic logic of how scanning is performed, maybe see if more cache-friendly
+   *   way of doing things are possible (for motif PWM or the actual sequence)
+   */
+  const unsigned char *seq = seqs[seq_loc];
+  const char *seq_name = seq_names[seq_i];
+  const size_t seq_size = seq_sizes[seq_i];
+  const int mot_size = motif->size;
+  if (seq_size < motif->size || motif->threshold == INT_MAX) return;
   int score = INT_MIN;
-  for (size_t i = 0; i <= seq_sizes[seq_i] - motifs[motif_i]->size; i++) {
-    score_subseq(motifs[motif_i], seqs[seq_loc], i, &score); 
-    if (score >= motifs[motif_i]->threshold) {
-      fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-        seq_names[seq_i],
-        i + 1,
-        i + motifs[motif_i]->size,
-        motifs[motif_i]->name,
-        score2pval(motifs[motif_i], score),
-        score / PWM_INT_MULTIPLIER,
-        100.0 * score / motifs[motif_i]->max_score,
-        (int) motifs[motif_i]->size,
-        seqs[seq_loc] + i);
-    }
-  }
   if (args.scan_rc) {
-    for (size_t i = 0; i <= seq_sizes[seq_i] - motifs[motif_i]->size; i++) {
-      score_subseq_rc(motifs[motif_i], seqs[seq_loc], i, &score); 
-      if (score >= motifs[motif_i]->threshold) {
-        fprintf(files.o, "%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_names[seq_i],
+    for (size_t i = 0; i <= seq_size - motif->size; i++) {
+      score_subseq(motif, seq, i, &score); 
+      if (score >= motif->threshold) {
+        fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
           i + 1,
-          i + motifs[motif_i]->size,
-          motifs[motif_i]->name,
-          score2pval(motifs[motif_i], score),
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score),
           score / PWM_INT_MULTIPLIER,
-          100.0 * score / motifs[motif_i]->max_score,
-          (int) motifs[motif_i]->size,
-          seqs[seq_loc] + i);
+          100.0 * score / motif->max_score,
+          mot_size,
+          seq + i);
+      }
+      score_subseq_rc(motif, seq, i, &score); 
+      if (score >= motif->threshold) {
+        fprintf(files.o, "%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
+          i + 1,
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER,
+          100.0 * score / motif->max_score,
+          mot_size,
+          seq + i);
+      }
+    }
+  } else {
+    for (size_t i = 0; i <= seq_size - motif->size; i++) {
+      score_subseq(motif, seq, i, &score); 
+      if (score >= motif->threshold) {
+        fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
+          i + 1,
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER,
+          100.0 * score / motif->max_score,
+          mot_size,
+          seq + i);
       }
     }
   }
@@ -2057,14 +2087,15 @@ void add_consensus_motif(const char *consensus) {
 
 void *scan_sub_process(void *thread_i) {
   for (size_t i = 0; i < motif_info.n; i++) {
-    if (*((int *) thread_i) == motifs[i]->thread) {
+    motif_t *motif = motifs[i];
+    if (*((int *) thread_i) == motif->thread) {
       if (args.w) {
-        fprintf(stderr, "    Scanning motif: %s\n", motifs[i]->name);
+        fprintf(stderr, "    Scanning motif: %s\n", motif->name);
       }
-      fill_cdf(motifs[i]);
-      set_threshold(motifs[i]);
+      fill_cdf(motif);
+      set_threshold(motif);
       for (size_t j = 0; j < seq_info.n; j++) {
-        score_seq(i, j, j);
+        score_seq(motif, j, j);
       }
     }
   }
@@ -2348,7 +2379,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
           }
           line_num = load_next_seq(j, line_num);
-          score_seq(i, j, 0);
+          score_seq(motifs[i], j, 0);
         }
         rewind(files.s);
       }

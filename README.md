@@ -152,12 +152,12 @@ fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 
 |                                          |     `minimotif`    |   `minimotif -l`  |  `minimotif -j4`  |      `fimo`      |
 |:----------------------------------------:|:------------------:|:-----------------:|:-----------------:|:----------------:|
-|         100 x 1Kbp (100Kbp) +  10 motifs |    0.05s,   4.42MB |    0.06s,  4.28MB |   0.02s,  11.08MB |    0.23s, 3.92MB |
-|         100 x 1Kbp (100Kbp) + 100 motifs |    0.22s,   6.05MB |    0.27s,  7.00MB |   0.09s,  13.80MB |    1.96s, 4.44MB |
-|          100 x 10Kbp (1Mbp) +  10 motifs |    0.15s,   5.38MB |    0.16s,  4.34MB |   0.07s,  11.89MB |    2.44s, 4.20MB |
-|          100 x 10Kbp (1Mbp) + 100 motifs |    1.13s,   6.89MB |    1.25s,  6.98MB |   0.33s,  16.23MB |   23.24s, 4.77MB |
-| Arabidopsis genome (120Mbp) +  10 motifs |   12.12s, 150.50MB |   13.75s, 33.39MB |   4.42s, 140.70MB | 4m41.99s, 4.01MB |
-| Arabidopsis genome (120Mbp) + 100 motifs | 1m58.48s, 157.90MB | 2m17.56s, 33.58MB |  32.83s, 156.20MB |     (not run)    |
+|         100 x 1Kbp (100Kbp) +  10 motifs |    0.05s,   5.56MB |    0.02s,  4.34MB |   0.02s,  12.00MB |    0.23s, 3.92MB |
+|         100 x 1Kbp (100Kbp) + 100 motifs |    0.24s,   6.03MB |    0.25s,  4.56MB |   0.09s,  13.69MB |    1.96s, 4.44MB |
+|          100 x 10Kbp (1Mbp) +  10 motifs |    0.13s,   5.25MB |    0.14s,  4.08MB |   0.07s,  11.16MB |    2.44s, 4.20MB |
+|          100 x 10Kbp (1Mbp) + 100 motifs |    0.99s,   8.61MB |    1.16s,  4.61MB |   0.32s,  15.86MB |   23.24s, 4.77MB |
+| Arabidopsis genome (120Mbp) +  10 motifs |   10.00s, 156.70MB |   12.20s, 33.02MB |   3.76s, 156.00MB | 4m41.99s, 4.01MB |
+| Arabidopsis genome (120Mbp) + 100 motifs | 1m36.05s, 155.90MB | 1m56.82s, 33.31MB |  29.00s, 157.00MB |     (not run)    |
 
 From the benchmarks the speed advantage of minimotif over fimo is clear. Also
 obvious however, is the associated high memory usage costs. By sacrificing a
