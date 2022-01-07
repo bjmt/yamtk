@@ -1205,6 +1205,15 @@ void fill_pwm_rc(motif_t *motif) {
   }
 }
 
+void trim_motif_name(motif_t *motif) {
+  for (size_t i = 0; i < MAX_NAME_SIZE; i++) {
+    if (motif->name[i] == ' ' || motif->name[i] == '\t' || motif->name[i] == '\0') {
+      motif->name[i] = '\0';
+      break;
+    }
+  }
+}
+
 void complete_motifs(void) {
   for (size_t i = 0; i < motif_info.n; i++) {
     motifs[i]->min = get_pwm_min(motifs[i]);
@@ -1213,6 +1222,7 @@ void complete_motifs(void) {
     fill_pwm_rc(motifs[i]);
     motifs[i]->cdf_max = motifs[i]->max - motifs[i]->min;
     motifs[i]->cdf_size = motifs[i]->size * motifs[i]->cdf_max + 1;
+    if (args.trim_names) trim_motif_name(motifs[i]);
   }
 }
 
