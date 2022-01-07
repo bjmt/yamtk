@@ -1,4 +1,4 @@
-# minimotif: A small DNA/RNA scanner for HOMER/JASPAR/MEME motifs
+# minimotif: A small super-fast DNA/RNA motif scanner
 
 ## Motivation
 
@@ -24,7 +24,7 @@ exchange for higher CPU usage.
 
 ## Installation
 
-Requires POSIX threads.
+Requires headers for POSIX threads be available on the system.
 
 ```sh
 git clone https://github.com/bjmt/minimotif
@@ -42,7 +42,7 @@ minimotif v1.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
 Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
  -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,
-            JASPAR, HOMER. Must be 1-50 bases wide.
+            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-50 bases wide.
  -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters
             are allowed. Must be 1-50 bases wide. The -b, -t, -p and -n flags
             are unused.
@@ -65,7 +65,8 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
  -n <int>   Number of motif sites used in PWM generation. Default: 1000.
  -d         Deduplicate motif/sequence names. Default: abort. Duplicates will
             have the motif/sequence and line numbers appended.
- -r         Trim motif (JASPAR only) and sequence names to the first word.
+ -r         Trim motif (HOCOMOCO/JASPAR only) and sequence names to the first
+            word.
  -l         Low memory mode. Only allows a single sequence in memory at a
             time. Reading sequences from stdin is disabled. This will have a
             slight impact on performance, which gets worse with increasing
@@ -180,6 +181,30 @@ course stand ready to be corrected.)
 The format will be auto-detected by minimotif. A brief overview of the
 requirements for each format follows.
 
+### [HOCOMOCO](https://hocomoco11.autosome.ru)
+
+Example HOCOMOCO motif:
+
+```
+>ATF1_HUMAN.H11MO.0.B
+144.000000003	180.000000003	79.000000001	97.000000001
+179.000000003	57.000000001	181.000000003	83.000000001
+176.000000003	53.000000001	255.000000003	16.0000000004
+9.0000000002	3.0000000001	16.0000000004	472.000000006
+10.0000000002	5.0000000001	476.000000006	9.0000000002
+473.000000006	5.0000000001	8.0000000002	14.0000000002
+16.0000000004	415.000000006	27.0000000004	42.000000001
+12.0000000002	8.0000000002	438.000000006	42.000000001
+39.000000001	159.000000003	8.0000000002	294.000000006
+144.000000003	233.000000003	72.000000001	51.000000001
+268.000000006	57.000000001	93.000000001	82.000000001
+```
+
+HOCOMOCO motifs have a header line startign with `>` followed by the motif
+name. Only mononucleotide count matrices (PCM) can be used. The counts are
+split into four columns (A/C/G/T). These counts need not be integers. The
+headers cannot contain the tab character.
+
 ### [JASPAR](https://jaspar.genereg.net/docs/)
 
 Example JASPAR motif:
@@ -195,7 +220,8 @@ T [  13 112  41  81   4 ]
 JASPAR motifs each have a header line starting with `>` followed by the motif
 name. Counts for each DNA letter at each position follow this line. Each row
 starts the character for each DNA letter, and is followed by counts for each
-position in the motif enclosed by square brackets.
+position in the motif enclosed by square brackets. These counts must be
+integers.
 
 ### [HOMER](http://homer.ucsd.edu/homer/motif/creatingCustomMotifs.html)
 
@@ -210,8 +236,8 @@ Example HOMER motif:
 0.607	0.177	0.192	0.024
 ```
 
-HOMER motif header lines have three tab-separated essential elements, in
-addition to needing to begin with the `>` character:
+HOMER motif header lines have (at least) three tab-separated essential elements,
+in addition to needing to begin with the `>` character:
 
 1. Consensus sequence (minimotif ignores this but requires something be here)
 

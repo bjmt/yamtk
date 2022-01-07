@@ -1,5 +1,5 @@
 /*
- *   minimotif: A small DNA/RNA scanner for HOMER/JASPAR/MEME motifs
+ *   minimotif: A small super-fast DNA/RNA motif scanner
  *   Copyright (C) 2022  Benjamin Jean-Marie Tremblay
  *
  *   This program is free software: you can redistribute it and/or modify
@@ -131,10 +131,10 @@ void usage(void) {
     "Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa  \n"
     "                                                                              \n"
     " -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,\n"
-    "            JASPAR, HOMER. Must be 1-%zu bases wide.                           \n"
+    "            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-%zu bases wide.           \n"
     " -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters\n"
-    "            are allowed. Must be 1-%zu bases wide. The -b, -t, -p and -n flags \n"
-    "            are unused.                                                       \n"
+    "            are allowed. Must be 1-%zu bases wide. The -b, -t, -0, -p, and -n \n"
+    "            flags are unused.                                                 \n"
     " -s <str>   Filename of fasta-formatted file containing DNA/RNA sequences to  \n"
     "            scan. Use '-' for stdin. Omitting -s will cause minimotif to print\n"
     "            the parsed motifs instead of scanning. Alternatively, solely      \n"
@@ -149,12 +149,15 @@ void usage(void) {
     "            generation.                                                       \n"
     " -f         Only scan the forward strand.                                     \n"
     " -t <dbl>   Threshold P-value. Default: %g.                         \n"
+    " -0         Instead of using a threshold, simply report all hits with a score \n"
+    "            of zero or greater. Useful for manual filtering.                  \n"
     " -p <int>   Pseudocount for PWM generation. Default: %d. Must be a positive    \n"
     "            integer.                                                          \n"
     " -n <int>   Number of motif sites used in PWM generation. Default: %d.         \n"
     " -d         Deduplicate motif/sequence names. Default: abort. Duplicates will \n"
     "            have the motif/sequence and line numbers appended.                \n"
-    " -r         Trim motif (JASPAR only) and sequence names to the first word.    \n"
+    " -r         Trim motif (HOCOMOCO/JASPAR only) and sequence names to the first \n"
+    "            word.                                                             \n"
     " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
     "            time. Reading sequences from stdin is disabled. This will have a  \n"
     "            slight impact on performance, which gets worse with increasing    \n"
@@ -233,10 +236,11 @@ const int consensus2index[] = {
 };
 
 enum MOTIF_FMT {
-  FMT_MEME    = 1,
-  FMT_HOMER   = 2,
-  FMT_JASPAR  = 3,
-  FMT_UNKNOWN = 4
+  FMT_MEME     = 1,
+  FMT_HOMER    = 2,
+  FMT_JASPAR   = 3,
+  FMT_HOCOMOCO = 4,
+  FMT_UNKNOWN  = 5
 };
 
 typedef struct args_t {
@@ -250,6 +254,7 @@ typedef struct args_t {
   int      use_user_bkg;
   int      low_mem;
   int      nthreads;
+  int      thresh0;
   int      v;
   int      w;
 } args_t;
@@ -265,6 +270,7 @@ args_t args = {
   .use_user_bkg    = 0,
   .low_mem         = 0,
   .nthreads        = 1,
+  .thresh0         = 0,
   .v               = 0,
   .w               = 0
 };
@@ -573,7 +579,11 @@ void set_threshold(motif_t *motif) {
     }
     motif->threshold = INT_MAX;
   }
-  if (motif_info.is_consensus) motif->threshold = motif->max_score;
+  if (args.thresh0) {
+    motif->threshold = 0;
+  } else if (motif_info.is_consensus) {
+    motif->threshold = motif->max_score;
+  }
 }
 
 int check_and_load_bkg(double *bkg) {
@@ -661,8 +671,15 @@ size_t count_nonempty_chars(const char *line) {
   return total_chars;
 }
 
+int check_char_is_one_of(const char c, const char *list) {
+  for (size_t i = 0; i < strlen(list); i++) {
+    if (list[i] == c) return 1;
+  }
+  return 0;
+}
+
 int detect_motif_fmt(void) {
-  int jaspar_or_homer = 0, file_fmt = 0;
+  int jaspar_or_hocomoco = 0, file_fmt = 0;
   char *line = NULL;
   size_t len = 0;
   ssize_t read;
@@ -675,18 +692,34 @@ int detect_motif_fmt(void) {
       file_fmt = FMT_MEME;
       break;
     }
-    if (jaspar_or_homer) {
-      if (line[0] == '0' || line[0] == '1') {
-        file_fmt = FMT_HOMER;
-        if (args.w) fprintf(stderr, "Detected HOMER format.\n");
-        break;
-      } else if (line[0] == 'A') {
+    if (jaspar_or_hocomoco) {
+      if (line[0] == 'A' &&
+          check_char_is_one_of('[', line) &&
+          check_char_is_one_of(']', line)) {
         file_fmt = FMT_JASPAR;
         if (args.w) fprintf(stderr, "Detected JASPAR format.\n");
         break;
+      } else {
+        if (line[0] == 'A'|| 
+            check_char_is_one_of('[', line) ||
+            check_char_is_one_of(']', line)) {
+          badexit("Error: Detected malformed JASPAR format.");
+        }
+        if (check_char_is_one_of('-', line)) {
+          badexit("Error: minimotif cannot read HOCOMOCO PWMs.");
+        }
+        file_fmt = FMT_HOCOMOCO;
+        if (args.w) fprintf(stderr, "Detected HOCOMOCO format.\n");
+        break;
       }
     } else if (line[0] == '>') {
-      jaspar_or_homer = 1;
+      if (check_char_is_one_of('\t', line)) {
+        file_fmt = FMT_HOMER;
+        if (args.w) fprintf(stderr, "Detected HOMER format.\n");
+        break;
+      } else {
+        jaspar_or_hocomoco = 1;
+      }
     }
   }
   rewind(files.m);
@@ -710,13 +743,6 @@ int add_motif(void) {
   }
   motif_info.n++;
   init_motif(motifs[motif_info.n - 1]);
-  return 0;
-}
-
-int check_char_is_one_of(const char c, const char *list) {
-  for (size_t i = 0; i < strlen(list); i++) {
-    if (list[i] == c) return 1;
-  }
   return 0;
 }
 
@@ -806,7 +832,7 @@ int get_line_probs(const motif_t *motif, const char *line, double *probs, const 
   return 0;
 }
 
-int add_motif_column(motif_t *motif, const char *line, const size_t pos) {
+int add_motif_ppm_column(motif_t *motif, const char *line, const size_t pos) {
   double probs[] = {-1.0, -1.0, -1.0, -1.0};
   if (get_line_probs(motif, line, probs, 4)) return 1;
   if (normalize_probs(probs, motif->name)) return 1;
@@ -1049,7 +1075,7 @@ void read_meme(void) {
             motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
           badexit("");
         }
-        if (add_motif_column(motifs[motif_i], line, pos_i)) {
+        if (add_motif_ppm_column(motifs[motif_i], line, pos_i)) {
           free(line);
           badexit("");
         }
@@ -1131,7 +1157,7 @@ void read_homer(void) {
         fprintf(stderr, "Error: Motif [%s] is too large (max=%'zu).\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
       }
-      if (add_motif_column(motifs[motif_i], line, pos_i)) {
+      if (add_motif_ppm_column(motifs[motif_i], line, pos_i)) {
         free(line);
         badexit("");
       }
@@ -1420,6 +1446,72 @@ void read_jaspar(void) {
   }
 }
 
+int add_motif_pcm_column(motif_t *motif, const char *line, const size_t pos) {
+  double probs[] = {-1.0, -1.0, -1.0, -1.0};
+  if (get_line_probs(motif, line, probs, 4)) return 1;
+  double pcm_sum = probs[0] + probs[1] + probs[2] + probs[3];
+  if (pcm_sum < 0.99) {
+    fprintf(stderr, "Error: Motif [%s] PCM row adds up to less than 1", motif->name);
+    return 1;
+  }
+  VEC_ADD(probs, args.pseudocount / 4.0, 4);
+  set_score(motif, 'A', pos, calc_score(probs[0] / pcm_sum, args.bkg[0]));
+  set_score(motif, 'C', pos, calc_score(probs[1] / pcm_sum, args.bkg[1]));
+  set_score(motif, 'G', pos, calc_score(probs[2] / pcm_sum, args.bkg[2]));
+  set_score(motif, 'T', pos, calc_score(probs[3] / pcm_sum, args.bkg[3]));
+  return 0;
+}
+
+void read_hocomoco(void) {
+  motif_info.fmt = FMT_HOCOMOCO;
+  char *line = NULL;
+  size_t len = 0;
+  ssize_t read;
+  size_t line_num = 0, motif_i = -1, pos_i;
+  while ((read = getline(&line, &len, files.m)) != -1) {
+    line_num++;
+    if (line[0] == '>') {
+      if (motif_i < -1 && args.w) {
+        fprintf(stderr, "%zu)\n", motifs[motif_i]->size);
+      }
+      motif_i++;
+      if (add_motif()) {
+        free(line);
+        badexit("");
+      }
+      motifs[motif_i]->file_line_num = line_num;
+      for (size_t i = 1, j = 0; i < MAX_NAME_SIZE; i++) {
+        if (line[i] == '\r' || line[i] == '\n' || line[i] == '\0') {
+          motifs[motif_i]->name[j] = '\0';
+          break;
+        }
+        motifs[motif_i]->name[j] = line[i];
+        j++;
+      }
+      if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
+      pos_i = 0;
+    } else if (count_nonempty_chars(line)) {
+      if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
+        fprintf(stderr, "Error: Motif [%s] is too large (max=%'zu).\n",
+          motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
+      }
+      if (add_motif_pcm_column(motifs[motif_i], line, pos_i)) {
+        free(line);
+        badexit("");
+      }
+      pos_i++;
+      motifs[motif_i]->size = pos_i;
+    }
+  }
+  free(line);
+  if (motif_i < -1 && args.w) {
+    fprintf(stderr, "%zu)\n", motifs[motif_i]->size);
+  }
+  if (args.v) {
+    fprintf(stderr, "Found %'zu HOCOMOCO motif(s).\n", motif_info.n);
+  }
+}
+
 void load_motifs(void) {
   switch (detect_motif_fmt()) {
     case FMT_MEME:
@@ -1430,6 +1522,9 @@ void load_motifs(void) {
       break;
     case FMT_JASPAR:
       read_jaspar();
+      break;
+    case FMT_HOCOMOCO:
+      read_hocomoco();
       break;
     case FMT_UNKNOWN:
       badexit("Error: Failed to detect motif format.");
@@ -2136,12 +2231,12 @@ int main(int argc, char **argv) {
 
   char *user_bkg, *consensus;
   int has_motifs = 0, has_seqs = 0, has_consensus = 0;
-  int use_stdout = 1, use_stdin = 0;
+  int use_stdout = 1, use_stdin = 0, use_manual_thresh = 0;
   size_t max_seq_size;
 
   int opt;
 
-  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:drvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:drvwh0")) != -1) {
     switch (opt) {
       case 'm':
         if (has_consensus) {
@@ -2194,6 +2289,7 @@ int main(int argc, char **argv) {
         break;
       case 't':
         args.pvalue = atof(optarg);
+        use_manual_thresh = 1;
         break;
       case 'p':
         args.pseudocount = atof(optarg);
@@ -2221,6 +2317,9 @@ int main(int argc, char **argv) {
       case 'l':
         args.low_mem = 1;
         break;
+      case '0':
+        args.thresh0 = 1;
+        break;
       case 'w':
         args.w = 1;
       case 'v':
@@ -2232,6 +2331,12 @@ int main(int argc, char **argv) {
       default:
         return EXIT_FAILURE;
     }
+  }
+
+  if (use_manual_thresh && args.thresh0) {
+    badexit("Error: Cannot use both -t and -0.");
+  } else if (use_manual_thresh && has_consensus) {
+    badexit("Error: Cannot use both -1 and -0.");
   }
 
   if (use_stdout) {
