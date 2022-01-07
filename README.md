@@ -295,5 +295,6 @@ Other optional lines:
 - Background values will be used if a line starting with `Background letter
   frequencies` and immediately followed by probabilities for A,C,G,T/U is found
 
-Both full and minimal MEME motif files can be used.
+Both full and minimal MEME motif files can be used (alongside its derivatives
+DREME and STREME).
 
