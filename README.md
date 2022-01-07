@@ -151,14 +151,14 @@ minimotif -j 4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
 
-|                                          |     `minimotif`    |   `minimotif -l`  |  `minimotif -j4`  |      `fimo`      |
-|:----------------------------------------:|:------------------:|:-----------------:|:-----------------:|:----------------:|
-|         100 x 1Kbp (100Kbp) +  10 motifs |    0.05s,   5.56MB |    0.02s,  4.34MB |   0.02s,  12.00MB |    0.23s, 3.92MB |
-|         100 x 1Kbp (100Kbp) + 100 motifs |    0.24s,   6.03MB |    0.25s,  4.56MB |   0.09s,  13.69MB |    1.96s, 4.44MB |
-|          100 x 10Kbp (1Mbp) +  10 motifs |    0.13s,   5.25MB |    0.14s,  4.08MB |   0.07s,  11.16MB |    2.44s, 4.20MB |
-|          100 x 10Kbp (1Mbp) + 100 motifs |    0.99s,   8.61MB |    1.16s,  4.61MB |   0.32s,  15.86MB |   23.24s, 4.77MB |
-| Arabidopsis genome (120Mbp) +  10 motifs |   10.00s, 156.70MB |   12.20s, 33.02MB |   3.76s, 156.00MB | 4m41.99s, 4.01MB |
-| Arabidopsis genome (120Mbp) + 100 motifs | 1m36.05s, 155.90MB | 1m56.82s, 33.31MB |  29.00s, 157.00MB |     (not run)    |
+|                                |     `minimotif`    |   `minimotif -l`  |  `minimotif -j4`  |      `fimo`      |
+|:------------------------------:|:------------------:|:-----------------:|:-----------------:|:----------------:|
+| 100x1Kbp (100Kbp) +  10 motifs |    0.05s,   5.56MB |    0.02s,  4.34MB |   0.02s,  12.00MB |    0.23s, 3.92MB |
+| 100x1Kbp (100Kbp) + 100 motifs |    0.24s,   6.03MB |    0.25s,  4.56MB |   0.09s,  13.69MB |    1.96s, 4.44MB |
+| 100x10Kbp (1Mbp)  +  10 motifs |    0.13s,   5.25MB |    0.14s,  4.08MB |   0.07s,  11.16MB |    2.44s, 4.20MB |
+| 100x10Kbp (1Mbp)  + 100 motifs |    0.99s,   8.61MB |    1.16s,  4.61MB |   0.32s,  15.86MB |   23.24s, 4.77MB |
+|   TAIR10 (120Mbp) +  10 motifs |   10.00s, 156.70MB |   12.20s, 33.02MB |   3.76s, 156.00MB | 4m41.99s, 4.01MB |
+|   TAIR10 (120Mbp) + 100 motifs | 1m36.05s, 155.90MB | 1m56.82s, 33.31MB |  29.00s, 157.00MB |     (not run)    |
 
 From the benchmarks the speed advantage of minimotif over fimo is clear. Also
 obvious however, is the associated high memory usage costs. By sacrificing a
@@ -167,8 +167,8 @@ sequences by using the low-memory option, `-l`. When using this option only one
 sequence is ever kept in memory, meaning that the max memory usage will be tied
 to the size of the largest single sequence within the fasta file, instead of
 the size of all sequences added together. In the example benchmark above when
-scanning the Arabidopsis genome, minimotif only requests enough memory to hold
-the largest chromosome (~30Mbp) rather then the entire genome (~120Mbp).
+scanning the Arabidopsis genome (TAIR10), minimotif only requests enough memory
+to hold the largest chromosome (~30Mbp) rather then the entire genome (~120Mbp).
 However the downsides to this include sequences can no longer be able to be
 provided via `stdin`, performance degradation with higher motif counts, and
 restricting thread usage to 1.
@@ -202,7 +202,7 @@ Example HOCOMOCO motif:
 
 HOCOMOCO motifs have a header line startign with `>` followed by the motif
 name. Only mononucleotide count matrices (PCM) can be used. The counts are
-split into four columns (A/C/G/T). These counts need not be integers. The
+split into four columns (A,C,G,T/U). These counts need not be integers. The
 headers cannot contain the tab character.
 
 ### [JASPAR](https://jaspar.genereg.net/docs/)
