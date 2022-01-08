@@ -127,7 +127,7 @@
 /* Size of progress bar
  */
 #define PROGRESS_BAR_WIDTH                    60
-#define PROGRESS_BAR_STRING                    \
+#define PROGRESS_BAR_STRING                                     \
   "============================================================"
 
 void usage(void) {
@@ -204,7 +204,6 @@ const unsigned char char2index[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
 };
 
-/* Global variables are 0-initiated */
 size_t char_counts[256];
 
 const double consensus2probs[] = {
@@ -2080,6 +2079,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
    * - Tried providing a vector of reverse cumulative max scores per position to
    *   allow score_subseq to stop early if passing the threshold becomes impossible,
    *   made it slower
+   *   + Give this one a second try, not sure I did it right the first time
    * - At this point I think the only thing that might help would be to change the
    *   basic logic of how scanning is performed, maybe see if more cache-friendly
    *   way of doing things are possible (for motif PWM or the actual sequence)
