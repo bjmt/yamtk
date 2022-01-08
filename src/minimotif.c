@@ -124,6 +124,12 @@
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
+/* Size of progress bar
+ */
+#define PROGRESS_BAR_WIDTH                    60
+#define PROGRESS_BAR_STRING                    \
+  "============================================================"
+
 void usage(void) {
   printf(
     "minimotif v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay              \n"
@@ -166,6 +172,9 @@ void usage(void) {
     "            increasing this number will also increase memory usage slightly.  \n"
     "            The number of threads is limited by the number of motifs being    \n"
     "            scanned.                                                          \n"
+    " -g         Print a progress bar during scanning. This turns off some of the  \n"
+    "            messages printed by -w. Note that it's only useful if there is    \n"
+    "            more than one input motif.                                        \n"
     " -v         Verbose mode. Recommended when using for the first time with new  \n"
     "            motifs/sequences, as warnings about potential issues will only be \n"
     "            printed when -v/-w are set.                                       \n"
@@ -255,6 +264,7 @@ typedef struct args_t {
   int      low_mem;
   int      nthreads;
   int      thresh0;
+  int      progress;
   int      v;
   int      w;
 } args_t;
@@ -271,6 +281,7 @@ args_t args = {
   .low_mem         = 0,
   .nthreads        = 1,
   .thresh0         = 0,
+  .progress        = 0,
   .v               = 0,
   .w               = 0
 };
@@ -397,7 +408,9 @@ void free_cdf(void) {
   free(cdf_real_size);
 }
 
-pthread_t   *threads;
+pthread_t         *threads;
+pthread_mutex_t    pb_lock;
+size_t             pb_counter = 0;
 
 typedef struct files_t {
   FILE   *m;
@@ -476,15 +489,15 @@ void badexit(const char *msg) {
 void fill_cdf(motif_t *motif) {
   size_t max_step, s;
   double pdf_sum = 0.0;
-  if (args.w && args.nthreads == 1) {
+  if (args.w && args.nthreads == 1 && !args.progress) {
     fprintf(stderr, "        Generating CDF for [%s] (n=%'zu) ... ",
       motif->name, motif->cdf_size);
-  } else if (args.w) {
+  } else if (args.w && !args.progress) {
     fprintf(stderr, "        Generating CDF for [%s] (n=%'zu)\n",
       motif->name, motif->cdf_size);
   }
   if (motif->cdf_size > MAX_CDF_SIZE) {
-    if (args.w&& args.nthreads == 1) fprintf(stderr, "\n");
+    if (args.w&& args.nthreads == 1 && !args.progress) fprintf(stderr, "\n");
     fprintf(stderr,
         "Internal error: Requested CDF size for [%s] is too large (%'zu>%'zu).\n",
         motif->name, motif->cdf_size, MAX_CDF_SIZE);
@@ -528,7 +541,7 @@ void fill_cdf(motif_t *motif) {
   }
   for (size_t i = 0; i < motif->cdf_size; i++) pdf_sum += motif->cdf[i];
   if (fabs(pdf_sum - 1.0) > 0.0001) {
-    if (args.w && args.nthreads == 1) {
+    if (args.w && args.nthreads == 1 && !args.progress) {
       fprintf(stderr, "Internal warning: sum(PDF)!= 1.0 for [%s] (sum=%.2g)\n",
           motif->name, pdf_sum);
     }
@@ -539,7 +552,7 @@ void fill_cdf(motif_t *motif) {
   for (size_t i = motif->cdf_size - 2; i >= 0 && i < -1; i--) {
     motif->cdf[i] += motif->cdf[i + 1];
   }
-  if (args.w && args.nthreads == 1) fprintf(stderr, "done.\n");
+  if (args.w && args.nthreads == 1 && !args.progress) fprintf(stderr, "done.\n");
 }
 
 static inline double score2pval(const motif_t *motif, const int score) {
@@ -570,7 +583,7 @@ void set_threshold(motif_t *motif) {
   }
   double min_pvalue = score2pval(motif, motif->max_score);
   if (min_pvalue / args.pvalue > 1.0001) {
-    if (args.w) {
+    if (args.w && !args.progress) {
       fprintf(stderr,
         "Warning: Min possible pvalue for [%s] is greater than the threshold,\n",
         motif->name);
@@ -2201,17 +2214,31 @@ void add_consensus_motif(const char *consensus) {
   complete_motifs();
 }
 
+void print_pb(const double prog) {
+  int left = prog * PROGRESS_BAR_WIDTH;
+  int right = PROGRESS_BAR_WIDTH - left;
+  fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
+      (int) (prog * 100.0));
+  fflush(stderr);
+}
+
 void *scan_sub_process(void *thread_i) {
   for (size_t i = 0; i < motif_info.n; i++) {
     motif_t *motif = motifs[i];
     if (*((int *) thread_i) == motif->thread) {
-      if (args.w) {
+      if (args.w && !args.progress) {
         fprintf(stderr, "    Scanning motif: %s\n", motif->name);
       }
       fill_cdf(motif);
       set_threshold(motif);
       for (size_t j = 0; j < seq_info.n; j++) {
         score_seq(motif, j, j);
+      }
+      if (args.progress) {
+        pthread_mutex_lock(&pb_lock);
+        pb_counter++;
+        print_pb((double) pb_counter / motif_info.n);
+        pthread_mutex_unlock(&pb_lock);
       }
     }
   }
@@ -2257,7 +2284,7 @@ int main(int argc, char **argv) {
 
   int opt;
 
-  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:drvwh0")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:dgrvwh0")) != -1) {
     switch (opt) {
       case 'm':
         if (has_consensus) {
@@ -2340,6 +2367,9 @@ int main(int argc, char **argv) {
         break;
       case '0':
         args.thresh0 = 1;
+        break;
+      case 'g':
+        args.progress = 1;
         break;
       case 'w':
         args.w = 1;
@@ -2493,24 +2523,28 @@ int main(int argc, char **argv) {
     time_t time1 = time(NULL);
     if (alloc_cdf()) badexit("");
     if (args.low_mem) {
+      if (args.progress) print_pb(0.0);
       for (size_t i = 0; i < motif_info.n; i++) {
-        if (args.w) {
+        if (args.w && !args.progress) {
           fprintf(stderr, "    Scanning motif: %s\n", motifs[i]->name);
         }
         fill_cdf(motifs[i]);
         set_threshold(motifs[i]);
         size_t line_num = 0;
         for (size_t j = 0; j < seq_info.n; j++) {
-          if (args.w) {
+          if (args.w && !args.progress) {
             fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
           }
           line_num = load_next_seq(j, line_num);
           score_seq(motifs[i], j, 0);
         }
         rewind(files.s);
+        if (args.progress) print_pb((i + 1.0) / motif_info.n);
       }
       if (args.low_mem) free(seqs[0]);
+      if (args.progress) fprintf(stderr, "\n");
     } else {
+      if (args.progress) print_pb(0.0);
       for (size_t t = 0; t < args.nthreads; t++) {
         size_t *thread_i = malloc(sizeof(size_t *));
         if (thread_i == NULL) {
@@ -2522,6 +2556,7 @@ int main(int argc, char **argv) {
       for (size_t t = 0; t < args.nthreads; t++) {
         pthread_join(threads[t], NULL);
       }
+      if (args.progress) fprintf(stderr, "\n");
     }
     free_cdf();
     time_t time2 = time(NULL);
