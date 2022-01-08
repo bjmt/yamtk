@@ -173,9 +173,6 @@ However the downsides to this include sequences can no longer be able to be
 provided via `stdin`, performance degradation with higher motif counts, and
 restricting thread usage to 1.
 
-(After a brief look around, I have yet to find a faster motif scanner. I of
-course stand ready to be corrected.)
-
 ## Compatible motif formats
 
 The format will be auto-detected by minimotif. A brief overview of the
