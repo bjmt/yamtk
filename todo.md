@@ -1,10 +1,8 @@
 ## Todo
 
-- Consider just using isspace() instead of manually checking for spaces/tabs
+- Having sequences be the outer loop, and motifs as the inner loop?
 
 - No overlaps (as a separate program)
-
-- multithreading
 
 - Qvalues (as a separate program)
   + BH pvalues: `min(pvals / ((rank(pvals) / nPossibleHits) * 100), 1)`

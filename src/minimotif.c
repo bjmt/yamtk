@@ -408,7 +408,7 @@ void free_cdf(void) {
 }
 
 pthread_t         *threads;
-pthread_mutex_t    pb_lock;
+pthread_mutex_t    pb_lock = PTHREAD_MUTEX_INITIALIZER;
 size_t             pb_counter = 0;
 
 typedef struct files_t {
@@ -420,7 +420,11 @@ typedef struct files_t {
   int     o_open;
 } files_t;
 
-files_t files = { .m_open = 0, .s_open = 0, .o_open = 0 };
+files_t files = {
+  .m_open = 0,
+  .s_open = 0,
+  .o_open = 0
+};
 
 void close_files(void) {
   if (files.m_open) fclose(files.m);
@@ -430,9 +434,12 @@ void close_files(void) {
 
 void init_motif(motif_t *motif) {
   ERASE_ARRAY(motif->name, MAX_NAME_SIZE);
-  motif->name[0] = 'm'; motif->name[1] = 'o';
-  motif->name[2] = 't'; motif->name[3] = 'i';
-  motif->name[4] = 'f'; motif->name[5] = '\0';
+  motif->name[0] = 'm';
+  motif->name[1] = 'o';
+  motif->name[2] = 't';
+  motif->name[3] = 'i';
+  motif->name[4] = 'f';
+  motif->name[5] = '\0';
   motif->size = 0;
   motif->threshold = 0;
   motif->max_score = 0;
@@ -2079,7 +2086,6 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
    * - Tried providing a vector of reverse cumulative max scores per position to
    *   allow score_subseq to stop early if passing the threshold becomes impossible,
    *   made it slower
-   *   + Give this one a second try, not sure I did it right the first time
    * - At this point I think the only thing that might help would be to change the
    *   basic logic of how scanning is performed, maybe see if more cache-friendly
    *   way of doing things are possible (for motif PWM or the actual sequence)
