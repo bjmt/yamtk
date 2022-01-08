@@ -679,7 +679,7 @@ int check_char_is_one_of(const char c, const char *list) {
 }
 
 int detect_motif_fmt(void) {
-  int jaspar_or_hocomoco = 0, file_fmt = 0;
+  int jaspar_or_hocomoco = 0, file_fmt = 0, has_tabs = 0;
   char *line = NULL;
   size_t len = 0;
   ssize_t read;
@@ -705,21 +705,24 @@ int detect_motif_fmt(void) {
             check_char_is_one_of(']', line)) {
           badexit("Error: Detected malformed JASPAR format.");
         }
-        if (check_char_is_one_of('-', line)) {
-          badexit("Error: minimotif cannot read HOCOMOCO PWMs.");
+        if (has_tabs) {
+          file_fmt = FMT_HOMER;
+          if (args.w) fprintf(stderr, "Detected HOMER format.\n");
+          break;
+        } else {
+          if (check_char_is_one_of('-', line)) {
+            badexit("Error: minimotif cannot read HOCOMOCO PWMs.");
+          }
+          file_fmt = FMT_HOCOMOCO;
+          if (args.w) fprintf(stderr, "Detected HOCOMOCO format.\n");
+          break;
         }
-        file_fmt = FMT_HOCOMOCO;
-        if (args.w) fprintf(stderr, "Detected HOCOMOCO format.\n");
-        break;
       }
     } else if (line[0] == '>') {
       if (check_char_is_one_of('\t', line)) {
-        file_fmt = FMT_HOMER;
-        if (args.w) fprintf(stderr, "Detected HOMER format.\n");
-        break;
-      } else {
-        jaspar_or_hocomoco = 1;
+        has_tabs = 1;
       }
+      jaspar_or_hocomoco = 1;
     }
   }
   rewind(files.m);
@@ -1138,9 +1141,11 @@ void read_homer(void) {
   size_t len = 0;
   ssize_t read;
   size_t line_num = 0, motif_i = -1, pos_i;
+  int ready_to_start = 0;
   while ((read = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (line[0] == '>') {
+      ready_to_start = 1;
       if (motif_i < -1 && args.w) {
         fprintf(stderr, "%zu)\n", motifs[motif_i]->size);
       }
@@ -1152,7 +1157,7 @@ void read_homer(void) {
       motifs[motif_i]->file_line_num = line_num;
       parse_homer_name(line, motif_i);
       pos_i = 0;
-    } else if (count_nonempty_chars(line)) {
+    } else if (count_nonempty_chars(line) && ready_to_start) {
       if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
         fprintf(stderr, "Error: Motif [%s] is too large (max=%'zu).\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
@@ -1403,10 +1408,11 @@ void read_jaspar(void) {
   char *line = NULL;
   size_t len = 0;
   ssize_t read;
-  size_t line_num = 0, motif_i = -1, row_i = -1;
+  size_t line_num = 0, motif_i = -1, row_i = -1, ready_to_start = 0;
   while ((read = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (line[0] == '>') {
+      ready_to_start = 1;
       if (motif_i < -1 && args.w) {
         fprintf(stderr, "%zu)\n", motifs[motif_i]->size);
       }
@@ -1428,7 +1434,7 @@ void read_jaspar(void) {
       motifs[motif_i]->file_line_num = line_num;
       parse_jaspar_name(line, motif_i);
       row_i = 0;
-    } else if (count_nonempty_chars(line)) {
+    } else if (count_nonempty_chars(line) && ready_to_start) {
       row_i++;
       if (add_jaspar_row(motifs[motif_i], line)) {
         free(line);
@@ -1478,9 +1484,11 @@ void read_hocomoco(void) {
   size_t len = 0;
   ssize_t read;
   size_t line_num = 0, motif_i = -1, pos_i;
+  int ready_to_start = 0;
   while ((read = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (line[0] == '>') {
+      ready_to_start = 1;
       if (motif_i < -1 && args.w) {
         fprintf(stderr, "%zu)\n", motifs[motif_i]->size);
       }
@@ -1500,7 +1508,7 @@ void read_hocomoco(void) {
       }
       if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
       pos_i = 0;
-    } else if (count_nonempty_chars(line)) {
+    } else if (count_nonempty_chars(line) && ready_to_start) {
       if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
         fprintf(stderr, "Error: Motif [%s] is too large (max=%'zu).\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
