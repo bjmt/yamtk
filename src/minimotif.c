@@ -2090,6 +2090,9 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
    * - Tried providing a vector of reverse cumulative max scores per position to
    *   allow score_subseq to stop early if passing the threshold becomes impossible,
    *   made it slower
+   * - Tried allowing for sequences to be the outer loop, and motifs the inner loop;
+   *   surprisingly not any faster, even when using multiple threads for multiple
+   *   sequences vs a single motif
    * - At this point I think the only thing that might help would be to change the
    *   basic logic of how scanning is performed, maybe see if more cache-friendly
    *   way of doing things are possible (for motif PWM or the actual sequence)
