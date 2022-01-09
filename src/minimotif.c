@@ -1832,8 +1832,11 @@ void load_seqs(void) {
       name_loaded = 1;
     } else if (name_loaded) {
       line_len_no_spaces = 0;
-      for (size_t i = 0; i < line_len; i++) if (line[i] != ' ') line_len_no_spaces++;
-      if (seq_sizes[seq_i] && (seq_sizes[seq_i] + line_len_no_spaces) > seq_real_sizes[seq_i]) {
+      for (size_t i = 0; i < line_len; i++) {
+        if (line[i] != ' ') line_len_no_spaces++;
+      }
+      if (seq_sizes[seq_i] &&
+          (seq_sizes[seq_i] + line_len_no_spaces) > seq_real_sizes[seq_i]) {
         size_t rl_size = MAX(SEQ_REALLOC_SIZE, line_len_no_spaces);
         unsigned char *tmp_ptr4 = realloc(seqs[seq_i],
           sizeof(**seqs) * (seq_real_sizes[seq_i] + rl_size));
@@ -1880,7 +1883,8 @@ void load_seqs(void) {
   if (seq_info.unknowns == seq_len_total) {
     badexit("Error: Failed to read any standard DNA/RNA bases.");
   } else if (unknowns_pct >= 90.0) {
-    fprintf(stderr, "!!! Warning: Non-standard base count is extremely high!!! (%.2f%%)\n",
+    fprintf(stderr,
+      "!!! Warning: Non-standard base count is extremely high!!! (%.2f%%)\n",
       unknowns_pct);
   } else if (unknowns_pct >= 50.0 && args.v) {
     fprintf(stderr, "Warning: Non-standard base count is very high! (%.2f%%)\n",
