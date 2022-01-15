@@ -74,11 +74,11 @@
  */
 #define MEME_BKG_MAX_SIZE         ((size_t) 256)
 
-/* Max size of PCM/PPM values in parsed motifs
+/* Max size of PCM/PPM values in parsed motifs.
  */
 #define MOTIF_VALUE_MAX_CHAR      ((size_t) 256)
 
-/* Max size of sequence names
+/* Max size of sequence names.
  */
 #define SEQ_NAME_MAX_CHAR         ((size_t) 256)
 
@@ -103,28 +103,26 @@
     for (size_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] /= X;       \
   } while (0)
 
-#define VEC_SUM(VEC, VEC_SUM, VEC_LEN)                          \
+#define VEC_SUM(VEC, SUM_RES, VEC_LEN)                          \
   do {                                                          \
-    for (size_t Xi = 0; Xi < VEC_LEN; Xi++) VEC_SUM += VEC[Xi]; \
+    SUM_RES = 0;                                                \
+    for (size_t Xi = 0; Xi < VEC_LEN; Xi++) SUM_RES += VEC[Xi]; \
   } while (0)
 
-#define VEC_MIN(VEC, VEC_MIN, VEC_LEN)                          \
+#define VEC_MIN(VEC, MIN_RES, VEC_LEN)                          \
   do {                                                          \
-    VEC_MIN = VEC[0];                                           \
-    for (size_t Xi = 0; Xi < VEC_LEN; Xi++) {                   \
-      if (VEC[Xi] < VEC_MIN) VEC_MIN = VEC[Xi];                 \
+    MIN_RES = VEC[0];                                           \
+    for (size_t Xi = 1; Xi < VEC_LEN; Xi++) {                   \
+      if (VEC[Xi] < MIN_RES) MIN_RES = VEC[Xi];                 \
     }                                                           \
   } while (0)
 
-#define ERASE_ARRAY(ARR, LEN)                                   \
-  do {                                                          \
-    for (size_t Xi = 0; Xi < LEN; Xi++) ARR[Xi] = 0;            \
-  } while (0)
+#define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 
-#define MIN(a,b) (((a)<(b))?(a):(b))
-#define MAX(a,b) (((a)>(b))?(a):(b))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
-/* Size of progress bar
+/* Size of progress bar.
  */
 #define PROGRESS_BAR_WIDTH                    60
 #define PROGRESS_BAR_STRING                                     \
@@ -515,28 +513,28 @@ void fill_cdf(motif_t *motif) {
    * single one for all motifs -- just reset it every time and realloc to a
    * larger size if needed.
    */
-    if (cdf_real_size[motif->thread] < motif->cdf_size) {
-      double *cdf_rl = realloc(cdf[motif->thread], motif->cdf_size * sizeof(double));
-      if (cdf_rl == NULL) {
-        badexit("Error: Memory re-allocation for motif CDF failed.");
-      }
-      cdf[motif->thread] = cdf_rl;
-      double *tmp_pdf_rl = realloc(tmp_pdf[motif->thread], motif->cdf_size * sizeof(double));
-      if (cdf_rl == NULL) {
-        badexit("Error: Memory re-allocation for temporary motif PDF failed.");
-      }
-      tmp_pdf[motif->thread] = tmp_pdf_rl;
-      cdf_real_size[motif->thread] = motif->cdf_size;
+  if (cdf_real_size[motif->thread] < motif->cdf_size) {
+    double *cdf_rl = realloc(cdf[motif->thread], motif->cdf_size * sizeof(double));
+    if (cdf_rl == NULL) {
+      badexit("Error: Memory re-allocation for motif CDF failed.");
     }
-    motif->cdf = cdf[motif->thread];
-    motif->tmp_pdf = tmp_pdf[motif->thread];
+    cdf[motif->thread] = cdf_rl;
+    double *tmp_pdf_rl = realloc(tmp_pdf[motif->thread], motif->cdf_size * sizeof(double));
+    if (cdf_rl == NULL) {
+      badexit("Error: Memory re-allocation for temporary motif PDF failed.");
+    }
+    tmp_pdf[motif->thread] = tmp_pdf_rl;
+    cdf_real_size[motif->thread] = motif->cdf_size;
+  }
+  motif->cdf = cdf[motif->thread];
+  motif->tmp_pdf = tmp_pdf[motif->thread];
   for (size_t i = 0; i < motif->cdf_size; i++) motif->cdf[i] = 1.0;
   for (size_t i = 0; i < motif->size; i++) {
     max_step = i * motif->cdf_max;
     for (size_t j = 0; j < motif->cdf_size; j++) {
       motif->tmp_pdf[j] = motif->cdf[j];
     }
-    memset(motif->cdf, 0, sizeof(double) * (max_step + motif->cdf_max + 1));
+    ERASE_ARRAY(motif->cdf, max_step + motif->cdf_max + 1);
     for (int j = 0; j < 4; j++) {
       s = get_score_i(motif, j, i) - motif->min;
       /* This loop is where the majority of time is spent for motif-related code. */
@@ -1622,7 +1620,6 @@ size_t load_next_seq(const size_t seq_i, size_t line_num) {
   while((read = getline(&line, &len, files.s)) != -1) {
     line_num++;
     if (line_num == last_line) break;
-    if (!count_nonempty_chars(line)) continue;
     if (line[read - 2] == '\r') {
       line_len = read - 2;
     } else if (line[read - 1] == '\n') {
@@ -1650,7 +1647,6 @@ size_t peak_through_seqs(void) {
   ssize_t read;
   while ((read = getline(&line, &len, files.s)) != -1) {
     line_num++;
-    if (!count_nonempty_chars(line)) continue;
     if (line[read - 2] == '\r') {
       line[read - 2] = '\0';
       line_len = read - 2;
@@ -1660,7 +1656,6 @@ size_t peak_through_seqs(void) {
     } else {
       line_len = read;
     }
-    if (!line_len) continue;
     if (line[0] == '>') {
       seq_i++;
       char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * (1 + seq_i));
@@ -1753,7 +1748,7 @@ size_t peak_through_seqs(void) {
       fprintf(stderr, "Found %'zu (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
     }
-    fprintf(stderr, "Approx. max memory usage by sequence(s): %'.2f MB\n",
+    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f MB\n",
       b2mb(sizeof(unsigned char) * max_seq_size + sizeof(size_t) * seq_info.n +
         sizeof(char) * SEQ_NAME_MAX_CHAR * seq_info.n));
   }
@@ -1768,7 +1763,6 @@ void load_seqs(void) {
   ssize_t read;
   while ((read = getline(&line, &len, files.s)) != -1) {
     line_num++;
-    if (!count_nonempty_chars(line)) continue;
     if (line[read - 2] == '\r') {
       line[read - 2] = '\0';
       line_len = read - 2;
@@ -1778,7 +1772,6 @@ void load_seqs(void) {
     } else {
       line_len = read;
     }
-    if (!line_len) continue;
     if (line[0] == '>') {
       seq_i++;
       char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * (1 + seq_i));
@@ -2433,7 +2426,7 @@ int main(int argc, char **argv) {
 
   if (has_consensus || !has_seqs || !has_motifs || args.low_mem || motif_info.n == 1) {
     if (args.nthreads > 1) {
-      fprintf(stderr, "Only using 1 thread.\n");
+      fprintf(stderr, "Note: Multi-threading not available for current flags.\n");
     }
     args.nthreads = 1;
   }
@@ -2454,6 +2447,7 @@ int main(int argc, char **argv) {
       fprintf(stderr,
         "No sequences provided, parsing + printing motifs before exit.\n");
     }
+    time_t time1 = time(NULL);
     if (alloc_cdf()) badexit("");
     for (size_t i = 0; i < motif_info.n; i++) {
       fill_cdf(motifs[i]);
@@ -2463,6 +2457,14 @@ int main(int argc, char **argv) {
     }
     fprintf(files.o, "----------------------------------------\n");
     free_cdf();
+    time_t time2 = time(NULL);
+    if (args.v) {
+      time_t time3 = difftime(time2, time1);
+      if (time3 > 1) {
+        fprintf(stderr, "Needed %'zu seconds to print motifs.\n",
+          (size_t) time3);
+      }
+    }
   }
 
   if (has_seqs) {
@@ -2482,8 +2484,13 @@ int main(int argc, char **argv) {
     if (args.v) {
       time_t time3 = difftime(time2, time1);
       if (time3 > 1) {
-        fprintf(stderr, "Needed %'zu seconds to load sequences.\n",
-          (size_t) time3);
+        if (args.low_mem) {
+          fprintf(stderr, "Needed %'zu seconds to peak through sequences.\n",
+            (size_t) time3);
+        } else {
+          fprintf(stderr, "Needed %'zu seconds to load sequences.\n",
+            (size_t) time3);
+        }
       }
     }
     if (!has_motifs) {
@@ -2491,6 +2498,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "No motifs provided, printing sequence stats before exit.\n");
       }
       fprintf(files.o, "##seqnum\tline_num\tseqname\tsize\tgc_pct\tn_count\n");
+
+      time_t time1 = time(NULL);
 
       if (args.low_mem) {
         seqs[0] = malloc(sizeof(**seqs) * max_seq_size);
@@ -2505,6 +2514,15 @@ int main(int argc, char **argv) {
         free(seqs[0]);
       } else {
         print_seq_stats(files.o);
+      }
+
+      time_t time2 = time(NULL);
+      if (args.v) {
+        time_t time3 = difftime(time2, time1);
+        if (time3 > 1) {
+          fprintf(stderr, "Needed %'zu seconds to print sequence stats.\n",
+            (size_t) time3);
+        }
       }
 
     }
@@ -2554,7 +2572,7 @@ int main(int argc, char **argv) {
         rewind(files.s);
         if (args.progress) print_pb((i + 1.0) / motif_info.n);
       }
-      if (args.low_mem) free(seqs[0]);
+      free(seqs[0]);
       if (args.progress) fprintf(stderr, "\n");
     } else {
       if (args.progress) print_pb(0.0);

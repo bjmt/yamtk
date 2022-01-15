@@ -1,6 +1,11 @@
 ## Todo
 
-- Having sequences be the outer loop, and motifs as the inner loop?
+- manually read seqs with `getc_unlocked` instead of `getline`
+
+- make `-l` a default? the memory savings are substantial compared to the
+  relatively low speed loss
+
+- multithread low-mem mode
 
 - No overlaps (as a separate program)
 
