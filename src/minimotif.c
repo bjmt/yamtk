@@ -92,6 +92,11 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_PVALUE                   0.00001
 #define DEFAULT_PSEUDOCOUNT                    1
 
+/* Minimum amount of additional memory to request when reading sequences and
+ * more memory is needed. Current default: request memory in 1/2 MB chunks.
+ */
+#define SEQ_REALLOC_SIZE                  524288
+
 #define VEC_ADD(VEC, X, VEC_LEN)                                \
   do {                                                          \
     for (size_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] += X;       \
@@ -2146,7 +2151,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
   int score = INT_MIN;
   if (args.scan_rc) {
     for (size_t i = 0; i <= seq_size - motif->size; i++) {
-      score_subseq(motif, seq, i, &score); 
+      score_subseq(motif, seq, i, &score);
       if (score >= motif->threshold) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
@@ -2159,7 +2164,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
           mot_size,
           seq + i);
       }
-      score_subseq_rc(motif, seq, i, &score); 
+      score_subseq_rc(motif, seq, i, &score);
       if (score >= motif->threshold) {
         fprintf(files.o, "%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
@@ -2175,7 +2180,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
     }
   } else {
     for (size_t i = 0; i <= seq_size - motif->size; i++) {
-      score_subseq(motif, seq, i, &score); 
+      score_subseq(motif, seq, i, &score);
       if (score >= motif->threshold) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
@@ -2219,19 +2224,6 @@ void print_seq_stats(FILE *whereto) {
     fprintf(whereto, "%zu\n", seq_sizes[i] - standard_base_count());
   }
 }
-
-/*
-void trim_seq_names(void) {
-  for (size_t i = 0; i < seq_info.n; i++) {
-    for (size_t j = 0; j < strlen(seq_names[i]); j++) {
-      if (seq_names[i][j] == ' ') {
-        seq_names[i][j] = '\0';
-      }
-      if (seq_names[i][j] == '\0') break;
-    }
-  }
-}
-*/
 
 void add_consensus_motif(const char *consensus) {
   if (add_motif()) badexit("");
