@@ -26,9 +26,9 @@
 #include <limits.h>
 #include <time.h>
 #include <pthread.h>
-
 #include <zlib.h>
 #include "kseq.h"
+
 KSEQ_INIT(gzFile, gzread)
 
 #define MINIMOTIF_VERSION                  "1.0"
@@ -91,11 +91,6 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_NSITES                      1000
 #define DEFAULT_PVALUE                   0.00001
 #define DEFAULT_PSEUDOCOUNT                    1
-
-/* Minimum amount of additional memory to request when reading sequences and
- * more memory is needed. Current default: request memory in 1/2 MB chunks.
- */
-#define SEQ_REALLOC_SIZE                  524288
 
 #define VEC_ADD(VEC, X, VEC_LEN)                                \
   do {                                                          \
