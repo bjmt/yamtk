@@ -1,6 +1,6 @@
 ## Todo
 
-- multithread low-mem mode
+- multithread low-mem mode?
 
 - No overlaps (as a separate program)
 
