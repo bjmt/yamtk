@@ -1,12 +1,5 @@
 ## Todo
 
-- Useq kseq.h
-  + need to keep track of line numbers
-  + skip spaces
-
-- make `-l` a default? the memory savings are substantial compared to the
-  relatively low speed loss
-
 - multithread low-mem mode
 
 - No overlaps (as a separate program)

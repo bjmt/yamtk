@@ -27,6 +27,10 @@
 #include <time.h>
 #include <pthread.h>
 
+#include <zlib.h>
+#include "kseq.h"
+KSEQ_INIT(gzFile, gzread)
+
 #define MINIMOTIF_VERSION                  "1.0"
 #define MINIMOTIF_YEAR                      2022
 
@@ -80,7 +84,7 @@
 
 /* Max size of sequence names.
  */
-#define SEQ_NAME_MAX_CHAR         ((size_t) 256)
+#define SEQ_NAME_MAX_CHAR         ((size_t) 512)
 
 /* Front-facing defaults.
  */
@@ -139,15 +143,15 @@ void usage(void) {
     " -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters\n"
     "            are allowed. Must be 1-%zu bases wide. The -b, -t, -0, -p, and -n \n"
     "            flags are unused.                                                 \n"
-    " -s <str>   Filename of fasta-formatted file containing DNA/RNA sequences to  \n"
-    "            scan. Use '-' for stdin. Omitting -s will cause minimotif to print\n"
-    "            the parsed motifs instead of scanning. Alternatively, solely      \n"
-    "            providing -s and not -m/-1 will cause minimotif to return sequence\n"
-    "            stats. Any spaces found are not read into the final scanned       \n"
-    "            sequence. Non-standard characters (i.e. other than ACGTU) will be \n"
-    "            read but are treated as gaps during scanning.                     \n"
+    " -s <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences \n"
+    "            to scan. Can be gzipped. Use '-' for stdin. Omitting -s will cause\n"
+    "            minimotif to print the parsed motifs instead of scanning.         \n"
+    "            Alternatively, solely providing -s and not -m/-1 will cause       \n"
+    "            minimotif to return sequence stats. Non-standard characters (i.e. \n"
+    "            other than ACGTU) will be read but are treated as gaps during     \n"
+    "            scanning.                                                         \n"
     " -o <str>   Filename to output results. By default output goes to stdout.     \n"
-    " -b <dbl>   Comma-separated background probabilities for A,C,G,T. By default  \n"
+    " -b <dbl>   Comma-separated background probabilities for A,C,G,T|U. By default\n"
     "            the background probability values from the motif file (MEME only) \n"
     "            are used, or a uniform background is assumed. Used in PWM         \n"
     "            generation.                                                       \n"
@@ -159,13 +163,15 @@ void usage(void) {
     "            integer.                                                          \n"
     " -n <int>   Number of motif sites used in PWM generation. Default: %d.         \n"
     " -d         Deduplicate motif/sequence names. Default: abort. Duplicates will \n"
-    "            have the motif/sequence and line numbers appended.                \n"
-    " -r         Trim motif (HOCOMOCO/JASPAR only) and sequence names to the first \n"
-    "            word.                                                             \n"
-    " -l         Low memory mode. Only allows a single sequence in memory at a     \n"
-    "            time. Reading sequences from stdin is disabled. This will have a  \n"
-    "            slight impact on performance, which gets worse with increasing    \n"
-    "            motif counts. Requires a single thread.                           \n"
+    "            have the motif/sequence numbers appended.                         \n"
+    " -r         Don't trim motif (HOCOMOCO/JASPAR only) and sequence names to the \n"
+    "            first word.                                                       \n"
+    " -l         Deactivate low memory mode. Normally only a single sequence is    \n"
+    "            stored in memory at a time. Setting this flag allows the program  \n"
+    "            to store the entire input into memory at a time, which can help   \n"
+    "            with performance when scanning multiple motifs. Note that this    \n"
+    "            flag is automatically set when reading sequences from stdin, and  \n"
+    "            when multithreading is enabled.                                   \n"
     " -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that\n"
     "            increasing this number will also increase memory usage slightly.  \n"
     "            The number of threads is limited by the number of motifs being    \n"
@@ -173,10 +179,8 @@ void usage(void) {
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
     "            messages printed by -w. Note that it's only useful if there is    \n"
     "            more than one input motif.                                        \n"
-    " -v         Verbose mode. Recommended when using for the first time with new  \n"
-    "            motifs/sequences, as warnings about potential issues will only be \n"
-    "            printed when -v/-w are set.                                       \n"
-    " -w         Very verbose mode. Only recommended for debugging purposes.       \n"
+    " -v         Verbose mode.                                                     \n"
+    " -w         Very verbose mode.                                                \n"
     " -h         Print this help message.                                          \n"
     , MINIMOTIF_VERSION, MINIMOTIF_YEAR, MAX_MOTIF_SIZE / 5, MAX_MOTIF_SIZE / 5,
       DEFAULT_PVALUE, DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES
@@ -273,9 +277,9 @@ args_t args = {
   .pseudocount     = DEFAULT_PSEUDOCOUNT,
   .scan_rc         = 1,
   .dedup           = 0,
-  .trim_names      = 0,
+  .trim_names      = 1,
   .use_user_bkg    = 0,
-  .low_mem         = 0,
+  .low_mem         = 1,
   .nthreads        = 1,
   .thresh0         = 0,
   .progress        = 0,
@@ -356,7 +360,6 @@ int alloc_cdf(void) {
 
 typedef struct seq_info_t {
   size_t     n;
-  size_t     line_count;
   size_t     total_bases;
   size_t     unknowns;
   double     gc_pct;
@@ -364,7 +367,6 @@ typedef struct seq_info_t {
 
 seq_info_t seq_info = {
   .n = 0,
-  .line_count = -1,
   .total_bases = 0,
   .unknowns = 0,
   .gc_pct = 0.0
@@ -373,8 +375,6 @@ seq_info_t seq_info = {
 char            **seq_names;
 unsigned char   **seqs;
 size_t           *seq_sizes;
-size_t           *seq_real_sizes;
-size_t           *seq_line_nums;
 
 void free_seqs(void) {
   for (size_t i = 0; i < seq_info.n; i++) {
@@ -382,9 +382,7 @@ void free_seqs(void) {
     if (!args.low_mem) free(seqs[i]);
   }
   free(seq_names);
-  free(seq_real_sizes);
   free(seq_sizes);
-  free(seq_line_nums);
   free(seqs);
 }
 
@@ -410,12 +408,12 @@ pthread_mutex_t    pb_lock = PTHREAD_MUTEX_INITIALIZER;
 size_t             pb_counter = 0;
 
 typedef struct files_t {
-  FILE   *m;
-  FILE   *s;
-  FILE   *o;
-  int     m_open;
-  int     s_open;
-  int     o_open;
+  FILE     *m;
+  gzFile    s;
+  FILE     *o;
+  int       m_open;
+  int       s_open;
+  int       o_open;
 } files_t;
 
 files_t files = {
@@ -426,7 +424,7 @@ files_t files = {
 
 void close_files(void) {
   if (files.m_open) fclose(files.m);
-  if (files.s_open) fclose(files.s);
+  if (files.s_open) gzclose(files.s);
   if (files.o_open) fclose(files.o);
 }
 
@@ -1603,114 +1601,78 @@ double calc_gc(void) {
   return gc;
 }
 
-size_t load_next_seq(const size_t seq_i, size_t line_num) {
-  size_t line_len = 0, tmp_count = 0, j = 0, last_line;
-  char *line = NULL;
-  size_t len = 0;
-  ssize_t read;
-  if (seq_i + 1 == seq_info.n) {
-    last_line = seq_info.line_count + 1;
-  } else {
-    last_line = seq_line_nums[seq_i + 1];
+void add_seq_name(char *name, kseq_t *kseq) {
+  for (size_t i = 0; i < kseq->name.l; i++) {
+    name[i] = kseq->name.s[i];
   }
-  while (line_num < seq_line_nums[seq_i]) {
-    read = getline(&line, &len, files.s);
-    line_num++;
-  }
-  while((read = getline(&line, &len, files.s)) != -1) {
-    line_num++;
-    if (line_num == last_line) break;
-    if (line[read - 2] == '\r') {
-      line_len = read - 2;
-    } else if (line[read - 1] == '\n') {
-      line_len = read - 1;
-    } else {
-      line_len = read;
+  if (args.trim_names || !kseq->comment.l) {
+    if (kseq->name.l > SEQ_NAME_MAX_CHAR) {
+      kseq_destroy(kseq);
+      fprintf(stderr, "Error: Sequence name is too large (%zu>%zu).",
+        kseq->name.l, SEQ_NAME_MAX_CHAR);
+      badexit("");
     }
-    j = 0;
-    for (size_t i = 0; i < line_len; i++) {
-      if (line[i] != ' ') {
-        seqs[0][j + tmp_count] = line[i]; j++;
-      }
+    name[kseq->name.l] = '\0';
+  } else if (kseq->comment.l) {
+    if (kseq->name.l + kseq->comment.l + 1 > SEQ_NAME_MAX_CHAR) {
+      kseq_destroy(kseq);
+      fprintf(stderr, "Error: Sequence name is too large (%zu>%zu).",
+        kseq->name.l + kseq->comment.l + 1, SEQ_NAME_MAX_CHAR);
+      badexit("");
     }
-    tmp_count += j;
+    name[kseq->name.l] = ' ';
+    for (size_t j = 0, i = kseq->name.l + 1; i < kseq->name.l + kseq->comment.l + 1; i++, j++) {
+      name[i] = kseq->comment.s[j];
+    }
+    name[kseq->name.l + kseq->comment.l + 1] = '\0';
   }
-  free(line);
-  return line_num;
 }
 
-size_t peak_through_seqs(void) {
-  size_t line_len = 0, line_num = 0, line_len_no_spaces = 0, seq_i = -1;
-  int name_loaded = 0;
-  char *line = NULL;
-  size_t len = 0;
-  ssize_t read;
-  while ((read = getline(&line, &len, files.s)) != -1) {
-    line_num++;
-    if (line[read - 2] == '\r') {
-      line[read - 2] = '\0';
-      line_len = read - 2;
-    } else if (line[read - 1] == '\n') {
-      line[read - 1] = '\0';
-      line_len = read - 1;
+size_t peak_through_seqs(kseq_t *kseq) {
+  size_t name_sizes = 0;
+  int ret_val;
+  while ((ret_val = kseq_read(kseq)) >= 0) {
+    seq_info.n++;
+    char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * seq_info.n);
+    if (tmp_ptr1 == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequence names.");
     } else {
-      line_len = read;
+      seq_names = tmp_ptr1;
     }
-    if (line[0] == '>') {
-      seq_i++;
-      char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * (1 + seq_i));
-      if (tmp_ptr1 == NULL) {
-        free(line);
-        badexit("Error: Failed to allocate memory for sequence names.");
-      } else {
-        seq_names = tmp_ptr1;
-      }
-      size_t *tmp_ptr3 = realloc(seq_sizes, sizeof(*seq_sizes) * (1 + seq_i));
-      if (tmp_ptr3 == NULL) {
-        free(line);
-        badexit("Error: Failed to allocate memory for sequence sizes.");
-      } else {
-        seq_sizes = tmp_ptr3;
-      }
-      seq_sizes[seq_i] = 0;
-      size_t *tmp_ptr5 = realloc(seq_line_nums, sizeof(*seq_line_nums) * (1 + seq_i));
-      if (tmp_ptr5 == NULL) {
-        free(line);
-        badexit("Error: Failed to allocate memory for sequence line numbers.");
-      } else {
-        seq_line_nums = tmp_ptr5;
-      }
-      seq_line_nums[seq_i] = line_num;
-      seq_names[seq_i] = malloc(sizeof(**seq_names) * SEQ_NAME_MAX_CHAR);
-      if (seq_names[seq_i] == NULL) {
-        free(line);
-        badexit("Error: Failed to allocate memory for sequence name.");
-      }
-      ERASE_ARRAY(seq_names[seq_i], SEQ_NAME_MAX_CHAR);
-      for (size_t i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
-        if (line[i + 1] == '\0') break;
-        seq_names[seq_i][i] = line[i + 1];
-      }
-      name_loaded = 1;
-      seq_sizes[seq_i] = 0;
-    } else if (name_loaded) {
-      line_len_no_spaces = 0;
-      for (size_t i = 0; i < line_len; i++) {
-        if (line[i] != ' ') {
-          line_len_no_spaces++;
-          char_counts[(unsigned char) line[i]]++;
-        }
-      }
-      seq_sizes[seq_i] += line_len_no_spaces;
+    size_t *tmp_ptr3 = realloc(seq_sizes, sizeof(*seq_sizes) * seq_info.n);
+    if (tmp_ptr3 == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequence sizes.");
+    } else {
+      seq_sizes = tmp_ptr3;
+    }
+    seq_sizes[seq_info.n - 1] = kseq->seq.l;
+    /* TODO: Don't allocate name.l+comment.l if trim_names */
+    seq_names[seq_info.n - 1] = malloc(sizeof(char) * kseq->name.l + sizeof(char) * kseq->comment.l + 2);
+    name_sizes += kseq->name.l + kseq->comment.l + 2;
+    if (seq_names[seq_info.n - 1] == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequence name.");
+    }
+    add_seq_name(seq_names[seq_info.n - 1], kseq);
+    const unsigned char *seq_tmp = (unsigned char *) kseq->seq.s;
+    for (size_t i = 0; i < kseq->seq.l; i++) {
+      char_counts[seq_tmp[i]]++;
     }
   }
-  seq_info.line_count = line_num;
-  free(line);
-  rewind(files.s);
-  if (seq_i == -1) {
-    badexit("Error: Sequences don't appear to be fasta-formatted.");
+  if (ret_val == -2) {
+    kseq_destroy(kseq);
+    badexit("Error: Failed to parse FASTQ qualities.");
+  } else if (ret_val < -2) {
+    kseq_destroy(kseq);
+    badexit("Error: Failed to read input.");
+  } else if (!seq_info.n) {
+    kseq_destroy(kseq);
+    badexit("Error: Failed to read any sequences from input.");
   }
-  seq_info.n = seq_i + 1;
+  gzrewind(files.s);
+  kseq_rewind(kseq);
   size_t seq_len_total = 0;
   for (size_t i = 0; i < seq_info.n; i++) seq_len_total += seq_sizes[i];
   if (!seq_len_total) {
@@ -1734,7 +1696,7 @@ size_t peak_through_seqs(void) {
   }
   if (char_counts[32] && args.v) {
     fprintf(stderr,
-      "Internal warning: Found spaces (%'zu) in loaded sequences, alert maintainer.\n",
+      "Warning: Found spaces (%'zu) in sequences, these will be treated as gaps.\n",
       char_counts[32]);
   }
   size_t max_seq_size = 0;
@@ -1755,7 +1717,98 @@ size_t peak_through_seqs(void) {
   return max_seq_size;
 }
 
-void load_seqs(void) {
+void load_seqs(kseq_t *kseq) {
+  size_t name_sizes = 0;
+  int ret_val;
+  while ((ret_val = kseq_read(kseq)) >= 0) {
+    seq_info.n++;
+    char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * seq_info.n);
+    if (tmp_ptr1 == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequence names.");
+    } else {
+      seq_names = tmp_ptr1;
+    }
+    unsigned char **tmp_ptr2 = realloc(seqs, sizeof(*seqs) * seq_info.n);
+    if (tmp_ptr2 == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequences.");
+    } else {
+      seqs = tmp_ptr2;
+    }
+    size_t *tmp_ptr3 = realloc(seq_sizes, sizeof(*seq_sizes) * seq_info.n);
+    if (tmp_ptr3 == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequence sizes.");
+    } else {
+      seq_sizes = tmp_ptr3;
+    }
+    seqs[seq_info.n - 1] = (unsigned char *) kseq->seq.s;
+    kseq->seq.s = NULL;
+    seq_sizes[seq_info.n - 1] = kseq->seq.l;
+    seq_names[seq_info.n - 1] = malloc(sizeof(char) * kseq->name.l + sizeof(char) * kseq->comment.l + 2);
+    name_sizes += kseq->name.l + kseq->comment.l + 2;
+    if (seq_names[seq_info.n - 1] == NULL) {
+      kseq_destroy(kseq);
+      badexit("Error: Failed to allocate memory for sequence name.");
+    }
+    add_seq_name(seq_names[seq_info.n - 1], kseq);
+  }
+  if (ret_val == -2) {
+    kseq_destroy(kseq);
+    badexit("Error: Failed to parse FASTQ qualities.");
+  } else if (ret_val < -2) {
+    kseq_destroy(kseq);
+    badexit("Error: Failed to read input.");
+  } else if (!seq_info.n) {
+    kseq_destroy(kseq);
+    badexit("Error: Failed to read any sequences from input.");
+  }
+  kseq_destroy(kseq);
+  ERASE_ARRAY(char_counts, 256);
+  count_bases();
+  size_t seq_len_total = 0;
+  for (size_t i = 0; i < seq_info.n; i++) seq_len_total += seq_sizes[i];
+  if (!seq_len_total) {
+    badexit("Error: Only encountered empty sequences.");
+  }
+  seq_info.total_bases = seq_len_total;
+  seq_info.unknowns = seq_len_total - standard_base_count();
+  seq_info.gc_pct = calc_gc() * 100.0;
+  double unknowns_pct = 100.0 * seq_info.unknowns / seq_len_total;
+  if (seq_info.unknowns == seq_len_total) {
+    badexit("Error: Failed to read any standard DNA/RNA bases.");
+  } else if (unknowns_pct >= 90.0) {
+    fprintf(stderr,
+      "!!! Warning: Non-standard base count is extremely high!!! (%.2f%%)\n",
+      unknowns_pct);
+  } else if (unknowns_pct >= 50.0 && args.v) {
+    fprintf(stderr, "Warning: Non-standard base count is very high! (%.2f%%)\n",
+      unknowns_pct);
+  } else if (unknowns_pct >= 10.0 && args.v) {
+    fprintf(stderr, "Warning: Non-standard base count seems high. (%.2f%%)\n",
+      unknowns_pct);
+  }
+  if (char_counts[32] && args.v) {
+    fprintf(stderr,
+      "Warning: Found spaces (%'zu) in sequences, these will be treated as gaps.\n",
+      char_counts[32]);
+  }
+  if (args.v) {
+    fprintf(stderr, "Loaded %'zu sequence(s).\n    size=%'zu    GC=%.2f%%\n",
+      seq_info.n, seq_len_total, seq_info.gc_pct);
+    if (seq_info.unknowns) {
+      fprintf(stderr, "Found %'zu (%.2f%%) non-standard bases.\n",
+        seq_info.unknowns, unknowns_pct);
+    }
+    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f MB\n",
+      b2mb(sizeof(unsigned char) * seq_len_total + sizeof(size_t) * seq_info.n * 2 +
+        sizeof(char) * name_sizes));
+  }
+}
+
+/*
+void load_seqs_old(void) {
   size_t line_len = 0, line_num = 0, line_len_no_spaces = 0, seq_i = -1;
   int name_loaded = 0;
   char *line = NULL;
@@ -1903,6 +1956,7 @@ void load_seqs(void) {
         sizeof(char) * SEQ_NAME_MAX_CHAR * seq_info.n));
   }
 }
+*/
 
 int char_arrays_are_equal(const char *arr1, const char *arr2, const size_t len) {
   int are_equal = 1;
@@ -1918,16 +1972,16 @@ int char_arrays_are_equal(const char *arr1, const char *arr2, const size_t len) 
   return are_equal;
 }
 
-void int_to_char_array(const size_t L, const size_t N, char *arr) {
+void int_to_char_array(const size_t N, char *arr) {
   ERASE_ARRAY(arr, 128);
-  sprintf(arr, "__N%zu_L%zu", N, L);
+  sprintf(arr, "__N%zu", N);
 }
 
-int dedup_char_array(char *arr, const size_t arr_max_len, const size_t L, const size_t N) {
+int dedup_char_array(char *arr, const size_t arr_max_len, const size_t N) {
   size_t arr_len = 0, dedup_len = 0, success = 0, j = 0;
   char dedup[128];
   ERASE_ARRAY(dedup, 128);
-  int_to_char_array(L, N, dedup);
+  int_to_char_array(N, dedup);
   for (size_t i = 0; i < arr_max_len; i++) {
     if (arr[i] == '\0') {
       arr_len = i;
@@ -1971,8 +2025,7 @@ void find_motif_dupes(void) {
     if (args.dedup) {
       for (size_t i = 0; i < motif_info.n; i++) {
         if (is_dup[i]) {
-          int success = dedup_char_array(motifs[i]->name, MAX_NAME_SIZE,
-            motifs[i]->file_line_num, i + 1);
+          int success = dedup_char_array(motifs[i]->name, MAX_NAME_SIZE, i + 1);
           if (!success) {
             fprintf(stderr,
               "Error: Failed to deduplicate motif #%zu, name is too large.", i + 1);
@@ -2012,7 +2065,8 @@ void find_seq_dupes(void) {
   for (size_t i = 0; i < seq_info.n - 1; i++) {
     for (size_t j = i + 1; j < seq_info.n; j++) {
       if (is_dup[j]) continue;
-      if (char_arrays_are_equal(seq_names[i], seq_names[j], SEQ_NAME_MAX_CHAR)) {
+      if (char_arrays_are_equal(seq_names[i], seq_names[j],
+            MAX(strlen(seq_names[i]), strlen(seq_names[j])))) {
         is_dup[i] = 1; is_dup[j] = 1;
       }
     }
@@ -2023,8 +2077,7 @@ void find_seq_dupes(void) {
     if (args.dedup) {
       for (size_t i = 0; i < seq_info.n; i++) {
         if (is_dup[i]) {
-          int success = dedup_char_array(seq_names[i], SEQ_NAME_MAX_CHAR,
-            seq_line_nums[i], i + 1);
+          int success = dedup_char_array(seq_names[i], SEQ_NAME_MAX_CHAR, i + 1);
           if (!success) {
             fprintf(stderr,
               "Error: Failed to deduplicate sequence #%zu, name is too large.", i + 1);
@@ -2040,7 +2093,7 @@ void find_seq_dupes(void) {
       if (to_print > dup_count) to_print = dup_count;
       for (size_t i = 0; i < seq_info.n; i++) {
         if (is_dup[i]) {
-          fprintf(stderr, "\n    L%zu #%zu: %s", seq_line_nums[i], i + 1, seq_names[i]);
+          fprintf(stderr, "\n    #%zu: %s", i + 1, seq_names[i]);
           to_print--;
           if (!to_print) break;
         }
@@ -2147,7 +2200,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
 void print_seq_stats_single(FILE *whereto, const size_t seq_i, const size_t seq_j) {
   ERASE_ARRAY(char_counts, 256);
   count_bases_single(seqs[seq_i], seq_sizes[seq_j]);
-  fprintf(whereto, "%zu\t%zu\t%s\t", seq_j + 1, seq_line_nums[seq_j], seq_names[seq_j]);
+  fprintf(whereto, "%zu\t%s\t", seq_j + 1, seq_names[seq_j]);
   fprintf(whereto, "%zu\t", seq_sizes[seq_j]);
   if (!seq_sizes[seq_j]) {
     fprintf(whereto, "nan\t");
@@ -2161,7 +2214,7 @@ void print_seq_stats(FILE *whereto) {
   for (size_t i = 0; i < seq_info.n; i++) {
     ERASE_ARRAY(char_counts, 256);
     count_bases_single(seqs[i], seq_sizes[i]);
-    fprintf(whereto, "%zu\t%zu\t%s\t", i + 1, seq_line_nums[i], seq_names[i]);
+    fprintf(whereto, "%zu\t%s\t", i + 1, seq_names[i]);
     fprintf(whereto, "%zu\t", seq_sizes[i]);
     if (!seq_sizes[i]) {
       fprintf(whereto, "nan\t");
@@ -2172,9 +2225,10 @@ void print_seq_stats(FILE *whereto) {
   }
 }
 
+/*
 void trim_seq_names(void) {
   for (size_t i = 0; i < seq_info.n; i++) {
-    for (size_t j = 0; j < SEQ_NAME_MAX_CHAR; j++) {
+    for (size_t j = 0; j < strlen(seq_names[i]); j++) {
       if (seq_names[i][j] == ' ') {
         seq_names[i][j] = '\0';
       }
@@ -2182,6 +2236,7 @@ void trim_seq_names(void) {
     }
   }
 }
+*/
 
 void add_consensus_motif(const char *consensus) {
   if (add_motif()) badexit("");
@@ -2274,15 +2329,12 @@ int main(int argc, char **argv) {
   if (seq_sizes == NULL) {
     badexit("Error: Failed to allocate memory for sequence sizes.");
   }
-  seq_line_nums = malloc(sizeof(*seq_line_nums));
-  if (seq_line_nums == NULL) {
-    badexit("Error: Failed to allocate memory for sequence line numbers.");
-  }
   threads = malloc(sizeof(pthread_t));
   if (threads == NULL) {
     badexit("Error: Failed to allocate memory for threads.");
   }
 
+  kseq_t *kseq;
   char *user_bkg, *consensus;
   int has_motifs = 0, has_seqs = 0, has_consensus = 0;
   int use_stdout = 1, use_stdin = 0, use_manual_thresh = 0;
@@ -2314,10 +2366,10 @@ int main(int argc, char **argv) {
       case 's':
         has_seqs = 1;
         if (optarg[0] == '-' && optarg[1] == '\0') {
-          files.s = stdin;
+          files.s = gzdopen(fileno(stdin), "r");
           use_stdin = 1;
         } else {
-          files.s = fopen(optarg, "r");
+          files.s = gzopen(optarg, "r");
           if (files.s == NULL) {
             fprintf(stderr, "Error: Failed to open sequence file: %s", optarg);
             badexit("");
@@ -2366,10 +2418,10 @@ int main(int argc, char **argv) {
         args.dedup = 1;
         break;
       case 'r':
-        args.trim_names = 1;
+        args.trim_names = 0;
         break;
       case 'l':
-        args.low_mem = 1;
+        args.low_mem = 0;
         break;
       case '0':
         args.thresh0 = 1;
@@ -2401,10 +2453,6 @@ int main(int argc, char **argv) {
     files.o_open = 1;
   }
 
-  if (use_stdin && args.low_mem) {
-    badexit("Error: Sequences cannot be read from stdin with -l.");
-  }
-
   if (!has_seqs && !has_motifs && !has_consensus) {
     badexit("Error: Missing one of -m, -1, -s args.");
   }
@@ -2424,11 +2472,18 @@ int main(int argc, char **argv) {
     find_motif_dupes();
   }
 
-  if (has_consensus || !has_seqs || !has_motifs || args.low_mem || motif_info.n == 1) {
+  if (has_consensus || !has_seqs || !has_motifs || motif_info.n == 1) {
     if (args.nthreads > 1) {
-      fprintf(stderr, "Note: Multi-threading not available for current flags.\n");
+      fprintf(stderr, "Note: Multi-threading not available for current inputs.\n");
     }
     args.nthreads = 1;
+  }
+
+  if (use_stdin || args.nthreads > 1) {
+    if (args.low_mem && args.v) {
+      fprintf(stderr, "Deactivating low-mem mode.\n");
+      args.low_mem = 0;
+    }
   }
 
   if (has_motifs) {
@@ -2468,17 +2523,17 @@ int main(int argc, char **argv) {
   }
 
   if (has_seqs) {
+    kseq = kseq_init(files.s);
     time_t time1 = time(NULL);
     if (args.v) {
       if (args.low_mem) fprintf(stderr, "Peaking through sequences ...\n");
       else fprintf(stderr, "Reading sequences ...\n");
     }
     if (args.low_mem) {
-      max_seq_size = peak_through_seqs();
+      max_seq_size = peak_through_seqs(kseq);
     } else {
-      load_seqs();
+      load_seqs(kseq);
     }
-    if (args.trim_names) trim_seq_names();
     find_seq_dupes();
     time_t time2 = time(NULL);
     if (args.v) {
@@ -2497,21 +2552,20 @@ int main(int argc, char **argv) {
       if (args.v) {
         fprintf(stderr, "No motifs provided, printing sequence stats before exit.\n");
       }
-      fprintf(files.o, "##seqnum\tline_num\tseqname\tsize\tgc_pct\tn_count\n");
+      fprintf(files.o, "##seqnum\tseqname\tsize\tgc_pct\tn_count\n");
 
       time_t time1 = time(NULL);
 
       if (args.low_mem) {
-        seqs[0] = malloc(sizeof(**seqs) * max_seq_size);
-        if (seqs[0] == NULL) {
-          badexit("Error: Failed to allocate memory for sequence.");
-        }
-        size_t line_num = 0;
         for (size_t j = 0; j < seq_info.n; j++) {
-          line_num = load_next_seq(j, line_num);
+          if (kseq_read(kseq) < 0) {
+            badexit("Error: Failed to re-read input file.");
+          } else {
+            seqs[0] = (unsigned char *) kseq->seq.s;
+          }
           print_seq_stats_single(files.o, 0, j);
         }
-        free(seqs[0]);
+        kseq_destroy(kseq);
       } else {
         print_seq_stats(files.o);
       }
@@ -2544,12 +2598,6 @@ int main(int argc, char **argv) {
     fprintf(files.o, 
       "##seqname\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
 
-    if (args.low_mem) {
-      seqs[0] = malloc(sizeof(**seqs) * max_seq_size);
-      if (seqs[0] == NULL) {
-        badexit("Error: Failed to allocate memory for sequence.");
-      }
-    }
     if (args.v) fprintf(stderr, "Scanning ...\n");
     time_t time1 = time(NULL);
     if (alloc_cdf()) badexit("");
@@ -2561,15 +2609,19 @@ int main(int argc, char **argv) {
         }
         fill_cdf(motifs[i]);
         set_threshold(motifs[i]);
-        size_t line_num = 0;
         for (size_t j = 0; j < seq_info.n; j++) {
           if (args.w && !args.progress) {
             fprintf(stderr, "        Scanning sequence: %s\n", seq_names[j]);
           }
-          line_num = load_next_seq(j, line_num);
+          if (kseq_read(kseq) < 0) {
+            badexit("Error: Failed to re-read input file.");
+          } else {
+            seqs[0] = (unsigned char *) kseq->seq.s;
+          }
           score_seq(motifs[i], j, 0);
         }
-        rewind(files.s);
+        gzrewind(files.s);
+        kseq_rewind(kseq);
         if (args.progress) print_pb((i + 1.0) / motif_info.n);
       }
       free(seqs[0]);

@@ -142,23 +142,34 @@ number of non-DNA/RNA letters found.
 ## Benchmarking
 
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to
-record time elapsed and peak memory usage (Q-values turned off in fimo):
+record time elapsed and peak memory usage.
 
+### Default `minimotif` settings:
 ```sh
 minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+```
+### `minimotif` with low-mem mode disabled:
+```sh
 minimotif -l -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
-minimotif -j 4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+```
+### `minimotif` with multi-threading (and low-mem mode implicitly disabled):
+```sh
+minimotif -j4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+```
+### `fimo` with Q-values disabled and immediate printing of results:
+```sh
 fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
 
-|                                |     `minimotif`    |   `minimotif -l`  |  `minimotif -j4`  |      `fimo`      |
-|:------------------------------:|:------------------:|:-----------------:|:-----------------:|:----------------:|
-| 100x1Kbp (100Kbp) +  10 motifs |    0.05s,   5.56MB |    0.02s,  4.34MB |   0.02s,  12.00MB |    0.23s, 3.92MB |
-| 100x1Kbp (100Kbp) + 100 motifs |    0.24s,   6.03MB |    0.25s,  4.56MB |   0.09s,  13.69MB |    1.96s, 4.44MB |
-| 100x10Kbp (1Mbp)  +  10 motifs |    0.13s,   5.25MB |    0.14s,  4.08MB |   0.07s,  11.16MB |    2.44s, 4.20MB |
-| 100x10Kbp (1Mbp)  + 100 motifs |    0.99s,   8.61MB |    1.16s,  4.61MB |   0.32s,  15.86MB |   23.24s, 4.77MB |
-|   TAIR10 (120Mbp) +  10 motifs |   10.00s, 156.70MB |   12.20s, 33.02MB |   3.76s, 156.00MB | 4m41.99s, 4.01MB |
-|   TAIR10 (120Mbp) + 100 motifs | 1m36.05s, 155.90MB | 1m56.82s, 33.31MB |  29.00s, 157.00MB |     (not run)    |
+|                                |     `minimotif`    |   `minimotif -l`   |  `minimotif -j4`  |      `fimo`      |
+|:------------------------------:|:------------------:|:------------------:|:-----------------:|:----------------:|
+| 100x1Kbp (100Kbp) +  10 motifs |    0.02s,   4.30MB |    0.02s,   4.41MB |                   |    0.23s, 3.92MB |
+| 100x1Kbp (100Kbp) + 100 motifs |    0.23s,   5.89MB |    0.21s,   7.08MB |                   |    1.96s, 4.44MB |
+| 100x10Kbp (1Mbp)  +  10 motifs |    0.10s,   4.28MB |    0.10s,   5.55MB |                   |    2.44s, 4.20MB |
+| 100x10Kbp (1Mbp)  + 100 motifs |    0.97s,   6.02MB |    0.92s,   7.50MB |                   |   23.24s, 4.77MB |
+|   TAIR10 (120Mbp) +  10 motifs |   10.47s,  41.08MB |    9.78s, 149.50MB |                   | 4m41.99s, 4.01MB |
+|   TAIR10 (120Mbp) + 100 motifs | 1m42.40s,  41.59MB | 1m35.19s, 142.30MB |                   |     (not run)    |
+|   GRCh38 (3.2Gbp) +  10 motifs | 4m41.94s, 249.50MB | 4m24.93s,   3.02GB | 
 
 From the benchmarks the speed advantage of minimotif over fimo is clear. Also
 obvious however, is the associated high memory usage costs. By sacrificing a

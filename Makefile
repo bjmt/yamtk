@@ -3,8 +3,8 @@ LDLIBS+=-lz -lm -pthread
 
 all: minimotif clean
 
-minimotif: src/minimotif_kseq.c
+minimotif: src/minimotif.c
 	$(CC) $(CFLAGS) $(LDLIBS) $(LDFLAGS) $^ -o $@
 
 clean:
-	mkdir -p bin ; mv minimotif src/minimotif
+	mkdir -p bin ; mv minimotif bin/minimotif
