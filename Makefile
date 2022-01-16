@@ -1,7 +1,10 @@
-all: prep minimotif
+CFLAGS+=-std=gnu99 -O3 -Ikseq
+LDLIBS+=-lz -lm -pthread
 
-prep:
-	mkdir -p bin
+all: minimotif clean
 
-minimotif:
-	cc -lm -std=gnu99 -pthread -O3 src/minimotif.c -o bin/minimotif
+minimotif: src/minimotif_kseq.c
+	$(CC) $(CFLAGS) $(LDLIBS) $(LDFLAGS) $^ -o $@
+
+clean:
+	mkdir -p bin ; mv minimotif src/minimotif

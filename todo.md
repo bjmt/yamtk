@@ -1,6 +1,8 @@
 ## Todo
 
-- manually read seqs with `getc_unlocked` instead of `getline`
+- Useq kseq.h
+  + need to keep track of line numbers
+  + skip spaces
 
 - make `-l` a default? the memory savings are substantial compared to the
   relatively low speed loss
