@@ -1968,10 +1968,11 @@ static inline void score_subseq(const motif_t *motif, const unsigned char *seq, 
   }
 }
 
-static inline void score_subseq_rc(const motif_t *motif, const unsigned char *seq, const size_t offset, int *score) {
-  *score = 0;
+static inline void score_subseq_rc(const motif_t *motif, const unsigned char *seq, const size_t offset, int *score, int *score_rc) {
+  *score = 0; *score_rc = 0;
   for (size_t i = 0; i < motif->size; i++) {
-    *score += get_score_rc(motif, seq[i + offset], i);
+    *score += get_score(motif, seq[i + offset], i);
+    *score_rc += get_score_rc(motif, seq[i + offset], i);
   }
 }
 
@@ -1981,10 +1982,10 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
   const size_t seq_size = seq_sizes[seq_i];
   const int mot_size = motif->size;
   if (seq_size < motif->size || motif->threshold == INT_MAX) return;
-  int score = INT_MIN;
+  int score = INT_MIN, score_rc = INT_MIN;
   if (args.scan_rc) {
     for (size_t i = 0; i <= seq_size - motif->size; i++) {
-      score_subseq(motif, seq, i, &score);
+      score_subseq_rc(motif, seq, i, &score, &score_rc);
       if (score >= motif->threshold) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
@@ -1997,16 +1998,15 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
           mot_size,
           seq + i);
       }
-      score_subseq_rc(motif, seq, i, &score);
-      if (score >= motif->threshold) {
+      if (score_rc >= motif->threshold) {
         fprintf(files.o, "%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,
           i + motif->size,
           motif->name,
-          score2pval(motif, score),
-          score / PWM_INT_MULTIPLIER,
-          100.0 * score / motif->max_score,
+          score2pval(motif, score_rc),
+          score_rc / PWM_INT_MULTIPLIER,
+          100.0 * score_rc / motif->max_score,
           mot_size,
           seq + i);
       }
