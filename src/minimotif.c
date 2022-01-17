@@ -670,13 +670,14 @@ int check_line_contains(const char *line, const char *substring) {
 }
 
 size_t count_nonempty_chars(const char *line) {
-  /* Other whitespace characters: \v, \f. Assuming these would never show up. */
   size_t total_chars = 0, i = 0;
   for (;;) {
     switch (line[i]) {
       case ' ':
       case '\t':
       case '\r':
+      case '\v':
+      case '\f':
       case '\n': break;
       case '\0': return total_chars;
       default: total_chars++;
@@ -1627,6 +1628,8 @@ void add_seq_name(char *name, kseq_t *kseq) {
     name[kseq->name.l + kseq->comment.l + 1] = '\0';
   }
 }
+
+/* TODO: Don't reallocate space for seq names/sizes one at a time, do it in chunks */
 
 size_t peak_through_seqs(kseq_t *kseq) {
   size_t name_sizes = 0;
