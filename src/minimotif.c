@@ -288,11 +288,14 @@ args_t args = {
 };
 
 typedef struct motif_t {
+  int       pwm[MAX_MOTIF_SIZE];         /* Slight perf boost by putting the pwms first */
+  int       pwm_rc[MAX_MOTIF_SIZE];
+  double   *cdf;
+  int       threshold;
   size_t    size;
   size_t    cdf_size;
   size_t    thread;
   size_t    file_line_num;
-  int       threshold;
   int       min;                         /* Smallest single PWM score */
   int       max;                         /* Largest single PWM score  */
   int       max_score;                   /* Largest total PWM score   */
@@ -300,9 +303,6 @@ typedef struct motif_t {
   int       cdf_max;
   int       cdf_offset;
   char      name[MAX_NAME_SIZE];
-  int       pwm[MAX_MOTIF_SIZE];
-  int       pwm_rc[MAX_MOTIF_SIZE];
-  double   *cdf;
   double   *tmp_pdf;
 } motif_t;
 
@@ -1982,11 +1982,12 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
   const size_t seq_size = seq_sizes[seq_i];
   const int mot_size = motif->size;
   if (seq_size < motif->size || motif->threshold == INT_MAX) return;
+  const int threshold = motif->threshold - 1;
   int score = INT_MIN, score_rc = INT_MIN;
   if (args.scan_rc) {
     for (size_t i = 0; i <= seq_size - motif->size; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc);
-      if (score >= motif->threshold) {
+      if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,
@@ -1998,7 +1999,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
           mot_size,
           seq + i);
       }
-      if (score_rc >= motif->threshold) {
+      if (__builtin_expect(score_rc > threshold, 0)) {
         fprintf(files.o, "%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,
@@ -2014,7 +2015,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
   } else {
     for (size_t i = 0; i <= seq_size - motif->size; i++) {
       score_subseq(motif, seq, i, &score);
-      if (score >= motif->threshold) {
+      if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,

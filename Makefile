@@ -1,4 +1,4 @@
-CFLAGS=-std=gnu99 -g -O3 -Ikseq
+CFLAGS=-std=gnu99 -g -O3 -Ikseq -Wall
 LDLIBS=-lz -lm -pthread
 
 all: minimotif clean
