@@ -160,12 +160,12 @@ fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 |                                |     `minimotif`    |   `minimotif -j4`  |      `fimo`      |
 |:------------------------------:|:------------------:|:------------------:|:----------------:|
 | 100x1Kbp (100Kbp) +  10 motifs |    0.02s,   4.30MB |    0.02s,   9.91MB |    0.23s, 3.92MB |
-| 100x1Kbp (100Kbp) + 100 motifs |    0.23s,   5.89MB |    0.07s,  12.31MB |    1.96s, 4.44MB |
+| 100x1Kbp (100Kbp) + 100 motifs |    0.20s,   5.89MB |    0.07s,  12.31MB |    1.96s, 4.44MB |
 | 100x10Kbp (1Mbp)  +  10 motifs |    0.10s,   4.28MB |    0.06s,  11.44MB |    2.44s, 4.20MB |
-| 100x10Kbp (1Mbp)  + 100 motifs |    0.74s,   6.02MB |    0.23s,  15.80MB |   23.24s, 4.77MB |
-|   TAIR10 (120Mbp) +  10 motifs |    7.48s,  41.08MB |    2.51s, 153.10MB | 4m41.99s, 4.01MB |
-|   TAIR10 (120Mbp) + 100 motifs | 1m12.63s,  41.59MB |   20.03s, 152.10MB |     (not run)    |
-|   GRCh38 (3.2Gbp) +  10 motifs | 3m30.64s, 249.50MB | 1m09.43s,   3.09GB |     (not run)    |
+| 100x10Kbp (1Mbp)  + 100 motifs |    0.70s,   6.02MB |    0.23s,  15.80MB |   23.24s, 4.77MB |
+|   TAIR10 (120Mbp) +  10 motifs |    6.89s,  41.08MB |    2.36s, 153.10MB | 4m41.99s, 4.01MB |
+|   TAIR10 (120Mbp) + 100 motifs | 1m06.29s,  41.59MB |   19.14s, 152.10MB |     (not run)    |
+|   GRCh38 (3.2Gbp) +  10 motifs | 3m04.80 , 249.50MB | 1m02.30s,   3.09GB |     (not run)    |
 
 From the benchmarks the speed advantage of minimotif over fimo is clear. Also
 obvious however, is the associated high memory usage costs. By sacrificing a
