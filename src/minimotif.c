@@ -2097,8 +2097,8 @@ void add_consensus_motif(const char *consensus) {
 }
 
 void print_pb(const double prog) {
-  int left = prog * PROGRESS_BAR_WIDTH;
-  int right = PROGRESS_BAR_WIDTH - left;
+  const int left = prog * PROGRESS_BAR_WIDTH;
+  const int right = PROGRESS_BAR_WIDTH - left;
   fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
       (int) (prog * 100.0));
   fflush(stderr);
