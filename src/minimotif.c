@@ -173,10 +173,10 @@ void usage(void) {
     "            first word.                                                       \n"
     " -l         Deactivate low memory mode. Normally only a single sequence is    \n"
     "            stored in memory at a time. Setting this flag allows the program  \n"
-    "            to store the entire input into memory at a time, which can help   \n"
-    "            with performance when scanning multiple motifs. Note that this    \n"
-    "            flag is automatically set when reading sequences from stdin, and  \n"
-    "            when multithreading is enabled.                                   \n"
+    "            to instead store the entire input into memory, which can help with\n"
+    "            performance in cases of slow disk access or gzipped files. Note   \n"
+    "            that this flag is automatically set when reading sequences from   \n"
+    "            stdin, and when multithreading is enabled.                        \n"
     " -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that\n"
     "            increasing this number will also increase memory usage slightly.  \n"
     "            The number of threads is limited by the number of motifs being    \n"
@@ -1306,7 +1306,7 @@ void parse_jaspar_name(const char *line, const size_t motif_i) {
 
 int add_jaspar_row(motif_t *motif, const char *line) {
   size_t row_i = -1, left_bracket = -1, right_bracket = -1, i = 0;
-  char let;
+  char let = 'N';
   for (;;) {
     if (line[i] == '\r' || line[i] == '\n' || line[i] == '\0') break;
     switch (line[i]) {
@@ -2102,7 +2102,7 @@ void add_consensus_motif(const char *consensus) {
   size_t let_i;
   for (size_t pos = 0; pos < motifs[0]->size; pos++) {
     let_i = consensus2index[(unsigned char) consensus[pos]];
-    if (let_i < 0) {
+    if (let_i == -1) {
       fprintf(stderr, "Error: Encountered unknown letter in consensus (%c).",
         consensus[pos]);
       badexit("");
@@ -2261,6 +2261,7 @@ int main(int argc, char **argv) {
         if (!args.nthreads) {
           badexit("Error: -j must be a positive integer.");
         }
+        break;
       case 'd':
         args.dedup = 1;
         break;
