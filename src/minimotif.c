@@ -86,6 +86,11 @@ KSEQ_INIT(gzFile, gzread)
  */
 #define SEQ_NAME_MAX_CHAR         ((size_t) 512)
 
+/* Chunk size for allocating additional memory for motif and sequence array
+ * pointers.
+ */
+#define ALLOC_CHUNK_SIZE           ((size_t) 64)
+
 /* Front-facing defaults.
  */
 #define DEFAULT_NSITES                      1000
@@ -312,12 +317,14 @@ typedef struct motif_info_t {
   int     is_consensus;
   int     fmt;
   size_t  n;
+  size_t  n_alloc;
 } motif_info_t;
 
 motif_info_t motif_info = {
   .is_consensus = 0,
-  .fmt = 0,
-  .n = 0
+  .fmt          = 0,
+  .n            = 0,
+  .n_alloc      = 0
 };
 
 size_t   *cdf_real_size;
@@ -359,6 +366,7 @@ int alloc_cdf(void) {
 }
 
 typedef struct seq_info_t {
+  size_t     n_alloc;
   size_t     n;
   size_t     total_bases;
   size_t     unknowns;
@@ -366,6 +374,7 @@ typedef struct seq_info_t {
 } seq_info_t;
 
 seq_info_t seq_info = {
+  .n_alloc = 0,
   .n = 0,
   .total_bases = 0,
   .unknowns = 0,
@@ -748,20 +757,25 @@ int detect_motif_fmt(void) {
 }
 
 int add_motif(void) {
-  motif_t **tmp_ptr = realloc(motifs, sizeof(*motifs) * (motif_info.n + 1));
-  if (tmp_ptr == NULL) {
-    fprintf(stderr, "Error: Failed to allocate memory for motifs.");
-    return 1;
-  } else {
-    motifs = tmp_ptr;
-  }
-  motifs[motif_info.n] = malloc(sizeof(motif_t));
-  if (motifs[motif_info.n] == NULL) {
-    fprintf(stderr, "Error: Failed to allocate memory for motifs.");
-    return 1;
-  }
   motif_info.n++;
-  init_motif(motifs[motif_info.n - 1]);
+  const size_t last_i = motif_info.n - 1;
+  if (motif_info.n > motif_info.n_alloc) {
+    motif_t **tmp_ptr = realloc(motifs,
+      sizeof(*motifs) * motif_info.n_alloc + sizeof(*motifs) * ALLOC_CHUNK_SIZE);
+    if (tmp_ptr == NULL) {
+      fprintf(stderr, "Error: Failed to allocate memory for motifs.");
+      return 1;
+    } else {
+      motifs = tmp_ptr;
+      motif_info.n_alloc += ALLOC_CHUNK_SIZE;
+    }
+  }
+  motifs[last_i] = malloc(sizeof(motif_t));
+  if (motifs[last_i] == NULL) {
+    fprintf(stderr, "Error: Failed to allocate memory for motif.");
+    return 1;
+  }
+  init_motif(motifs[last_i]);
   return 0;
 }
 
@@ -1629,26 +1643,29 @@ void add_seq_name(char *name, kseq_t *kseq) {
   }
 }
 
-/* TODO: Don't reallocate space for seq names/sizes one at a time, do it in chunks */
-
 size_t peak_through_seqs(kseq_t *kseq) {
   size_t name_sizes = 0;
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
     seq_info.n++;
-    char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * seq_info.n);
-    if (tmp_ptr1 == NULL) {
-      kseq_destroy(kseq);
-      badexit("Error: Failed to allocate memory for sequence names.");
-    } else {
-      seq_names = tmp_ptr1;
-    }
-    size_t *tmp_ptr3 = realloc(seq_sizes, sizeof(*seq_sizes) * seq_info.n);
-    if (tmp_ptr3 == NULL) {
-      kseq_destroy(kseq);
-      badexit("Error: Failed to allocate memory for sequence sizes.");
-    } else {
-      seq_sizes = tmp_ptr3;
+    if (seq_info.n > seq_info.n_alloc) {
+      char **tmp_ptr1 = realloc(seq_names,
+        sizeof(*seq_names) * seq_info.n_alloc + sizeof(*seq_names) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr1 == NULL) {
+        kseq_destroy(kseq);
+        badexit("Error: Failed to allocate memory for sequence names.");
+      } else {
+        seq_names = tmp_ptr1;
+      }
+      size_t *tmp_ptr3 = realloc(seq_sizes,
+        sizeof(*seq_sizes) * seq_info.n_alloc + sizeof(*seq_sizes) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr3 == NULL) {
+        kseq_destroy(kseq);
+        badexit("Error: Failed to allocate memory for sequence sizes.");
+      } else {
+        seq_sizes = tmp_ptr3;
+      }
+      seq_info.n_alloc += ALLOC_CHUNK_SIZE;
     }
     seq_sizes[seq_info.n - 1] = kseq->seq.l;
     /* TODO: Don't allocate name.l+comment.l if trim_names */
@@ -1725,26 +1742,32 @@ void load_seqs(kseq_t *kseq) {
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
     seq_info.n++;
-    char **tmp_ptr1 = realloc(seq_names, sizeof(*seq_names) * seq_info.n);
-    if (tmp_ptr1 == NULL) {
-      kseq_destroy(kseq);
-      badexit("Error: Failed to allocate memory for sequence names.");
-    } else {
-      seq_names = tmp_ptr1;
-    }
-    unsigned char **tmp_ptr2 = realloc(seqs, sizeof(*seqs) * seq_info.n);
-    if (tmp_ptr2 == NULL) {
-      kseq_destroy(kseq);
-      badexit("Error: Failed to allocate memory for sequences.");
-    } else {
-      seqs = tmp_ptr2;
-    }
-    size_t *tmp_ptr3 = realloc(seq_sizes, sizeof(*seq_sizes) * seq_info.n);
-    if (tmp_ptr3 == NULL) {
-      kseq_destroy(kseq);
-      badexit("Error: Failed to allocate memory for sequence sizes.");
-    } else {
-      seq_sizes = tmp_ptr3;
+    if (seq_info.n > seq_info.n_alloc) {
+      char **tmp_ptr1 = realloc(seq_names,
+        sizeof(*seq_names) * seq_info.n_alloc + sizeof(*seq_names) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr1 == NULL) {
+        kseq_destroy(kseq);
+        badexit("Error: Failed to allocate memory for sequence names.");
+      } else {
+        seq_names = tmp_ptr1;
+      }
+      unsigned char **tmp_ptr2 = realloc(seqs,
+        sizeof(*seqs) * seq_info.n_alloc + sizeof(*seqs) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr2 == NULL) {
+        kseq_destroy(kseq);
+        badexit("Error: Failed to allocate memory for sequences.");
+      } else {
+        seqs = tmp_ptr2;
+      }
+      size_t *tmp_ptr3 = realloc(seq_sizes,
+        sizeof(*seq_sizes) * seq_info.n_alloc + sizeof(*seq_sizes) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr3 == NULL) {
+        kseq_destroy(kseq);
+        badexit("Error: Failed to allocate memory for sequence sizes.");
+      } else {
+        seq_sizes = tmp_ptr3;
+      }
+      seq_info.n_alloc += ALLOC_CHUNK_SIZE;
     }
     seqs[seq_info.n - 1] = (unsigned char *) kseq->seq.s;
     kseq->seq.s = NULL;
@@ -2134,22 +2157,25 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
   }
 
-  motifs = malloc(sizeof(*motifs));
+  motifs = malloc(sizeof(*motifs) * ALLOC_CHUNK_SIZE);
   if (motifs == NULL) {
     badexit("Error: Failed to allocate memory for motifs.");
+  } else {
+    motif_info.n_alloc = ALLOC_CHUNK_SIZE;
   }
-  seq_names = malloc(sizeof(*seq_names));
+  seq_names = malloc(sizeof(*seq_names) * ALLOC_CHUNK_SIZE);
   if (seq_names == NULL) {
     badexit("Error: Failed to allocate memory for sequence names.");
   }
-  seqs = malloc(sizeof(*seqs));
+  seqs = malloc(sizeof(*seqs) * ALLOC_CHUNK_SIZE);
   if (seqs == NULL) {
     badexit("Error: Failed to allocate memory for sequences.");
   }
-  seq_sizes = malloc(sizeof(*seq_sizes));
+  seq_sizes = malloc(sizeof(*seq_sizes) * ALLOC_CHUNK_SIZE);
   if (seq_sizes == NULL) {
     badexit("Error: Failed to allocate memory for sequence sizes.");
   }
+  seq_info.n_alloc = ALLOC_CHUNK_SIZE;
   threads = malloc(sizeof(pthread_t));
   if (threads == NULL) {
     badexit("Error: Failed to allocate memory for threads.");
