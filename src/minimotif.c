@@ -263,16 +263,16 @@ typedef struct args_t {
   double   pvalue;
   int      nsites;
   int      pseudocount; 
-  int      scan_rc;
-  int      dedup;
-  int      trim_names;
-  int      use_user_bkg;
-  int      low_mem;
   int      nthreads;
-  int      thresh0;
-  int      progress;
-  int      v;
-  int      w;
+  int      scan_rc : 1;
+  int      dedup : 1;
+  int      trim_names : 1;
+  int      use_user_bkg : 1;
+  int      low_mem : 1;
+  int      thresh0 : 1;
+  int      progress : 1;
+  int      v : 1;
+  int      w : 1;
 } args_t;
 
 args_t args = {
@@ -314,8 +314,8 @@ typedef struct motif_t {
 motif_t **motifs;
 
 typedef struct motif_info_t {
-  int     is_consensus;
-  int     fmt;
+  int     is_consensus : 1;
+  int     fmt : 4;
   size_t  n;
   size_t  n_alloc;
 } motif_info_t;
@@ -417,12 +417,12 @@ pthread_mutex_t    pb_lock = PTHREAD_MUTEX_INITIALIZER;
 size_t             pb_counter = 0;
 
 typedef struct files_t {
+  int       m_open : 1;
+  int       s_open : 1;
+  int       o_open : 1;
   FILE     *m;
   gzFile    s;
   FILE     *o;
-  int       m_open;
-  int       s_open;
-  int       o_open;
 } files_t;
 
 files_t files = {
