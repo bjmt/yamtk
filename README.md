@@ -167,7 +167,7 @@ dependency-free convenience of minimotif I recommend trying out
 filtering algorithms to significantly speed up scanning (whereas minimotif
 dumbly scores every possible match for all motifs across all sequences). I have
 found after some brief testing that when scanning hundreds of motifs across
-sequences in the MBp-GBp range several-fold speed-ups can be achieved.
+sequences in the Mbp-Gbp range several-fold speed-ups can be achieved.
 (Alternatively, if CPU time is meaningless to you and you have access to a large
 number of cores you can surpass even these impressive scanning times by
 making liberal use of minimotif's `-j` flag.) See the latest MOODS
