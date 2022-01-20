@@ -118,7 +118,7 @@ Score=3.32	-->     p=0.022
 Score=6.64	-->     p=0.00098
 ----------------------------------------
 
-$ bin/minimotif -r -s test/dna.fa
+$ bin/minimotif -s test/dna.fa
 ##seqnum	seqname	size	gc_pct	n_count
 1	1  	55	49.09	0
 2	2	70	45.71	0
