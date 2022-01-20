@@ -1,30 +1,6 @@
 # minimotif: A small super-fast DNA/RNA motif scanner
 
-## Motivation
-
-[fimo](https://meme-suite.org/meme/tools/fimo) is a great motif scanning
-program, with complex functionality for scanning any kind of motifs/sequences
-such as calculating P and Q values. It also has a tiny memory footprint, even
-when scanning large numbers of motifs and sequences billions long. Unfortunately
-all of this would appear to have come at a cost, as fimo can be excruciatingly
-slow when attempting to scan a large collection of motifs against a moderately
-sized genome. minimotif was created as a result.
-
-This was achieved by sacrificing two things: complexity and memory. minimotif
-has fewer options; chiefly among missing options are Q-values. This is because
-calculating Q-values requires juggling all results within memory, which can be
-rather problematic when results are in the millions. (fimo has the option to
-output results immediately and skip Q-value calculation, but even so fimo is
-quite slow.) Secondly, minimotif loads input sequences completely into memory.
-This means that you are scanning the human genome, be prepared that minimotif
-will need over 3GB of memory. (Alternatively, use the `-l` flag to limit this
-to about 250MB and sacrifice a bit of performance in some cases.) In addition,
-minimotif is multithread-capable, thus allowing for further time savings in
-exchange for higher CPU usage.
-
 ## Installation
-
-Requires headers for POSIX threads be available on the system.
 
 ```sh
 git clone https://github.com/bjmt/minimotif
@@ -33,6 +9,16 @@ make
 ```
 
 This will create the final binary as `bin/minimotif` within the project folder.
+
+## Motivation
+
+I occasionally find myself needing to scan motifs against the Arabidopsis
+genome from the command line. Usually having the MEME suite installed locally,
+I resort to using [fimo](https://meme-suite.org/meme/tools/fimo). Inevitably
+the wait time exceeds my limited patience. Eventually I decided to perform my
+own re-write of fimo, only this time I would only include features I need in
+addition to making sure it could run fast enough to satisfy me. This effort led
+to this small utility, minimotif.
 
 ## Usage
 
@@ -44,41 +30,46 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
  -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,
             JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-50 bases wide.
  -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters
-            are allowed. Must be 1-50 bases wide. The -b, -t, -p and -n flags
-            are unused.
- -s <str>   Filename of fasta-formatted file containing DNA/RNA sequences to
-            scan. Use '-' for stdin. Omitting -s will cause minimotif to print
-            the parsed motifs instead of scanning. Alternatively, solely
-            providing -s and not -m/-1 will cause minimotif to return sequence
-            stats. Any spaces found are not read into the final scanned
-            sequence. Non-standard characters (i.e. other than ACGTU) will be
-            read but are treated as gaps during scanning.
+            are allowed. Must be 1-50 bases wide. The -b, -t, -0, -p, and -n
+            flags are unused.
+ -s <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences
+            to scan. Can be gzipped. Use '-' for stdin. Omitting -s will cause
+            minimotif to print the parsed motifs instead of scanning.
+            Alternatively, solely providing -s and not -m/-1 will cause
+            minimotif to return sequence stats. Non-standard characters (i.e.
+            other than ACGTU) will be read but are treated as gaps during
+            scanning.
  -o <str>   Filename to output results. By default output goes to stdout.
- -b <dbl>   Comma-separated background probabilities for A,C,G,T. By default
-            the background probability values from the motif file (MEME only)
-            are used, or a uniform background is assumed. Used in PWM
-            generation.
+ -b <dbl,   Comma-separated background probabilities for A,C,G,T|U. By default
+     dbl,   the background probability values from the motif file (MEME only)
+     dbl,   are used, or a uniform background is assumed. Used in PWM
+     dbl>   generation.
  -f         Only scan the forward strand.
  -t <dbl>   Threshold P-value. Default: 1e-05.
+ -0         Instead of using a threshold, simply report all hits with a score
+            of zero or greater. Useful for manual filtering.
  -p <int>   Pseudocount for PWM generation. Default: 1. Must be a positive
             integer.
  -n <int>   Number of motif sites used in PWM generation. Default: 1000.
  -d         Deduplicate motif/sequence names. Default: abort. Duplicates will
-            have the motif/sequence and line numbers appended.
- -r         Trim motif (HOCOMOCO/JASPAR only) and sequence names to the first
-            word.
- -l         Low memory mode. Only allows a single sequence in memory at a
-            time. Reading sequences from stdin is disabled. This will have a
-            slight impact on performance, which gets worse with increasing
-            motif counts. Requires a single thread.
+            have the motif/sequence numbers appended.
+ -r         Don't trim motif (HOCOMOCO/JASPAR only) and sequence names to the
+            first word.
+ -l         Deactivate low memory mode. Normally only a single sequence is
+            stored in memory at a time. Setting this flag allows the program
+            to instead store the entire input into memory, which can help with
+            performance in cases of slow disk access or gzipped files. Note
+            that this flag is automatically set when reading sequences from
+            stdin, and when multithreading is enabled.
  -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that
             increasing this number will also increase memory usage slightly.
             The number of threads is limited by the number of motifs being
             scanned.
- -v         Verbose mode. Recommended when using for the first time with new
-            motifs/sequences, as warnings about potential issues will only be
-            printed when -v/-w are set.
- -w         Very verbose mode. Only recommended for debugging purposes.
+ -g         Print a progress bar during scanning. This turns off some of the
+            messages printed by -w. Note that it's only useful if there is
+            more than one input motif.
+ -v         Verbose mode.
+ -w         Very verbose mode.
  -h         Print this help message.
 ```
 
@@ -93,7 +84,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##minimotif v1.0 [ -r -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##minimotif v1.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##seqname	start	end	strand	motif	pvalue	score	score_pct	match
 1  	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -128,10 +119,10 @@ Score=6.64	-->     p=0.00098
 ----------------------------------------
 
 $ bin/minimotif -r -s test/dna.fa
-##seqnum	line_num	seqname	size	gc_pct	n_count
-1	1	1  	55	49.09	0
-2	5	2	70	45.71	0
-3	10	3	33	39.39	0
+##seqnum	seqname	size	gc_pct	n_count
+1	1  	55	49.09	0
+2	2	70	45.71	0
+3	3	33	39.39	0
 ```
 
 This mode shows the internal PWM representation of motifs, as well P-values
@@ -144,15 +135,15 @@ number of non-DNA/RNA letters found.
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to
 record time elapsed and peak memory usage.
 
-### Default `minimotif` settings:
+### Default minimotif settings (low-mem mode active):
 ```sh
 minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 ```
-### `minimotif` with multi-threading (and low-mem mode implicitly disabled):
+### minimotif with multi-threading (and low-mem mode implicitly disabled):
 ```sh
 minimotif -j4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 ```
-### `fimo` with Q-values disabled and immediate printing of results:
+### fimo with Q-values disabled and immediate printing of results:
 ```sh
 fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
@@ -165,20 +156,23 @@ fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 | 100x10Kbp (1Mbp)  + 100 motifs |    0.70s,   6.02MB |    0.23s,  15.80MB |   23.24s, 4.77MB |
 |   TAIR10 (120Mbp) +  10 motifs |    6.89s,  41.08MB |    2.36s, 153.10MB | 4m41.99s, 4.01MB |
 |   TAIR10 (120Mbp) + 100 motifs | 1m06.29s,  41.59MB |   19.14s, 152.10MB |     (not run)    |
-|   GRCh38 (3.2Gbp) +  10 motifs | 3m04.80 , 249.50MB | 1m02.30s,   3.09GB |     (not run)    |
+|   GRCh38 (3.2Gbp) +  10 motifs | 3m04.80s, 249.50MB | 1m02.30s,   3.09GB |     (not run)    |
 
-From the benchmarks the speed advantage of minimotif over fimo is clear. Also
-obvious however, is the associated high memory usage costs. By sacrificing a
-bit of speed, this can be alleviated somewhat when scanning very large
-sequences by using the low-memory option, `-l`. When using this option only one
-sequence is ever kept in memory, meaning that the max memory usage will be tied
-to the size of the largest single sequence within the fasta file, instead of
-the size of all sequences added together. In the example benchmark above when
-scanning the Arabidopsis genome (TAIR10), minimotif only requests enough memory
-to hold the largest chromosome (~30Mbp) rather then the entire genome (~120Mbp).
-However the downsides to this include sequences can no longer be able to be
-provided via `stdin`, performance degradation with higher motif counts, and
-restricting thread usage to 1.
+### It's still not fast enough!
+
+If you are unfortunate enough to be working with genomes sized in the billions
+and find this is not fast enough, then if you are willing to lose out on the
+dependency-free convenience of minimotif I recommend trying out
+[MOODS](https://github.com/jhkorhonen/MOODS). This library makes use of several
+filtering algorithms to significantly speed up scanning (whereas minimotif
+dumbly scores every possible match for all motifs across all sequences). I have
+found after some brief testing that when scanning hundreds of motifs across
+sequences in the MBp-GBp range several-fold speed-ups can be achieved.
+(Alternatively, if CPU time is meaningless to you and you have access to a large
+number of cores you can surpass even these impressive scanning times by
+making liberal use of minimotif's `-j` flag.) See the latest MOODS
+[paper](https://academic.oup.com/bioinformatics/article/33/4/514/2726114) for
+details.
 
 ## Compatible motif formats
 
@@ -190,7 +184,7 @@ requirements for each format follows.
 Example HOCOMOCO motif:
 
 ```
->ATF1_HUMAN.H11MO.0.B
+>1-motifA
 144.000000003	180.000000003	79.000000001	97.000000001
 179.000000003	57.000000001	181.000000003	83.000000001
 176.000000003	53.000000001	255.000000003	16.0000000004
