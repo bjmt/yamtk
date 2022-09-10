@@ -31,8 +31,15 @@
 
 KSEQ_INIT(gzFile, gzread)
 
-#define MINIMOTIF_VERSION                  "1.0"
+#define MINIMOTIF_VERSION                  "1.1"
 #define MINIMOTIF_YEAR                      2022
+
+/* ChangeLog
+ *
+ * v1.1 (10 September 2022)
+ * - Calculate the number of max possible hits and append to the output header
+ *
+ */
 
 /* These defaults can be safely changed. The only effects of doing so will be
  * on performance. Depending on whether your motifs are extremely large, or
@@ -560,7 +567,7 @@ void fill_cdf(motif_t *motif) {
       motif->cdf[i] /= pdf_sum;
     }
   }
-  for (size_t i = motif->cdf_size - 2; i >= 0 && i < -1; i--) {
+  for (size_t i = motif->cdf_size - 2; i < -1; i--) {
     motif->cdf[i] += motif->cdf[i + 1];
   }
   if (args.w && args.nthreads == 1 && !args.progress) fprintf(stderr, "done.\n");
@@ -1643,7 +1650,7 @@ void add_seq_name(char *name, kseq_t *kseq) {
   }
 }
 
-size_t peak_through_seqs(kseq_t *kseq) {
+size_t peek_through_seqs(kseq_t *kseq) {
   size_t name_sizes = 0;
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
@@ -2378,7 +2385,7 @@ int main(int argc, char **argv) {
       else fprintf(stderr, "Reading sequences ...\n");
     }
     if (args.low_mem) {
-      max_seq_size = peak_through_seqs(kseq);
+      max_seq_size = peek_through_seqs(kseq);
     } else {
       load_seqs(kseq);
     }
@@ -2388,7 +2395,7 @@ int main(int argc, char **argv) {
       time_t time3 = difftime(time2, time1);
       if (time3 > 1) {
         if (args.low_mem) {
-          fprintf(stderr, "Needed %'zu seconds to peak through sequences.\n",
+          fprintf(stderr, "Needed %'zu seconds to peek through sequences.\n",
             (size_t) time3);
         } else {
           fprintf(stderr, "Needed %'zu seconds to load sequences.\n",
@@ -2438,11 +2445,20 @@ int main(int argc, char **argv) {
     }
     fprintf(files.o, "]\n");
     size_t motif_size = 0;
-    for (size_t i = 0; i < motif_info.n; i++) motif_size += motifs[i]->size;
+    size_t max_possible_hits = 0;
+    for (size_t i = 0; i < motif_info.n; i++) {
+      for (size_t j = 0; j < seq_info.n; j++) {
+        max_possible_hits += MAX(0, 1 + seq_sizes[j] - motifs[i]->size);
+      }
+    }
+    if (args.scan_rc) max_possible_hits *= 2;
+    for (size_t i = 0; i < motif_info.n; i++) {
+      motif_size += motifs[i]->size;
+    }
     fprintf(files.o,
-      "##MotifCount=%zu MotifSize=%zu SeqCount=%zu SeqSize=%zu GC=%.2f%% Ns=%zu\n",
+      "##MotifCount=%zu MotifSize=%zu SeqCount=%zu SeqSize=%zu GC=%.2f%% Ns=%zu MaxPossibleHits=%zu\n",
       motif_info.n, motif_size, seq_info.n, seq_info.total_bases, seq_info.gc_pct,
-      seq_info.unknowns);
+      seq_info.unknowns, max_possible_hits);
     fprintf(files.o, 
       "##seqname\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
 

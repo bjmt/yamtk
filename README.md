@@ -23,7 +23,7 @@ to this small utility, minimotif.
 ## Usage
 
 ```
-minimotif v1.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
+minimotif v1.1  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
 
 Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
@@ -84,7 +84,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##minimotif v1.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##minimotif v1.1 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##seqname	start	end	strand	motif	pvalue	score	score_pct	match
 1  	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -173,6 +173,35 @@ number of cores you can surpass even these impressive scanning times by
 making liberal use of minimotif's `-j` flag.) See the latest MOODS
 [paper](https://academic.oup.com/bioinformatics/article/33/4/514/2726114) for
 details.
+
+## Extra scripts
+
+A few extra utilities are included in the `scripts/` folder. These take the
+minimotif results via `stdin` and output their results to `stdout`.
+
+- `add_qvals.sh`: Calculate Benjamini-Hochberg adjusted P-values (or Q-values)
+  and add them as a tenth column. (Note: Do *not* deduplicate/remove
+  overlapping hits before calculating Q-values.)
+- `dedup_hits.sh`: Remove lower-scoring overlapping hits (of the same motif).
+- `sort_coord.sh`: Sort the results by coordinate.
+- `sort_motif.sh`: Sort the results by motif name.
+- `sort_pval.sh`: Sort the results by P-value.
+
+All of these scripts use the `sort` program. Extra arguments (e.g.
+`--buffer-size`) can be used by setting a `SORT_ARGS` variable. (Be careful
+not to change the sorting behaviour.)
+
+In this example, the output of minimotif is piped to `add_qvals.sh` to first
+calculate Q-values, then to `dedup_hits.sh` to remove overlapping hits,
+and finally coordinate sorted with `sort_coord.sh`:
+
+```sh
+bin/minimotif -t 0.1 -m test/motif.homer -s test/dna.fa \
+  | scripts/add_qvals.sh \
+  | scripts/dedup_hits.sh \
+  | scripts/sort_coord.sh \
+  > res.clean.txt
+```
 
 ## Compatible motif formats
 
