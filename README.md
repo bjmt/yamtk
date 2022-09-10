@@ -85,7 +85,7 @@ Example output:
 
 ```
 ##minimotif v1.1 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
-##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
+##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seqname	start	end	strand	motif	pvalue	score	score_pct	match
 1  	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
 1  	31	35	-	1-motifA	0.0341796875	2.482	37.4	TCGCG
