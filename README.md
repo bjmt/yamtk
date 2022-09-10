@@ -227,7 +227,7 @@ Example HOCOMOCO motif:
 268.000000006	57.000000001	93.000000001	82.000000001
 ```
 
-HOCOMOCO motifs have a header line startign with `>` followed by the motif
+HOCOMOCO motifs have a header line starting with `>` followed by the motif
 name. Only mononucleotide count matrices (PCM) can be used. The counts are
 split into four columns (A,C,G,T/U). These counts need not be integers. The
 headers cannot contain the tab character.
