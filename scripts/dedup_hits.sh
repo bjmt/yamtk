@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# For each motif/chr/strand, save hits as they come and for each new
-# hit go back through saved results and see if it overlaps anything.
+# 1. Sort by motif, seqname, strand, and descending score.
+# 2. For each motif/seqname/strand combination, check if the hit overlaps
+#    a previous (higher scoring) hit; if so, skip.
 
 awk '/^##/ { print ; next }
   { print | "sort '"${SORT_ARGS}"' -t$'\''\t'\'' -k5,5 -k1,1 -k4,4 -k7,7nr" }' \

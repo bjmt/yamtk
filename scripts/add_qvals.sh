@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# 1. Sort by P-value and descending score.
+# 2. Check for and retrieve the MaxPossibleHits field in the header.
+# 3. Calculate the adjusted P-values and print.
+# 4. Sort by P-value in inverse order.
+# 5. Adjust Q-values so that they are monotonically decreasing.
+
 awk '/^##/ { print ; next }
   { print | "sort '"${SORT_ARGS}"' -t$'\''\t'\'' -k6,6n -k7,7nr" }' \
     < /dev/stdin \
