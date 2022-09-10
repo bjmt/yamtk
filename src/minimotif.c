@@ -2381,7 +2381,7 @@ int main(int argc, char **argv) {
     kseq = kseq_init(files.s);
     time_t time1 = time(NULL);
     if (args.v) {
-      if (args.low_mem) fprintf(stderr, "Peaking through sequences ...\n");
+      if (args.low_mem) fprintf(stderr, "Peeking through sequences ...\n");
       else fprintf(stderr, "Reading sequences ...\n");
     }
     if (args.low_mem) {
