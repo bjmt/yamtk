@@ -186,6 +186,7 @@ minimotif results via `stdin` and output their results to `stdout`.
 - `sort_coord.sh`: Sort the results by coordinate.
 - `sort_motif.sh`: Sort the results by motif name.
 - `sort_pval.sh`: Sort the results by P-value.
+- `to_bed.sh`: Convert the output to a BED6+4 format.
 
 All of these scripts use the `sort` program. Extra arguments (e.g.
 `--buffer-size`) can be used by setting a `SORT_ARGS` variable. (Be careful
