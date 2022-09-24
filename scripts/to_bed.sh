@@ -15,13 +15,9 @@ awk '
   }
 
   /^[^##]/ {
-    score = log($6) / log(10)
-    score = int(-10 * score)
+    score = int(-10 * (log($6) / log(10)))
     score = score > 1000 ? 1000 : score
-    qvalue = "."
-    if (NF > 9) {
-      qvalue = $10
-    }
+    qvalue = NF > 9 ? $10 : "."
     print $1,$2-1,$3,$5,score,$4,$7,$8,$6,qvalue
   }
   ' < /dev/stdin
