@@ -4,9 +4,9 @@
 # Score col: -10*log10(P-value)
 # Custom cols:
 #   7. Log-odds score
-#   8. Score percent
-#   9. Q-value (if absent, then simply ".")
-#   10. Sequence match
+#   8. Score as a percent of the max
+#   9. P-value
+#   10. Q-value (if absent, then simply ".")
 
 awk '
   BEGIN {
@@ -22,7 +22,7 @@ awk '
     if (NF > 9) {
       qvalue = $10
     }
-    print $1,$2-1,$3,$5,score,$4,$7,$8,qvalue,$9
+    print $1,$2-1,$3,$5,score,$4,$7,$8,$6,qvalue
   }
   ' < /dev/stdin
 
