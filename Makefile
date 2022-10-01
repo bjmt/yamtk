@@ -1,4 +1,4 @@
-CFLAGS=-std=gnu99 -g -O3 -Ikseq -Wall -Wextra -Wno-sign-compare
+CFLAGS=-std=gnu99 -g -O3 -Iklib -Wall -Wextra -Wno-sign-compare
 LDLIBS=-lz -lm -pthread
 
 ifneq ($(shell uname -s),Darwin)
