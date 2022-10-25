@@ -7,6 +7,12 @@
 # 5. Adjust Q-values so that they are monotonically decreasing.
 
 awk '/^##/ { print ; next }
+  {
+    if (NF != 9 && NF != 10) {
+      print "Error: Input is malformed; expected 9-10 fields, found " NF > "/dev/stderr"
+      exit 1
+    }
+  }
   { print | "sort '"${SORT_ARGS}"' -t$'\''\t'\'' -k6,6n -k7,7nr" }' \
     < /dev/stdin \
   | awk '

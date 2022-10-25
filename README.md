@@ -23,7 +23,7 @@ to this small utility, minimotif.
 ## Usage
 
 ```
-minimotif v1.1  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
+minimotif v1.2  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
 
 Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
@@ -39,13 +39,22 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             minimotif to return sequence stats. Non-standard characters (i.e.
             other than ACGTU) will be read but are treated as gaps during
             scanning.
+ -x <str>   Filename of a BED-formatted file containing ranges within
+            sequences which scanning will be restricted to. Must have at least
+            three tab-separated columns. If a fourth column is present it will
+            be used as the range name. If a sixth strand column is present
+            scanning will be restricted to the indicated strand. Note that -f
+            is disabled when -x is used. It is recommended the BED be sorted
+            for speed. Overlapping ranges are allowed, but be warned that they
+            will individually scanned thus potentially introducing duplicate
+            hits. The file can be gzipped.
  -o <str>   Filename to output results. By default output goes to stdout.
  -b <dbl,   Comma-separated background probabilities for A,C,G,T|U. By default
      dbl,   the background probability values from the motif file (MEME only)
      dbl,   are used, or a uniform background is assumed. Used in PWM
      dbl>   generation.
  -f         Only scan the forward strand.
- -t <dbl>   Threshold P-value. Default: 1e-05.
+ -t <dbl>   Threshold P-value. Default: 0.0001.
  -0         Instead of using a threshold, simply report all hits with a score
             of zero or greater. Useful for manual filtering.
  -p <int>   Pseudocount for PWM generation. Default: 1. Must be a positive
@@ -84,14 +93,14 @@ coordinates are 1-based.
 Example output:
 
 ```
-##minimotif v1.1 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##minimotif v1.2 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
-##seqname	start	end	strand	motif	pvalue	score	score_pct	match
-1  	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
-1  	31	35	-	1-motifA	0.0341796875	2.482	37.4	TCGCG
+##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
+1	31	35	-	1-motifA	0.0341796875	2.482	37.4	TCGCG
 2	4	8	+	1-motifA	0.0166015625	3.860	58.2	GTCGA
-2	42	46	+	1-motifA	0.01953125	3.725	56.1	GTCTA
 2	16	20	-	1-motifA	0.0078125	4.874	73.4	GCGAG
+2	42	46	+	1-motifA	0.01953125	3.725	56.1	GTCTA
 2	43	47	-	1-motifA	0.015625	3.867	58.3	TCTAG
 3	28	32	+	1-motifA	0.01953125	3.725	56.1	GTCTA
 ```
@@ -119,8 +128,8 @@ Score=6.64	-->     p=0.00098
 ----------------------------------------
 
 $ bin/minimotif -s test/dna.fa
-##seqnum	seqname	size	gc_pct	n_count
-1	1  	55	49.09	0
+##seq_num	seq_name	size	gc_pct	n_count
+1	1	55	49.09	0
 2	2	70	45.71	0
 3	3	33	39.39	0
 ```
@@ -129,6 +138,20 @@ This mode shows the internal PWM representation of motifs, as well P-values
 for the min and max possible scores (with some in-between scores). Basic
 information about sequences is output, including size, GC percent, and the
 number of non-DNA/RNA letters found.
+
+Finally, scanning can be restricted to only parts of the input sequences as
+specified in a BED file. This will, of course, result in nearly linear
+speed-ups to the runtime proportional to the fraction of the input sequences
+being scanned. Example output:
+
+```
+##minimotif v1.2 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
+##MotifCount=1 MotifSize=5 BedCount=2 BedSize=73 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
+##bed_range	bed_name	seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+1:1-35(+)	A	1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
+2:11-48(-)	B	2	16	20	-	1-motifA	0.0078125	4.874	73.4	GCGAG
+2:11-48(-)	B	2	43	47	-	1-motifA	0.015625	3.867	58.3	TCTAG
+```
 
 ## Benchmarking
 
@@ -181,9 +204,11 @@ minimotif results via `stdin` and output their results to `stdout`.
 
 - `add_qvals.sh`: Calculate Benjamini-Hochberg adjusted P-values (or Q-values)
   and add them as a tenth column. (Note: Do *not* deduplicate/remove
-  overlapping hits before calculating Q-values.)
+  overlapping hits before calculating Q-values.) Currently not compatible with
+  minimotif run using the `-x` flag.
 - `dedup_hits.sh`: Remove lower-scoring overlapping hits (of the same motif).
-- `sort_coord.sh`: Sort the results by coordinate.
+- `sort_coord.sh`: Sort the results by coordinate. Currently not compatible
+  with minimotif run using the `-x` flag.
 - `sort_motif.sh`: Sort the results by motif name.
 - `sort_pval.sh`: Sort the results by P-value.
 - `to_bed.sh`: Convert the output to a BED6+4 format.

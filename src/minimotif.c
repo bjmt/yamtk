@@ -31,10 +31,15 @@
 
 KSEQ_INIT(gzFile, gzread)
 
-#define MINIMOTIF_VERSION                  "1.1"
+#define MINIMOTIF_VERSION                  "1.2"
 #define MINIMOTIF_YEAR                      2022
 
 /* ChangeLog
+ *
+ * v1.2 (25 October 2022)
+ * - Added the ability to restrict scanning to regions within a BED file with
+ *   the -x flag
+ * - Some tweaks to the output headers
  *
  * v1.1 (10 September 2022)
  * - Calculate the number of max possible hits and append to the output header
@@ -59,7 +64,8 @@ KSEQ_INIT(gzFile, gzread)
  * -500,000,000, or approx 1/4 of the way until INT_MIN [-2,147,483,648]).
  * This value is also used when performing memory allocation for new motifs,
  * regardless of the actual size of the motif (thus sticking to lower values
- * may be better for performance).
+ * may be better for performance). Motifs have five rows: four for each DNA/RNA
+ * base, and an extra row for non-standard letters.
  * Note: Motif size cannot exceed INT_MAX, since it has to be casted to an int
  * in order to print the match (see score_seq). But realistically having such
  * a big motif will cause the max score to overflow long before then.
@@ -86,10 +92,12 @@ KSEQ_INIT(gzFile, gzread)
 #define MEME_BKG_MAX_SIZE         ((size_t) 256)
 
 /* Max size of PCM/PPM values in parsed motifs.
+ * --> As of v1.2: also the max size of bed start/end fields.
  */
 #define MOTIF_VALUE_MAX_CHAR      ((size_t) 256)
 
 /* Max size of sequence names.
+ * --> As of v1.2: also for the names of ranges in bed file
  */
 #define SEQ_NAME_MAX_CHAR         ((size_t) 512)
 
@@ -101,7 +109,7 @@ KSEQ_INIT(gzFile, gzread)
 /* Front-facing defaults.
  */
 #define DEFAULT_NSITES                      1000
-#define DEFAULT_PVALUE                   0.00001
+#define DEFAULT_PVALUE                    0.0001
 #define DEFAULT_PSEUDOCOUNT                    1
 
 /* Minimum amount of additional memory to request when reading sequences and
@@ -162,13 +170,22 @@ void usage(void) {
     "            minimotif to return sequence stats. Non-standard characters (i.e. \n"
     "            other than ACGTU) will be read but are treated as gaps during     \n"
     "            scanning.                                                         \n"
+    " -x <str>   Filename of a BED-formatted file containing ranges within         \n"
+    "            sequences which scanning will be restricted to. Must have at least\n"
+    "            three tab-separated columns. If a fourth column is present it will\n"
+    "            be used as the range name. If a sixth strand column is present    \n"
+    "            scanning will be restricted to the indicated strand. Note that -f \n"
+    "            is disabled when -x is used. It is recommended the BED be sorted  \n"
+    "            for speed. Overlapping ranges are allowed, but be warned that they\n"
+    "            will individually scanned thus potentially introducing duplicate  \n"
+    "            hits. The file can be gzipped.                                    \n"
     " -o <str>   Filename to output results. By default output goes to stdout.     \n"
     " -b <dbl,   Comma-separated background probabilities for A,C,G,T|U. By default\n"
     "     dbl,   the background probability values from the motif file (MEME only) \n"
     "     dbl,   are used, or a uniform background is assumed. Used in PWM         \n"
     "     dbl>   generation.                                                       \n"
     " -f         Only scan the forward strand.                                     \n"
-    " -t <dbl>   Threshold P-value. Default: %g.                         \n"
+    " -t <dbl>   Threshold P-value. Default: %g.                          \n"
     " -0         Instead of using a threshold, simply report all hits with a score \n"
     "            of zero or greater. Useful for manual filtering.                  \n"
     " -p <int>   Pseudocount for PWM generation. Default: %d. Must be a positive    \n"
@@ -278,6 +295,7 @@ typedef struct args_t {
   int      low_mem : 1;
   int      thresh0 : 1;
   int      progress : 1;
+  int      use_bed : 1;
   int      v : 1;
   int      w : 1;
 } args_t;
@@ -295,9 +313,55 @@ args_t args = {
   .nthreads        = 1,
   .thresh0         = 0,
   .progress        = 0,
+  .use_bed         = 0,
   .v               = 0,
   .w               = 0
 };
+
+typedef struct bed_t {
+  size_t  *seq_indices;
+  size_t  *starts;
+  size_t  *ends;
+  char    *strands;
+  char   **seq_names;
+  char   **range_names;
+  size_t   n_regions;
+  size_t   n_comments;
+  size_t   n_lines;
+  size_t   n_empty;
+  size_t   n_seqs;
+  size_t   n_alloc;
+  size_t   indices_are_filled;
+} bed_t;
+
+bed_t bed = {
+  .n_regions          = 0,
+  .n_comments         = 0,
+  .n_lines            = 0,
+  .n_empty            = 0,
+  .n_seqs             = 0,
+  .n_alloc            = 0,
+  .indices_are_filled = 0
+};
+
+void free_bed(void) {
+  if (bed.n_alloc) {
+    if (bed.n_regions) {
+      for (size_t i = 0; i < bed.n_regions; i++) {
+        free(bed.seq_names[i]);
+        free(bed.range_names[i]);
+      }
+    }
+    free(bed.seq_names);
+    free(bed.range_names);
+    free(bed.starts);
+    free(bed.ends);
+    free(bed.strands);
+    if (bed.indices_are_filled) {
+      free(bed.seq_indices);
+    }
+  }
+}
 
 typedef struct motif_t {
   int       pwm[MAX_MOTIF_SIZE];         /* Slight perf boost by putting the pwms first */
@@ -427,21 +491,25 @@ typedef struct files_t {
   int       m_open : 1;
   int       s_open : 1;
   int       o_open : 1;
+  int       b_open : 1;
   FILE     *m;
   gzFile    s;
   FILE     *o;
+  gzFile    b;
 } files_t;
 
 files_t files = {
   .m_open = 0,
   .s_open = 0,
-  .o_open = 0
+  .o_open = 0,
+  .b_open = 0
 };
 
 void close_files(void) {
   if (files.m_open) fclose(files.m);
   if (files.s_open) gzclose(files.s);
   if (files.o_open) fclose(files.o);
+  if (files.b_open) gzclose(files.b);
 }
 
 void init_motif(motif_t *motif) {
@@ -497,6 +565,7 @@ void badexit(const char *msg) {
   free(threads);
   free_motifs();
   free_seqs();
+  free_bed();
   close_files();
   exit(EXIT_FAILURE);
 }
@@ -1731,8 +1800,8 @@ size_t peek_through_seqs(kseq_t *kseq) {
     max_seq_size = MAX(max_seq_size, seq_sizes[i]);
   }
   if (args.v) {
-    fprintf(stderr, "Found %'zu sequence(s).\n    size=%'zu    GC=%.2f%%\n",
-      seq_info.n, seq_len_total, seq_info.gc_pct);
+    fprintf(stderr, "Loaded %'zu base(s) across %'zu sequence(s) (GC=%.2f%%).\n",
+      seq_len_total, seq_info.n, seq_info.gc_pct);
     if (seq_info.unknowns) {
       fprintf(stderr, "Found %'zu (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
@@ -1828,8 +1897,8 @@ void load_seqs(kseq_t *kseq) {
       char_counts[32]);
   }
   if (args.v) {
-    fprintf(stderr, "Loaded %'zu sequence(s).\n    size=%'zu    GC=%.2f%%\n",
-      seq_info.n, seq_len_total, seq_info.gc_pct);
+    fprintf(stderr, "Loaded %'zu base(s) across %'zu sequence(s) (GC=%.2f%%).\n",
+      seq_len_total, seq_info.n, seq_info.gc_pct);
     if (seq_info.unknowns) {
       fprintf(stderr, "Found %'zu (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
@@ -1991,10 +2060,428 @@ void find_seq_dupes(void) {
   free(is_dup);
 }
 
+size_t count_fields(const char *line) {
+  int res = 1, i = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    if (line[i] == '\t') res += 1;
+    i++;
+  }
+  return res;
+}
+
+size_t count_field_size(const char *line, const size_t k) {
+  int res = 0, i = 0, n = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    if (line[i] == '\t') {
+      n++;
+    } else if (n + 1 == k) {
+      res++;
+    } else if (n + 1 > k) {
+      break;
+    }
+    i++;
+  }
+  return res;
+}
+
+size_t field_start(const char *line, const size_t k) {
+  int i = 0, n = 0, len = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    len++;
+    if (line[i] == '\t') {
+      n++;
+    } else if (n + 1 == k) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+
+size_t field_end(const char *line, const size_t k) {
+  int i = 0, n = 0, len = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    len++;
+    if (line[i] == '\t') {
+      n++;
+    } else if (n == k) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+
+/*
+void print_bed(void) {
+  if (bed.n_regions) {
+    for (size_t i = 0; i < bed.n_regions; i++) {
+      fprintf(files.o, "%s\t%zu\t%zu\t%s\t.\t%c\n",
+        bed.seq_names[i], bed.starts[i], bed.ends[i], bed.range_names[i], bed.strands[i]);
+    }
+  }
+}
+*/
+
+static inline size_t parse_bed_field(const char *line, const size_t k, char *field) {
+  size_t start_i = field_start(line, k);
+  size_t end_i = field_end(line, k);
+  size_t size_i = count_field_size(line, k);
+  size_t field_it = 0;
+  ERASE_ARRAY(field, MOTIF_VALUE_MAX_CHAR);
+  if (size_i > 0) {
+    for (size_t i = start_i; i <= end_i; i++) {
+      field[field_it] = line[i];
+      field_it++;
+    }
+  }
+  return size_i;
+}
+
+void read_bed(void) {
+  bed.seq_names = malloc(sizeof(*bed.seq_names) * ALLOC_CHUNK_SIZE);
+  if (bed.seq_names == NULL) {
+    badexit("Error: Failed to allocate memory for bed sequence names.");
+  }
+  bed.range_names = malloc(sizeof(*bed.range_names) * ALLOC_CHUNK_SIZE);
+  if (bed.seq_names == NULL) {
+    free(bed.seq_names);
+    badexit("Error: Failed to allocate memory for bed range names.");
+  }
+  bed.strands = malloc(sizeof(*bed.strands) * ALLOC_CHUNK_SIZE);
+  if (bed.strands == NULL) {
+    free(bed.range_names);
+    free(bed.seq_names);
+    badexit("Error: Failed to allocate memory for bed strand.");
+  }
+  bed.starts = malloc(sizeof(*bed.starts) * ALLOC_CHUNK_SIZE);
+  if (bed.starts == NULL) {
+    free(bed.range_names);
+    free(bed.strands);
+    free(bed.seq_names);
+    badexit("Error: Failed to allocate memory for bed starts.");
+  }
+  bed.ends = malloc(sizeof(*bed.ends) * ALLOC_CHUNK_SIZE);
+  if (bed.ends == NULL) {
+    free(bed.range_names);
+    free(bed.strands);
+    free(bed.seq_names);
+    free(bed.starts);
+    badexit("Error: Failed to allocate memory for bed ends.");
+  }
+  bed.n_alloc = ALLOC_CHUNK_SIZE;
+  int ret_val;
+  size_t line_num = 0, empty_lines = 0, comment_lines = 0;
+  size_t n_fields = 0, field_size = 0;
+  char tmp_field[MOTIF_VALUE_MAX_CHAR];
+  kstream_t *kbed = ks_init(files.b);
+  kstring_t line = { 0, 0, 0 };
+  while ((ret_val = ks_getuntil(kbed, '\n', &line, 0)) >= 0) {
+    line_num += 1;
+    if (bed.n_regions + 1 > bed.n_alloc) {
+      char **tmp_ptr1 = realloc(bed.seq_names,
+        sizeof(*bed.seq_names) * bed.n_alloc + sizeof(*bed.seq_names) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr1 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed sequence names.");
+      } else {
+        bed.seq_names = tmp_ptr1;
+      }
+      size_t *tmp_ptr2 = realloc(bed.starts,
+        sizeof(*bed.starts) * bed.n_alloc + sizeof(*bed.starts) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr2 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed starts.");
+      } else {
+        bed.starts = tmp_ptr2;
+      }
+      size_t *tmp_ptr3 = realloc(bed.ends,
+        sizeof(*bed.ends) * bed.n_alloc + sizeof(*bed.ends) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr3 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed ends.");
+      } else {
+        bed.ends = tmp_ptr3;
+      }
+      char **tmp_ptr4 = realloc(bed.range_names,
+        sizeof(*bed.range_names) * bed.n_alloc + sizeof(*bed.range_names) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr4 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed range names.");
+      } else {
+        bed.range_names = tmp_ptr4;
+      }
+      char *tmp_ptr5 = realloc(bed.strands,
+        sizeof(*bed.strands) * bed.n_alloc + sizeof(*bed.strands) * ALLOC_CHUNK_SIZE);
+      if (tmp_ptr5 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed strands.");
+      } else {
+        bed.strands = tmp_ptr5;
+      }
+      bed.n_alloc += ALLOC_CHUNK_SIZE;
+    }
+    n_fields = count_fields(line.s);
+    if (count_nonempty_chars(line.s) == 0) {
+      empty_lines += 1;
+      continue;
+    } else if (line.s[0] == '#') {
+      comment_lines += 1;
+      continue;
+    } else if (line.l >= 7 && line.s[0] == 'b' && line.s[1] == 'r' && line.s[2] == 'o' &&
+        line.s[3] == 'w' && line.s[4] == 's' && line.s[5] == 'e' && line.s[6] == 'r') {
+      comment_lines += 1;
+      continue;
+    } else if (line.l >= 5 && line.s[0] == 't' && line.s[1] == 'r' && line.s[2] == 'a' &&
+        line.s[3] == 'c' && line.s[4] == 'k') {
+      comment_lines += 1;
+      continue;
+    } else if (n_fields < 3) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Line %'zu has %'zu fields and %'zu non-whitespace characters.\n",
+          line_num, count_fields(line.s), count_nonempty_chars(line.s));
+      badexit("Error: Encountered line in bed with fewer than 3 tab-separated fields.");
+    }
+    if (n_fields >= 6) {
+      if ((field_size = parse_bed_field(line.s, 6, tmp_field)) != 1) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Line %'zu in bed does not have a single character in the strand field (found %zu).",
+          line_num, field_size);
+        badexit("");
+      } else if (tmp_field[0] != '+' && tmp_field[0] != '-' && tmp_field[0] != '.') {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Line %'zu in bed has an incorrect strand character (found %s, need +/-/.).",
+          line_num, tmp_field);
+        badexit("");
+      }
+      bed.strands[bed.n_regions] = tmp_field[0];
+    } else {
+      bed.strands[bed.n_regions] = '.';
+    }
+    if (parse_bed_field(line.s, 2, tmp_field) == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Line %'zu in bed has an empty start field.", line_num);
+      badexit("");
+    }
+    bed.starts[bed.n_regions] = (size_t) atoll(tmp_field);
+    if (parse_bed_field(line.s, 3, tmp_field) == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Line %'zu in bed has an empty end field.", line_num);
+      badexit("");
+    }
+    bed.ends[bed.n_regions] = (size_t) atoll(tmp_field);
+    if (bed.starts[bed.n_regions] >= bed.ends[bed.n_regions]) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Line %'zu in bed has a start >= end value.", line_num);
+      badexit("");
+    }
+    if (n_fields >= 4) {
+      if ((field_size = parse_bed_field(line.s, 4, tmp_field)) == 0) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Line %'zu in bed has an empty range name.", line_num);
+        badexit("");
+      }
+      if (field_size > SEQ_NAME_MAX_CHAR) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Range name in bed on line  %'zu is too large (%zu>%zu).",
+          line_num, field_size, SEQ_NAME_MAX_CHAR);
+      }
+      bed.range_names[bed.n_regions] = malloc(sizeof(char) * (field_size + 1));
+      if (bed.range_names[bed.n_regions] == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate memory for bed range name.");
+      }
+      for (size_t i = 0; i < field_size; i++) {
+        bed.range_names[bed.n_regions][i] = tmp_field[i];
+      }
+      bed.range_names[bed.n_regions][field_size] = '\0';
+      if (args.trim_names) {
+        for (size_t i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
+          if (bed.range_names[bed.n_regions][i] == ' ') {
+            bed.range_names[bed.n_regions][i] = '\0';
+            break;
+          } else if (bed.range_names[bed.n_regions][i] == '\0') {
+            break;
+          }
+        }
+      }
+    } else {
+      bed.range_names[bed.n_regions] = malloc(sizeof(char) * 2);
+      if (bed.range_names[bed.n_regions] == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate memory for bed range name.");
+      }
+      bed.range_names[bed.n_regions][0] = '.';
+      bed.range_names[bed.n_regions][1] = '\0';
+    }
+    if ((field_size = parse_bed_field(line.s, 1, tmp_field)) == 0) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      fprintf(stderr, "Error: Line %'zu in bed has an empty sequence name.", line_num);
+      badexit("");
+    }
+    if (field_size > SEQ_NAME_MAX_CHAR) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      fprintf(stderr, "Error: Sequence name in bed on line  %'zu is too large (%zu>%zu).",
+        line_num, field_size, SEQ_NAME_MAX_CHAR);
+    }
+    bed.seq_names[bed.n_regions] = malloc(sizeof(char) * (field_size + 1));
+    if (bed.seq_names[bed.n_regions] == NULL) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      badexit("Error: Failed to allocate memory for bed sequence name.");
+    }
+    for (size_t i = 0; i < field_size; i++) {
+      bed.seq_names[bed.n_regions][i] = tmp_field[i];
+    }
+    bed.seq_names[bed.n_regions][field_size] = '\0';
+    if (args.trim_names) {
+      for (size_t i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
+        if (bed.seq_names[bed.n_regions][i] == ' ') {
+          bed.seq_names[bed.n_regions][i] = '\0';
+          break;
+        } else if (bed.seq_names[bed.n_regions][i] == '\0') {
+          break;
+        }
+      }
+    }
+    bed.n_regions += 1;
+  }
+  if (ret_val == -3) {
+    ks_destroy(kbed);
+    badexit("Error: Failed to read file stream.");
+  } else if (!bed.n_regions) {
+    ks_destroy(kbed);
+    badexit("Error: Failed to read any records in bed file.");
+  }
+  ks_destroy(kbed);
+  free(line.s);
+  bed.n_lines = line_num;
+  bed.n_comments = comment_lines;
+  bed.n_empty = empty_lines;
+}
+
+void fill_bed_seq_indices(void) {
+  bed.seq_indices = malloc(sizeof(*bed.seq_indices) * bed.n_regions);
+  if (bed.seq_indices == NULL) {
+    badexit("Error: Failed to allocate memory for bed sequence indices.");
+  }
+  bed.indices_are_filled = 1;
+  // TODO: this is potentially very slow for lots of small sequences, use hashes?
+  for (size_t i = 0; i < bed.n_regions; i++) {
+    bed.seq_indices[i] = -1;
+    if (i > 0 && strcmp(bed.seq_names[i - 1], bed.seq_names[i]) == 0) {
+      /* Speed things up by assuming sorted input */
+      bed.seq_indices[i] = bed.seq_indices[i - 1];
+    } else {
+      for (size_t j = 0; j < seq_info.n; j++) {
+        if (strcmp(bed.seq_names[i], seq_names[j]) == 0) {
+          bed.seq_indices[i] = j;
+          break;
+        }
+      }
+      if (bed.seq_indices[i] == -1) {
+        fprintf(stderr, "Error: Range #%'zu in bed file has a sequence name not in input sequences (%s).",
+          i + 1, bed.seq_names[i]);
+        badexit("");
+      }
+    }
+  }
+}
+
+void check_bed_ranges(void) {
+  for (size_t i = 0; i < bed.n_regions; i++) {
+    if (bed.starts[i] + 1 > seq_sizes[bed.seq_indices[i]]) {
+      fprintf(stderr, "Error: Range #%'zu in bed file is out of bounds on sequence %s.\n",
+        i + 1, seq_names[bed.seq_indices[i]]);
+      fprintf(stderr, "    Bed range = %'zu-%'zu\n", bed.starts[i] + 1, bed.ends[i]);
+      fprintf(stderr, "    Sequence size = %'zu", seq_sizes[bed.seq_indices[i]]);
+      badexit("");
+    } else if (bed.ends[i] > seq_sizes[bed.seq_indices[i]]) {
+      if (args.v) {
+        fprintf(stderr, "Warning: Trimming range #%'zu in bed file on sequence %s.\n",
+          i + 1, seq_names[bed.seq_indices[i]]);
+        fprintf(stderr, "    Bed range = %'zu-%'zu\n", bed.starts[i] + 1, bed.ends[i]);
+        fprintf(stderr, "    Sequence size = %'zu\n", seq_sizes[bed.seq_indices[i]]);
+      }
+      bed.ends[i] = seq_sizes[bed.seq_indices[i]];
+    }
+  }
+}
+
+void print_bed_stats(void) {
+  if (args.w) {
+    fprintf(stderr, "%'zu line(s) total, with %'zu comment/header and %'zu empty line(s).\n",
+      bed.n_lines, bed.n_comments, bed.n_empty);
+  }
+  size_t n_seqs = 0, n_bases = 0;
+  size_t *covered_seqs = malloc(sizeof(size_t) * seq_info.n);
+  if (covered_seqs == NULL) {
+    badexit("Error: Failed to allocate memory for bed stats.");
+  }
+  ERASE_ARRAY(covered_seqs, seq_info.n);
+  for (size_t i = 0; i < bed.n_regions; i++) {
+    covered_seqs[bed.seq_indices[i]] = 1;
+    n_bases += bed.ends[i] - bed.starts[i];
+  }
+  for (size_t i = 0; i < seq_info.n; i++) {
+    n_seqs += covered_seqs[i];
+  }
+  fprintf(stderr, "Found %'zu range(s) covering %'zu base(s) across %'zu sequence(s).\n",
+    bed.n_regions, n_bases, n_seqs);
+  free(covered_seqs);
+}
+
+void count_bases_single_in_bed(const unsigned char *seq, const size_t start, const size_t end) {
+  for (size_t i = start; i < end; i++) char_counts[seq[i]]++;
+}
+
+void print_seq_stats_single_in_bed(FILE *whereto, const size_t seq_i, const size_t seq_j) {
+  for (size_t i = 0; i < bed.n_regions; i++) {
+    if (bed.seq_indices[i] == seq_j) {
+      ERASE_ARRAY(char_counts, 256);
+      count_bases_single_in_bed(seqs[seq_i], bed.starts[i], bed.ends[i]);
+      fprintf(whereto, "%s:%zu-%zu(%c)\t%s\t%zu\t%s\t%zu\t%.2f\t%zu\n",
+        seq_names[bed.seq_indices[i]], bed.starts[i] + 1, bed.ends[i], bed.strands[i],
+        bed.range_names[i], seq_j + 1, seq_names[seq_j], bed.ends[i] - bed.starts[i],
+        calc_gc() * 100.0, (bed.ends[i] - bed.starts[i]) - standard_base_count());
+    }
+  }
+}
+
+void print_seq_stats_in_bed(FILE *whereto) {
+  for (size_t i = 0; i < bed.n_regions; i++) {
+    ERASE_ARRAY(char_counts, 256);
+    count_bases_single_in_bed(seqs[bed.seq_indices[i]], bed.starts[i], bed.ends[i]);
+    fprintf(whereto, "%s:%zu-%zu(%c)\t%s\t%zu\t%s\t%zu\t%.2f\t%zu\n",
+      seq_names[bed.seq_indices[i]], bed.starts[i] + 1, bed.ends[i], bed.strands[i],
+      bed.range_names[i], bed.seq_indices[i] + 1, seq_names[bed.seq_indices[i]],
+      bed.ends[i] - bed.starts[i], calc_gc() * 100.0,
+      (bed.ends[i] - bed.starts[i]) - standard_base_count());
+  }
+}
+
 static inline void score_subseq(const motif_t *motif, const unsigned char *seq, const size_t offset, int *score) {
   *score = 0;
   for (size_t i = 0; i < motif->size; i++) {
+    /* if (__builtin_expect(char2index[seq[i + offset]] == 4, 0)) { */
+    /*   *score = AMBIGUITY_SCORE; */
+    /*   break; */
+    /* } */
     *score += get_score(motif, seq[i + offset], i);
+    // would breaking early speed things up here?
+  }
+}
+
+static inline void score_subseq_rev(const motif_t *motif, const unsigned char *seq, const size_t offset, int *score) {
+  *score = 0;
+  for (size_t i = 0; i < motif->size; i++) {
+    *score += get_score_rc(motif, seq[i + offset], i);
   }
 }
 
@@ -2003,6 +2490,101 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
   for (size_t i = 0; i < motif->size; i++) {
     *score += get_score(motif, seq[i + offset], i);
     *score_rc += get_score_rc(motif, seq[i + offset], i);
+  }
+}
+
+void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t bed_i) {
+  const unsigned char *seq = seqs[seq_loc];
+  const char *seq_name = seq_names[bed.seq_indices[bed_i]];
+  const size_t bed_size = bed.ends[bed_i] - bed.starts[bed_i];
+  const size_t bed_start_i = bed.starts[bed_i] + 1;
+  const size_t bed_end_i = bed.ends[bed_i];
+  const char bed_strand_i = bed.strands[bed_i];
+  const char *bed_name = bed.range_names[bed_i];
+  const int mot_size = motif->size;
+  if (bed_size < motif->size || motif->threshold == INT_MAX) return;
+  const int threshold = motif->threshold - 1;
+  int score = INT_MIN, score_rc = INT_MIN;
+  if (bed_strand_i == '.') {
+    for (size_t i = bed_start_i - 1; i < bed_end_i - motif->size; i++) {
+      score_subseq_rc(motif, seq, i, &score, &score_rc);
+      if (__builtin_expect(score > threshold, 0)) {
+        fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
+          bed_start_i,
+          bed_end_i,
+          bed_strand_i,
+          bed_name,
+          seq_name,
+          i + 1,
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER,
+          100.0 * score / motif->max_score,
+          mot_size,
+          seq + i);
+      }
+      if (__builtin_expect(score_rc > threshold, 0)) {
+        fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
+          bed_start_i,
+          bed_end_i,
+          bed_strand_i,
+          bed_name,
+          seq_name,
+          i + 1,
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score_rc),
+          score_rc / PWM_INT_MULTIPLIER,
+          100.0 * score_rc / motif->max_score,
+          mot_size,
+          seq + i);
+      }
+    }
+  } else if (bed_strand_i == '+') {
+    for (size_t i = bed_start_i - 1; i < bed_end_i - motif->size; i++) {
+      score_subseq(motif, seq, i, &score);
+      if (__builtin_expect(score > threshold, 0)) {
+        fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
+          bed_start_i,
+          bed_end_i,
+          bed_strand_i,
+          bed_name,
+          seq_name,
+          i + 1,
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER,
+          100.0 * score / motif->max_score,
+          mot_size,
+          seq + i);
+      }
+    }
+  } else if (bed_strand_i == '-') {
+    for (size_t i = bed_start_i - 1; i < bed_end_i - motif->size; i++) {
+      score_subseq_rev(motif, seq, i, &score);
+      if (__builtin_expect(score > threshold, 0)) {
+        fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
+          seq_name,
+          bed_start_i,
+          bed_end_i,
+          bed_strand_i,
+          bed_name,
+          seq_name,
+          i + 1,
+          i + motif->size,
+          motif->name,
+          score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER,
+          100.0 * score / motif->max_score,
+          mot_size,
+          seq + i);
+      }
+    }
   }
 }
 
@@ -2143,8 +2725,14 @@ void *scan_sub_process(void *thread_i) {
       }
       fill_cdf(motif);
       set_threshold(motif);
-      for (size_t j = 0; j < seq_info.n; j++) {
-        score_seq(motif, j, j);
+      if (!args.use_bed) {
+        for (size_t j = 0; j < seq_info.n; j++) {
+          score_seq(motif, j, j);
+        }
+      } else {
+        for (size_t j = 0; j < bed.n_regions; j++) {
+          score_seq_in_bed(motif, bed.seq_indices[j], j);
+        }
       }
       if (args.progress) {
         pthread_mutex_lock(&pb_lock);
@@ -2196,7 +2784,7 @@ int main(int argc, char **argv) {
 
   int opt;
 
-  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:dgrvwh0")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:x:dgrvwh0")) != -1) {
     switch (opt) {
       case 'm':
         if (has_consensus) {
@@ -2216,6 +2804,15 @@ int main(int argc, char **argv) {
         }
         has_consensus = 1;
         consensus = optarg;
+        break;
+      case 'x':
+        args.use_bed = 1;
+        files.b = gzopen(optarg, "r");
+        if (files.b == NULL) {
+          fprintf(stderr, "Error: Failed to open bed file: %s", optarg);
+          badexit("");
+        }
+        files.b_open = 1;
         break;
       case 's':
         has_seqs = 1;
@@ -2306,6 +2903,10 @@ int main(int argc, char **argv) {
   if (use_stdout) {
     files.o = stdout;
     files.o_open = 1;
+  }
+
+  if (args.scan_rc == 0 && args.use_bed && args.v) {
+    fprintf(stderr, "Warning: The -f arg is ignored when -x is used.\n");
   }
 
   if (!has_seqs && !has_motifs && !has_consensus) {
@@ -2403,11 +3004,31 @@ int main(int argc, char **argv) {
         }
       }
     }
+    if (args.use_bed) {
+      time_t time1 = time(NULL);
+      if (args.v) fprintf(stderr, "Reading bed file ...\n");
+      read_bed();
+      fill_bed_seq_indices();
+      check_bed_ranges();
+      time_t time2 = time(NULL);
+      if (args.v) {
+        time_t time3 = difftime(time2, time1);
+        if (time3 > 1) {
+          fprintf(stderr, "Needed %'zu seconds to parse bed file.\n", (size_t) time3);
+        }
+        print_bed_stats();
+      }
+      /* print_bed(); */
+    }
     if (!has_motifs) {
       if (args.v) {
         fprintf(stderr, "No motifs provided, printing sequence stats before exit.\n");
       }
-      fprintf(files.o, "##seqnum\tseqname\tsize\tgc_pct\tn_count\n");
+      if (args.use_bed) {
+        fprintf(files.o, "##bed_range\tbed_name\tseq_num\tseq_name\tsize\tgc_pct\tn_count\n");
+      } else {
+        fprintf(files.o, "##seq_num\tseq_name\tsize\tgc_pct\tn_count\n");
+      }
 
       time_t time1 = time(NULL);
 
@@ -2418,11 +3039,19 @@ int main(int argc, char **argv) {
           } else {
             seqs[0] = (unsigned char *) kseq->seq.s;
           }
-          print_seq_stats_single(files.o, 0, j);
+          if (args.use_bed) {
+            print_seq_stats_single_in_bed(files.o, 0, j);
+          } else {
+            print_seq_stats_single(files.o, 0, j);
+          }
         }
         kseq_destroy(kseq);
       } else {
-        print_seq_stats(files.o);
+        if (args.use_bed) {
+          print_seq_stats_in_bed(files.o);
+        } else {
+          print_seq_stats(files.o);
+        }
       }
 
       time_t time2 = time(NULL);
@@ -2455,12 +3084,25 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < motif_info.n; i++) {
       motif_size += motifs[i]->size;
     }
-    fprintf(files.o,
-      "##MotifCount=%zu MotifSize=%zu SeqCount=%zu SeqSize=%zu GC=%.2f%% Ns=%zu MaxPossibleHits=%zu\n",
-      motif_info.n, motif_size, seq_info.n, seq_info.total_bases, seq_info.gc_pct,
-      seq_info.unknowns, max_possible_hits);
-    fprintf(files.o, 
-      "##seqname\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
+    if (args.use_bed) {
+      size_t bed_sum = 0;
+      for (size_t k = 0; k < bed.n_regions; k++) {
+        bed_sum += bed.ends[k] - bed.starts[k];
+      }
+      fprintf(files.o,
+        "##MotifCount=%zu MotifSize=%zu BedCount=%zu BedSize=%zu SeqCount=%zu SeqSize=%zu GC=%.2f%% Ns=%zu\n",
+        motif_info.n, motif_size, bed.n_regions, bed_sum, seq_info.n,
+        seq_info.total_bases, seq_info.gc_pct, seq_info.unknowns);
+      fprintf(files.o, 
+        "##bed_range\tbed_name\tseq_name\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
+    } else {
+      fprintf(files.o,
+        "##MotifCount=%zu MotifSize=%zu SeqCount=%zu SeqSize=%zu GC=%.2f%% Ns=%zu MaxPossibleHits=%zu\n",
+        motif_info.n, motif_size, seq_info.n, seq_info.total_bases, seq_info.gc_pct,
+        seq_info.unknowns, max_possible_hits);
+      fprintf(files.o, 
+        "##seq_name\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
+    }
 
     if (args.v) fprintf(stderr, "Scanning ...\n");
     time_t time1 = time(NULL);
@@ -2482,7 +3124,19 @@ int main(int argc, char **argv) {
           } else {
             seqs[0] = (unsigned char *) kseq->seq.s;
           }
-          score_seq(motifs[i], j, 0);
+          if (!args.use_bed) {
+            score_seq(motifs[i], j, 0);
+          } else {
+            for (size_t k = 0; k < bed.n_regions; k++) {
+              if (bed.seq_indices[k] == j) {
+                if (args.w && !args.progress) {
+                  fprintf(stderr, "          Scanning range: %zu-%zu\n",
+                      bed.starts[i] + 1, bed.ends[i]);
+                }
+                score_seq_in_bed(motifs[i], 0, k);
+              }
+            }
+          }
         }
         gzrewind(files.s);
         kseq_rewind(kseq);
@@ -2518,6 +3172,7 @@ int main(int argc, char **argv) {
   free(threads);
   free_motifs();
   free_seqs();
+  free_bed();
 
   return EXIT_SUCCESS;
 

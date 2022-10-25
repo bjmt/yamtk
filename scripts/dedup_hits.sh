@@ -10,6 +10,12 @@
 #    a previous (higher scoring) hit; if so, skip.
 
 awk '/^##/ { print ; next }
+  {
+    if (NF != 9 && NF != 10) {
+      print "Error: Input is malformed; expected 9-10 fields, found " NF > "/dev/stderr"
+      exit 1
+    }
+  }
   { print | "sort '"${SORT_ARGS}"' -t$'\''\t'\'' -k5,5 -k1,1 -k4,4 -k7,7nr" }' \
     < /dev/stdin \
   | awk '
