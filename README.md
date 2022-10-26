@@ -132,12 +132,18 @@ $ bin/minimotif -s test/dna.fa
 1	1	55	49.09	0
 2	2	70	45.71	0
 3	3	33	39.39	0
+
+$ bin/minimotif -s test/dna.fa -x test/dna.bed
+##bed_range	bed_name	seq_num	seq_name	size	gc_pct	n_count
+1:1-35(+)	A	1	1	35	51.43	0
+2:11-48(-)	B	2	2	38	50.00	0
 ```
 
 This mode shows the internal PWM representation of motifs, as well P-values
 for the min and max possible scores (with some in-between scores). Basic
 information about sequences is output, including size, GC percent, and the
-number of non-DNA/RNA letters found.
+number of non-DNA/RNA letters found. If a BED file is also provided then the
+sequence stats are restricted to those ranges.
 
 Finally, scanning can be restricted to only parts of the input sequences as
 specified in a BED file. This will, of course, result in nearly linear
@@ -205,10 +211,11 @@ minimotif results via `stdin` and output their results to `stdout`.
 - `add_qvals.sh`: Calculate Benjamini-Hochberg adjusted P-values (or Q-values)
   and add them as a tenth column. (Note: Do *not* deduplicate/remove
   overlapping hits before calculating Q-values.) Currently not compatible with
-  minimotif run using the `-x` flag.
+  minimotif run using the `-x` flag. (Generally I find it doesn't make much
+  sense to calculate these.)
 - `dedup_hits.sh`: Remove lower-scoring overlapping hits (of the same motif).
-- `sort_coord.sh`: Sort the results by coordinate. Currently not compatible
-  with minimotif run using the `-x` flag.
+  Currently not compatible with minimotif run using the `-x` flag.
+- `sort_coord.sh`: Sort the results by coordinate.
 - `sort_motif.sh`: Sort the results by motif name.
 - `sort_pval.sh`: Sort the results by P-value.
 - `to_bed.sh`: Convert the output to a BED6+4 format.

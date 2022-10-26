@@ -177,8 +177,8 @@ void usage(void) {
     "            scanning will be restricted to the indicated strand. Note that -f \n"
     "            is disabled when -x is used. It is recommended the BED be sorted  \n"
     "            for speed. Overlapping ranges are allowed, but be warned that they\n"
-    "            will individually scanned thus potentially introducing duplicate  \n"
-    "            hits. The file can be gzipped.                                    \n"
+    "            will be individually scanned thus potentially introducing         \n"
+    "            duplicate hits. The file can be gzipped.                          \n"
     " -o <str>   Filename to output results. By default output goes to stdout.     \n"
     " -b <dbl,   Comma-separated background probabilities for A,C,G,T|U. By default\n"
     "     dbl,   the background probability values from the motif file (MEME only) \n"
@@ -2748,10 +2748,6 @@ void *scan_sub_process(void *thread_i) {
 
 int main(int argc, char **argv) {
 
-  if (setlocale(LC_NUMERIC, "en_US") == NULL && args.v) {
-    fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
-  }
-
   motifs = malloc(sizeof(*motifs) * ALLOC_CHUNK_SIZE);
   if (motifs == NULL) {
     badexit("Error: Failed to allocate memory for motifs.");
@@ -2892,6 +2888,10 @@ int main(int argc, char **argv) {
       default:
         return EXIT_FAILURE;
     }
+  }
+
+  if (setlocale(LC_NUMERIC, "en_US") == NULL && args.v) {
+    fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
   }
 
   if (use_manual_thresh && args.thresh0) {
