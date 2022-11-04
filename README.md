@@ -159,6 +159,45 @@ being scanned. Example output:
 2:11-48(-)	B	2	43	47	-	1-motifA	0.015625	3.867	58.3	TCTAG
 ```
 
+### Comparing minimotif and fimo
+
+The two programs have slightly different defaults, so right out of the box they
+will not give identical values for scores and P-values. However with some slight
+tweaking to even things out we can see the outputs are nearly identical.
+
+fimo:
+```sh
+$ fimo --bfile --uniform-- --motif-pseudo 1 --no-qvalue --text --thresh 0.02 test/motif.meme test/dna.fa
+Using motif +motif of width 5.
+Using motif -motif of width 5.
+motif_id	motif_alt_id	sequence_name	start	stop	strand	score	p-value	q-value	matched_sequence
+motif		1	30	34	+	4.87379	0.00781		CTCGC
+motif		2	4	8	+	3.83495	0.0166		GTCGA
+motif		2	16	20	-	4.87379	0.00781		CTCGC
+motif		2	42	46	+	3.69903	0.0195		GTCTA
+motif		2	43	47	-	3.91262	0.0137		CTAGA
+motif		3	28	32	+	3.69903	0.0195		GTCTA
+```
+
+minimotif (also manually setting the nsites value found in the motif file):
+```sh
+$ bin/minimotif -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
+##minimotif v1.2 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
+##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
+2	4	8	+	motif	0.0166015625	3.843	57.8	GTCGA
+2	16	20	-	motif	0.0078125	4.877	73.4	GCGAG
+2	42	46	+	motif	0.01953125	3.704	55.7	GTCTA
+2	43	47	-	motif	0.013671875	3.919	59.0	TCTAG
+3	28	32	+	motif	0.01953125	3.704	55.7	GTCTA
+```
+
+(Actually, you might notice one small difference: minimotif always returns the
+sequence on the forward strand for each hit, whereas fimo will return reverse
+complement sequences when hits are on the reverse strand. If you prefer the
+fimo behaviour you can pipe the minimotif output to `scripts/flip_rc.sh`)
+
 ## Benchmarking
 
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to

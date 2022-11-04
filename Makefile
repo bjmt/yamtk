@@ -1,14 +1,21 @@
-CFLAGS=-std=gnu99 -g -O3 -Iklib -Wall -Wextra -Wno-sign-compare
+CFLAGS=-std=gnu99
 LDLIBS=-lz -lm -pthread
 
 ifneq ($(shell uname -s),Darwin)
 	CFLAGS+=-march=native
 endif
 
-all: minimotif clean
+all: CFLAGS+=-O3
+all: minidedup minimotif
+
+debug: CFLAGS+=-g -Wall -Wextra -Wno-sign-compare
+debug: minidedup minimotif
 
 minimotif: src/minimotif.c
-	$(CC) $(CFLAGS) $(LDLIBS) $^ -o $@
+	mkdir -p bin ;\
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
 
-clean:
-	mkdir -p bin ; mv minimotif bin/minimotif
+minidedup: src/minidedup.c
+	mkdir -p bin ;\
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
+

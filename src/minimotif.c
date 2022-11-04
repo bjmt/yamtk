@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <locale.h>
 #include <getopt.h>
 #include <math.h>
@@ -101,21 +102,24 @@ KSEQ_INIT(gzFile, gzread)
  */
 #define SEQ_NAME_MAX_CHAR         ((size_t) 512)
 
-/* Chunk size for allocating additional memory for motif and sequence array
- * pointers.
+/* Chunk size for allocating additional memory for arrays of pointers
+ * when reading inputs.
+ * (256 seems be a small sweet spot in some situations.)
  */
-#define ALLOC_CHUNK_SIZE           ((size_t) 64)
+#define ALLOC_CHUNK_SIZE          ((size_t) 256)
+
+/* Minimum amount of additional memory to request when reading sequences and
+ * more memory is needed. Current default: request memory in 1/2 MB chunks.
+ * (Changing this doesn't seem to have any impact on performance, probably
+ * there is a bottleneck somewhere else.)
+ */
+#define SEQ_REALLOC_SIZE                  524288
 
 /* Front-facing defaults.
  */
 #define DEFAULT_NSITES                      1000
 #define DEFAULT_PVALUE                    0.0001
 #define DEFAULT_PSEUDOCOUNT                    1
-
-/* Minimum amount of additional memory to request when reading sequences and
- * more memory is needed. Current default: request memory in 1/2 MB chunks.
- */
-#define SEQ_REALLOC_SIZE                  524288
 
 #define VEC_ADD(VEC, X, VEC_LEN)                                \
   do {                                                          \
@@ -151,6 +155,73 @@ KSEQ_INIT(gzFile, gzread)
 #define PROGRESS_BAR_WIDTH                    60
 #define PROGRESS_BAR_STRING                                     \
   "============================================================"
+
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+  long peak_mem(void) {
+    return 0;
+  }
+# else
+# include <sys/resource.h>
+    long peak_mem(void) {
+      struct rusage r_mem;
+      getrusage(RUSAGE_SELF, &r_mem);
+#   ifdef __linux__
+      return r_mem.ru_maxrss * 1024;
+#   else
+      return r_mem.ru_maxrss;
+#   endif
+    }
+#endif
+
+void print_peak_mb(void) {
+  long bytes = peak_mem();
+  if (bytes > (1 << 30)) {
+    fprintf(stderr, "Approx. peak memory usage: %'.2f GB.\n",
+      (((double) bytes / 1024.0) / 1024.0) / 1024.0);
+  } else if (bytes > (1 << 20)) {
+    fprintf(stderr, "Approx. peak memory usage: %'.2f MB.\n",
+      ((double) bytes / 1024.0) / 1024.0);
+  } else if (bytes) {
+    fprintf(stderr, "Approx. peak memory usage: %'.2f KB.\n",
+      (double) bytes / 1024.0);
+  }
+}
+
+void print_seq_mem(const size_t b) {
+  if (b > (1 << 30)) {
+    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f GB.\n",
+      (((double) b / 1024.0) / 1024.0) / 1024.0);
+  } else if (b > (1 << 20)) {
+    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f MB.\n",
+      ((double) b / 1024.0) / 1024.0);
+  } else {
+    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f KB.\n",
+      (double) b / 1024.0);
+  }
+}
+
+void print_motif_mem(const size_t b) {
+  if (b > (1 << 30)) {
+    fprintf(stderr, "Approx. memory usage by motif(s): %'.2f GB.\n",
+      (((double) b / 1024.0) / 1024.0) / 1024.0);
+  } else if (b > (1 << 20)) {
+    fprintf(stderr, "Approx. memory usage by motif(s): %'.2f MB.\n",
+      ((double) b / 1024.0) / 1024.0);
+  } else {
+    fprintf(stderr, "Approx. memory usage by motif(s): %'.2f KB.\n",
+      (double) b / 1024.0);
+  }
+}
+
+void print_time(const size_t s, const char *what) {
+  if (s > 7200) {
+    fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
+  } else if (s > 120) {
+    fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
+  } else if (s > 1) {
+    fprintf(stderr, "Needed %'zu seconds to %s.\n", s, what);
+  }
+}
 
 void usage(void) {
   printf(
@@ -201,6 +272,11 @@ void usage(void) {
     "            performance in cases of slow disk access or gzipped files. Note   \n"
     "            that this flag is automatically set when reading sequences from   \n"
     "            stdin, and when multithreading is enabled.                        \n"
+    " -L         When reading sequences from stdin (and multithreading is not      \n"
+    "            enabled), use this flag to force minimotif to use low-mem mode.   \n"
+    "            Since it will not be able to collect statistics about the entire  \n"
+    "            input before scanning, this will result in a partially empty      \n"
+    "            header.                                                           \n"
     " -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that\n"
     "            increasing this number will also increase memory usage slightly.  \n"
     "            The number of threads is limited by the number of motifs being    \n"
@@ -739,10 +815,6 @@ void parse_user_bkg(const char *bkg_usr) {
     fprintf(stderr, "    G=%.3g", args.bkg[2]);
     fprintf(stderr, "    T=%.3g\n", args.bkg[3]);
   }
-}
-
-static inline double b2mb(const size_t x) {
-  return (x / 1024.0) / 1024.0;
 }
 
 int check_line_contains(const char *line, const char *substring) {
@@ -1638,24 +1710,16 @@ void read_hocomoco(void) {
 
 void load_motifs(void) {
   switch (detect_motif_fmt()) {
-    case FMT_MEME:
-      read_meme();
-      break;
-    case FMT_HOMER:
-      read_homer();
-      break;
-    case FMT_JASPAR:
-      read_jaspar();
-      break;
-    case FMT_HOCOMOCO:
-      read_hocomoco();
-      break;
+    case FMT_MEME:     read_meme();     break;
+    case FMT_HOMER:    read_homer();    break;
+    case FMT_JASPAR:   read_jaspar();   break;
+    case FMT_HOCOMOCO: read_hocomoco(); break;
     case FMT_UNKNOWN:
       badexit("Error: Failed to detect motif format.");
-      break;
   }
   complete_motifs();
-  size_t empty_motifs = 0;
+  size_t empty_motifs = 0, approx_mem = sizeof(motif_t) * motif_info.n;
+  if (args.v) print_motif_mem(approx_mem);
   for (size_t i = 0; i < motif_info.n; i++) if (!motifs[i]->size) empty_motifs++;
   if (empty_motifs == motif_info.n) {
     badexit("Error: All parsed motifs are empty.");
@@ -1781,7 +1845,7 @@ size_t peek_through_seqs(kseq_t *kseq) {
   if (seq_info.unknowns == seq_len_total) {
     badexit("Error: Failed to read any standard DNA/RNA bases.");
   } else if (unknowns_pct >= 90.0) {
-    fprintf(stderr, "!!! Warning: Non-standard base count is extremely high!!! (%.2f%%)\n",
+    fprintf(stderr, "!!! Warning: Non-standard base count is extremely high !!! (%.2f%%)\n",
       unknowns_pct);
   } else if (unknowns_pct >= 50.0 && args.v) {
     fprintf(stderr, "Warning: Non-standard base count is very high! (%.2f%%)\n",
@@ -1800,15 +1864,15 @@ size_t peek_through_seqs(kseq_t *kseq) {
     max_seq_size = MAX(max_seq_size, seq_sizes[i]);
   }
   if (args.v) {
-    fprintf(stderr, "Loaded %'zu base(s) across %'zu sequence(s) (GC=%.2f%%).\n",
+    fprintf(stderr, "Found %'zu base(s) across %'zu sequence(s) (GC=%.2f%%).\n",
       seq_len_total, seq_info.n, seq_info.gc_pct);
     if (seq_info.unknowns) {
       fprintf(stderr, "Found %'zu (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
     }
-    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f MB\n",
-      b2mb(sizeof(unsigned char) * max_seq_size + sizeof(size_t) * seq_info.n +
-        sizeof(char) * SEQ_NAME_MAX_CHAR * seq_info.n));
+    print_seq_mem(
+      sizeof(unsigned char) * max_seq_size + sizeof(size_t) * seq_info.n +
+        sizeof(char) * SEQ_NAME_MAX_CHAR * seq_info.n);
   }
   return max_seq_size;
 }
@@ -1903,9 +1967,9 @@ void load_seqs(kseq_t *kseq) {
       fprintf(stderr, "Found %'zu (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
     }
-    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f MB\n",
-      b2mb(sizeof(unsigned char) * seq_len_total + sizeof(size_t) * seq_info.n * 2 +
-        sizeof(char) * name_sizes));
+    print_seq_mem(
+      sizeof(unsigned char) * seq_len_total + sizeof(size_t) * seq_info.n * 2 +
+        sizeof(char) * name_sizes);
   }
 }
 
@@ -2789,7 +2853,7 @@ int main(int argc, char **argv) {
         has_motifs = 1;
         files.m = fopen(optarg, "r");
         if (files.m == NULL) {
-          fprintf(stderr, "Error: Failed to open motif file: %s", optarg);
+          fprintf(stderr, "Error: Failed to open motif file \"%s\" [%s]", optarg, strerror(errno));
           badexit("");
         }
         files.m_open = 1;
@@ -2805,7 +2869,7 @@ int main(int argc, char **argv) {
         args.use_bed = 1;
         files.b = gzopen(optarg, "r");
         if (files.b == NULL) {
-          fprintf(stderr, "Error: Failed to open bed file: %s", optarg);
+          fprintf(stderr, "Error: Failed to open bed file \"%s\" [%s]", optarg, strerror(errno));
           badexit("");
         }
         files.b_open = 1;
@@ -2818,7 +2882,7 @@ int main(int argc, char **argv) {
         } else {
           files.s = gzopen(optarg, "r");
           if (files.s == NULL) {
-            fprintf(stderr, "Error: Failed to open sequence file: %s", optarg);
+            fprintf(stderr, "Error: Failed to open sequence file \"%s\" [%s]", optarg, strerror(errno));
             badexit("");
           }
         }
@@ -2828,7 +2892,7 @@ int main(int argc, char **argv) {
         use_stdout = 0;
         files.o = fopen(optarg, "w");
         if (files.o == NULL) {
-          fprintf(stderr, "Error: Failed to create output file: %s", optarg);
+          fprintf(stderr, "Error: Failed to create output file \"%s\" [%s]", optarg, strerror(errno));
           badexit("");
         }
         files.o_open = 1;
@@ -2936,11 +3000,15 @@ int main(int argc, char **argv) {
   }
 
   if (use_stdin || args.nthreads > 1) {
-    if (args.low_mem && args.v) {
-      fprintf(stderr, "Deactivating low-mem mode.\n");
+    if (args.low_mem) {
+      if (args.v) {
+        fprintf(stderr, "Deactivating low-mem mode.\n");
+      }
       args.low_mem = 0;
     }
   }
+
+  if (args.v && args.low_mem) fprintf(stderr, "Running in low-mem mode.\n");
 
   if (has_motifs) {
     pthread_t *tmp_threads = realloc(threads, sizeof(pthread_t) * args.nthreads);
@@ -2971,10 +3039,7 @@ int main(int argc, char **argv) {
     time_t time2 = time(NULL);
     if (args.v) {
       time_t time3 = difftime(time2, time1);
-      if (time3 > 1) {
-        fprintf(stderr, "Needed %'zu seconds to print motifs.\n",
-          (size_t) time3);
-      }
+      print_time((size_t) time3, "print motifs");
     }
   }
 
@@ -2994,14 +3059,10 @@ int main(int argc, char **argv) {
     time_t time2 = time(NULL);
     if (args.v) {
       time_t time3 = difftime(time2, time1);
-      if (time3 > 1) {
-        if (args.low_mem) {
-          fprintf(stderr, "Needed %'zu seconds to peek through sequences.\n",
-            (size_t) time3);
-        } else {
-          fprintf(stderr, "Needed %'zu seconds to load sequences.\n",
-            (size_t) time3);
-        }
+      if (args.low_mem) {
+        print_time((size_t) time3, "peek through sequences");
+      } else {
+        print_time((size_t) time3, "load sequences");
       }
     }
     if (args.use_bed) {
@@ -3013,9 +3074,7 @@ int main(int argc, char **argv) {
       time_t time2 = time(NULL);
       if (args.v) {
         time_t time3 = difftime(time2, time1);
-        if (time3 > 1) {
-          fprintf(stderr, "Needed %'zu seconds to parse bed file.\n", (size_t) time3);
-        }
+        print_time((size_t) time3, "parse bed file");
         print_bed_stats();
       }
       /* print_bed(); */
@@ -3057,10 +3116,7 @@ int main(int argc, char **argv) {
       time_t time2 = time(NULL);
       if (args.v) {
         time_t time3 = difftime(time2, time1);
-        if (time3 > 1) {
-          fprintf(stderr, "Needed %'zu seconds to print sequence stats.\n",
-            (size_t) time3);
-        }
+        print_time((size_t) time3, "print sequence stats");
       }
 
     }
@@ -3162,9 +3218,11 @@ int main(int argc, char **argv) {
     free_cdf();
     time_t time2 = time(NULL);
     time_t time3 = difftime(time2, time1);
-    if (args.v) fprintf(stderr, "Done.\n");
-    if (args.v && time3 > 1) fprintf(stderr, "Needed %'zu seconds to scan.\n",
-        (size_t) time3);
+    if (args.v) {
+      fprintf(stderr, "Done.\n");
+      print_time((size_t) time3, "scan");
+      print_peak_mb();
+    }
 
   }
 
