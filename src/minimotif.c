@@ -32,10 +32,14 @@
 
 KSEQ_INIT(gzFile, gzread)
 
-#define MINIMOTIF_VERSION                  "1.2"
+#define MINIMOTIF_VERSION                  "1.3"
 #define MINIMOTIF_YEAR                      2022
 
 /* ChangeLog
+ *
+ * v1.3 (4 November 2022)
+ * - Improve verbose output
+ * - Optimize ALLOC_CHUNK_SIZE
  *
  * v1.2 (25 October 2022)
  * - Added the ability to restrict scanning to regions within a BED file with
@@ -157,20 +161,20 @@ KSEQ_INIT(gzFile, gzread)
   "============================================================"
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-  long peak_mem(void) {
-    return 0;
-  }
-# else
-# include <sys/resource.h>
-    long peak_mem(void) {
-      struct rusage r_mem;
-      getrusage(RUSAGE_SELF, &r_mem);
-#   ifdef __linux__
-      return r_mem.ru_maxrss * 1024;
-#   else
-      return r_mem.ru_maxrss;
-#   endif
-    }
+long peak_mem(void) {
+  return 0;
+}
+#else
+#include <sys/resource.h>
+long peak_mem(void) {
+  struct rusage r_mem;
+  getrusage(RUSAGE_SELF, &r_mem);
+#ifdef __linux__
+  return r_mem.ru_maxrss * 1024;
+#else
+  return r_mem.ru_maxrss;
+#endif
+}
 #endif
 
 void print_peak_mb(void) {
