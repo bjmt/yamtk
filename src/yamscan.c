@@ -1,5 +1,5 @@
 /*
- *   minimotif: A small super-fast DNA/RNA motif scanner
+ *   yamscan: A small super-fast DNA/RNA motif scanner
  *   Copyright (C) 2022  Benjamin Jean-Marie Tremblay
  *
  *   This program is free software: you can redistribute it and/or modify
@@ -17,6 +17,8 @@
  *
  */
 
+// TODO: add checks for errors on str->num conversions
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,10 +34,14 @@
 
 KSEQ_INIT(gzFile, gzread)
 
-#define MINIMOTIF_VERSION                  "1.3"
-#define MINIMOTIF_YEAR                      2022
+#define YAMSCAN_VERSION                    "1.4"
+#define YAMSCAN_YEAR                        2022
 
 /* ChangeLog
+ *
+ * v1.4 (11 November 2022)
+ * - Improve memory usage predictions
+ * - renamed to yamscan
  *
  * v1.3 (4 November 2022)
  * - Improve verbose output
@@ -193,26 +199,26 @@ void print_peak_mb(void) {
 
 void print_seq_mem(const size_t b) {
   if (b > (1 << 30)) {
-    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f GB.\n",
+    fprintf(stderr, "Approx. memory usage for sequence(s): %'.2f GB.\n",
       (((double) b / 1024.0) / 1024.0) / 1024.0);
   } else if (b > (1 << 20)) {
-    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f MB.\n",
+    fprintf(stderr, "Approx. memory usage for sequence(s): %'.2f MB.\n",
       ((double) b / 1024.0) / 1024.0);
   } else {
-    fprintf(stderr, "Approx. memory usage by sequence(s): %'.2f KB.\n",
+    fprintf(stderr, "Approx. memory usage for sequence(s): %'.2f KB.\n",
       (double) b / 1024.0);
   }
 }
 
 void print_motif_mem(const size_t b) {
   if (b > (1 << 30)) {
-    fprintf(stderr, "Approx. memory usage by motif(s): %'.2f GB.\n",
+    fprintf(stderr, "Approx. memory usage for motif(s): %'.2f GB.\n",
       (((double) b / 1024.0) / 1024.0) / 1024.0);
   } else if (b > (1 << 20)) {
-    fprintf(stderr, "Approx. memory usage by motif(s): %'.2f MB.\n",
+    fprintf(stderr, "Approx. memory usage for motif(s): %'.2f MB.\n",
       ((double) b / 1024.0) / 1024.0);
   } else {
-    fprintf(stderr, "Approx. memory usage by motif(s): %'.2f KB.\n",
+    fprintf(stderr, "Approx. memory usage for motif(s): %'.2f KB.\n",
       (double) b / 1024.0);
   }
 }
@@ -229,9 +235,9 @@ void print_time(const size_t s, const char *what) {
 
 void usage(void) {
   printf(
-    "minimotif v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay              \n"
+    "yamscan v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay                \n"
     "                                                                              \n"
-    "Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa  \n"
+    "Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa    \n"
     "                                                                              \n"
     " -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,\n"
     "            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-%zu bases wide.           \n"
@@ -240,9 +246,9 @@ void usage(void) {
     "            flags are unused.                                                 \n"
     " -s <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences \n"
     "            to scan. Can be gzipped. Use '-' for stdin. Omitting -s will cause\n"
-    "            minimotif to print the parsed motifs instead of scanning.         \n"
+    "            yamscan to print the parsed motifs instead of scanning.           \n"
     "            Alternatively, solely providing -s and not -m/-1 will cause       \n"
-    "            minimotif to return sequence stats. Non-standard characters (i.e. \n"
+    "            yamscan to return sequence stats. Non-standard characters (i.e.   \n"
     "            other than ACGTU) will be read but are treated as gaps during     \n"
     "            scanning.                                                         \n"
     " -x <str>   Filename of a BED-formatted file containing ranges within         \n"
@@ -276,7 +282,7 @@ void usage(void) {
     "            performance in cases of slow disk access or gzipped files. Note   \n"
     "            that this flag is automatically set when reading sequences from   \n"
     "            stdin, and when multithreading is enabled.                        \n"
-    " -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that\n"
+    " -j <int>   Number of threads yamscan can use to scan. Default: 1. Note that  \n"
     "            increasing this number will also increase memory usage slightly.  \n"
     "            The number of threads is limited by the number of motifs being    \n"
     "            scanned.                                                          \n"
@@ -286,7 +292,7 @@ void usage(void) {
     " -v         Verbose mode.                                                     \n"
     " -w         Very verbose mode.                                                \n"
     " -h         Print this help message.                                          \n"
-    , MINIMOTIF_VERSION, MINIMOTIF_YEAR, MAX_MOTIF_SIZE / 5, MAX_MOTIF_SIZE / 5,
+    , YAMSCAN_VERSION, YAMSCAN_YEAR, MAX_MOTIF_SIZE / 5, MAX_MOTIF_SIZE / 5,
       DEFAULT_PVALUE, DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES
   );
 }
@@ -636,7 +642,7 @@ static inline int get_score_rc(const motif_t *motif, const unsigned char let, co
 }
 
 void badexit(const char *msg) {
-  fprintf(stderr, "%s\nRun minimotif -h to see usage.\n", msg);
+  fprintf(stderr, "%s\nRun yamscan -h to see usage.\n", msg);
   free(threads);
   free_motifs();
   free_seqs();
@@ -645,7 +651,30 @@ void badexit(const char *msg) {
   exit(EXIT_FAILURE);
 }
 
-/* For the motif half of minimotif, this function is (by far) where it spends
+/* TODO: uncomment and use these functions (need to replace atof, atoi, atoll) */
+/*
+static inline int safe_strtod(char *str, double *res) {
+  char *tmp; errno = 0;
+  *res = strtod(str, &tmp);
+  if (str == tmp || errno != 0 || *tmp != '\0') {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
+static inline int safe_strtoull(char *str, size_t *res) {
+  char *tmp; errno = 0;
+  *res = (size_t) strtoull(str, &tmp, 10);
+  if (str == tmp || errno != 0 || *tmp != '\0') {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+*/
+
+/* For the motif half of yamscan, this function is (by far) where it spends
  * most of its time.
  */
 void fill_cdf(motif_t *motif) {
@@ -883,7 +912,7 @@ int detect_motif_fmt(void) {
           break;
         } else {
           if (check_char_is_one_of('-', line)) {
-            badexit("Error: minimotif cannot read HOCOMOCO PWMs.");
+            badexit("Error: yamscan cannot read HOCOMOCO PWMs.");
           }
           file_fmt = FMT_HOCOMOCO;
           if (args.w) fprintf(stderr, "Detected HOCOMOCO format.\n");
@@ -1717,8 +1746,17 @@ void load_motifs(void) {
       badexit("Error: Failed to detect motif format.");
   }
   complete_motifs();
-  size_t empty_motifs = 0, approx_mem = sizeof(motif_t) * motif_info.n;
-  if (args.v) print_motif_mem(approx_mem);
+  size_t empty_motifs = 0;
+  if (args.v) {
+    size_t max_cdf = 0, m = sizeof(motif_t) * motif_info.n_alloc;
+    m += sizeof(size_t) * args.nthreads;
+    m += sizeof(double *) * args.nthreads * 2;
+    for (size_t i = 0; i < motif_info.n; i++) {
+      max_cdf = MAX(max_cdf, motifs[i]->cdf_size);
+    }
+    m += sizeof(double) * max_cdf * 2 * args.nthreads;
+    print_motif_mem(m);
+  }
   for (size_t i = 0; i < motif_info.n; i++) if (!motifs[i]->size) empty_motifs++;
   if (empty_motifs == motif_info.n) {
     badexit("Error: All parsed motifs are empty.");
@@ -1783,7 +1821,7 @@ void add_seq_name(char *name, kseq_t *kseq) {
 }
 
 size_t peek_through_seqs(kseq_t *kseq) {
-  size_t name_sizes = 0;
+  size_t name_sizes = 0, max_kseq_mem = 0;
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
     seq_info.n++;
@@ -1807,6 +1845,7 @@ size_t peek_through_seqs(kseq_t *kseq) {
       seq_info.n_alloc += ALLOC_CHUNK_SIZE;
     }
     seq_sizes[seq_info.n - 1] = kseq->seq.l;
+    max_kseq_mem = MAX(max_kseq_mem, kseq->seq.m);
     /* TODO: Don't allocate name.l+comment.l if trim_names */
     seq_names[seq_info.n - 1] = malloc(sizeof(char) * kseq->name.l + sizeof(char) * kseq->comment.l + 2);
     name_sizes += kseq->name.l + kseq->comment.l + 2;
@@ -1870,14 +1909,17 @@ size_t peek_through_seqs(kseq_t *kseq) {
         seq_info.unknowns, unknowns_pct);
     }
     print_seq_mem(
-      sizeof(unsigned char) * max_seq_size + sizeof(size_t) * seq_info.n +
-        sizeof(char) * SEQ_NAME_MAX_CHAR * seq_info.n);
+      max_kseq_mem +
+      seq_info.n_alloc * sizeof(*seq_names) +
+      name_sizes +
+      seq_info.n_alloc * sizeof(*seq_sizes)
+    );
   }
   return max_seq_size;
 }
 
 void load_seqs(kseq_t *kseq) {
-  size_t name_sizes = 0;
+  size_t name_sizes = 0, total_kseq_mem = 0;
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
     seq_info.n++;
@@ -1910,6 +1952,7 @@ void load_seqs(kseq_t *kseq) {
     }
     seqs[seq_info.n - 1] = (unsigned char *) kseq->seq.s;
     kseq->seq.s = NULL;
+    total_kseq_mem += kseq->seq.m;
     seq_sizes[seq_info.n - 1] = kseq->seq.l;
     seq_names[seq_info.n - 1] = malloc(sizeof(char) * kseq->name.l + sizeof(char) * kseq->comment.l + 2);
     name_sizes += kseq->name.l + kseq->comment.l + 2;
@@ -1967,8 +2010,11 @@ void load_seqs(kseq_t *kseq) {
         seq_info.unknowns, unknowns_pct);
     }
     print_seq_mem(
-      sizeof(unsigned char) * seq_len_total + sizeof(size_t) * seq_info.n * 2 +
-        sizeof(char) * name_sizes);
+      total_kseq_mem +
+      seq_info.n_alloc * sizeof(*seq_names) +
+      name_sizes +
+      seq_info.n_alloc * sizeof(*seq_sizes)
+    );
   }
 }
 
@@ -2435,7 +2481,7 @@ void fill_bed_seq_indices(void) {
     badexit("Error: Failed to allocate memory for bed sequence indices.");
   }
   bed.indices_are_filled = 1;
-  // TODO: this is potentially very slow for lots of small sequences, use hashes?
+  // TODO: this is potentially very slow for lots of small sequences, use hashes
   for (size_t i = 0; i < bed.n_regions; i++) {
     bed.seq_indices[i] = -1;
     if (i > 0 && strcmp(bed.seq_names[i - 1], bed.seq_names[i]) == 0) {
@@ -3123,7 +3169,7 @@ int main(int argc, char **argv) {
 
   if (has_seqs && has_motifs) {
 
-    fprintf(files.o, "##minimotif v%s [ ", MINIMOTIF_VERSION);
+    fprintf(files.o, "##yamscan v%s [ ", YAMSCAN_VERSION);
     for (size_t i = 1; i < argc; i++) {
       fprintf(files.o, "%s ", argv[i]);
     }
