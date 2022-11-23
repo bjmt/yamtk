@@ -1,12 +1,13 @@
 #!/bin/bash
 
+# Replace matches from the reverse strand with their reverse complement.
+
 awk '
   BEGIN {
     IFS = "\t"
     OFS = "\t"
   }
-  function flip ( m )
-  {
+  function flip (m) {
     RC = ""
     if (m != "") {
       split(m, x, "")

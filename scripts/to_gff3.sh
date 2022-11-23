@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Output format: GFF3
+# Score col: min(1000, -10*log10(P-value))
+# ID attribute: [motif name]_[sequence name][strand]
+
 awk '
   BEGIN{
     IFS = "\t"
@@ -14,13 +18,13 @@ awk '
   }
   /^[^##]/ {
     if (NF == 9) {
-      print $1,"minimotif","nucleotide_motif",$2,$3,score($6),$4,".","ID=" $5 "_" $1 $4 ";Name=" $5 ";P_Value=" $6 ";Score=" $7 ";Match=" $9 ";"
+      print $1,"yamscan","nucleotide_motif",$2,$3,score($6),$4,".","ID=" $5 "_" $1 $4 ";Name=" $5 ";P_Value=" $6 ";Score=" $7 ";Match=" $9 ";"
     } else if (NF == 10) {
-      print $1,"minimotif","nucleotide_motif",$2,$3,score($6),$4,".","ID=" $5 "_" $1 $4 ";Name=" $5 ";P_Value=" $6 ";Score=" $7 ";Match=" $9 ";Q_value=" $10 ";"
+      print $1,"yamscan","nucleotide_motif",$2,$3,score($6),$4,".","ID=" $5 "_" $1 $4 ";Name=" $5 ";P_Value=" $6 ";Score=" $7 ";Match=" $9 ";Q_value=" $10 ";"
     } else if (NF == 11) {
-      print $3,"minimotif","nucleotide_motif",$4,$5,score($8),$6,".","ID=" $7 "_" $3 $6 ";Name=" $7 ";P_Value=" $8 ";Score=" $9 ";Match=" $11 ";Bed_Range=" $1 ";Bed_ID=" $2 ";"
+      print $3,"yamscan","nucleotide_motif",$4,$5,score($8),$6,".","ID=" $7 "_" $3 $6 ";Name=" $7 ";P_Value=" $8 ";Score=" $9 ";Match=" $11 ";Bed_Range=" $1 ";Bed_ID=" $2 ";"
     } else if (NF == 12) {
-      print $3,"minimotif","nucleotide_motif",$4,$5,score($8),$6,".","ID=" $7 "_" $3 $6 ";Name=" $7 ";P_Value=" $8 ";Score=" $9 ";Match=" $11 ";Bed_Range=" $1 ";Bed_ID=" $2 ";Q_value=" $12 ";"
+      print $3,"yamscan","nucleotide_motif",$4,$5,score($8),$6,".","ID=" $7 "_" $3 $6 ";Name=" $7 ";P_Value=" $8 ";Score=" $9 ";Match=" $11 ";Bed_Range=" $1 ";Bed_ID=" $2 ";Q_value=" $12 ";"
     } else {
       print "Error: Input is malformed; expected 9-12 fields, found " NF > "/dev/stderr"
       exit 1

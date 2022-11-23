@@ -14,16 +14,13 @@ awk '/^##/ { print ; next }
     }
   }
   { print | "sort '"${SORT_ARGS}"' -t$'\''\t'\'' -k6,6n -k7,7nr" }' \
-    < /dev/stdin \
-  | awk '
-
+    < /dev/stdin | awk '
     BEGIN {
       IFS = "\t"
       OFS = "\t"
       maxN = -1
       nHeader = 0
     }
-
     /^##/ {
       nHeader += 1
       if ($0 ~ /MaxPossibleHits/) {
@@ -53,7 +50,6 @@ awk '/^##/ { print ; next }
       }
       next
     }
-
     {
       qval = ($6 * maxN) / (NR - nHeader)
       if (qval > 1) {
@@ -61,9 +57,7 @@ awk '/^##/ { print ; next }
       }
       print $1,$2,$3,$4,$5,$6,$7,$8,$9,qval | "sort '"${SORT_ARGS}"' -t$'\''\t'\'' -k6,6nr -k7,7n"
     }
-
-  ' \
-  | awk '
+  ' | awk '
     BEGIN {
       IFS = "\t"
       OFS = "\t"

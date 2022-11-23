@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Output format: BED6+4
-# Score col: -10*log10(P-value)
+# Score col: min(1000, -10*log10(P-value))
 # Custom cols:
 #   7. Log-odds score
 #   8. Score as a percent of the max

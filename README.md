@@ -1,14 +1,16 @@
-# minimotif: A small super-fast DNA/RNA motif scanner
+# yam-toolkit: Yet Another Motif toolkit
 
 ## Installation
 
+Make sure you have a C compiler, GNU Make, and [Zlib](https://zlib.net).
+
 ```sh
-git clone https://github.com/bjmt/minimotif
-cd minimotif
+git clone https://github.com/bjmt/yam-toolkit  # Or download a recent release
+cd yam-toolkit
 make
 ```
 
-This will create the final binary as `bin/minimotif` within the project folder.
+This will create the final binaries in `bin/` within the project folder.
 
 ## Motivation
 
@@ -18,14 +20,19 @@ I resort to using [fimo](https://meme-suite.org/meme/tools/fimo). Inevitably
 the wait time exceeds my limited patience. Eventually I decided to perform my
 own re-write of fimo, only this time I would only include features I need in
 addition to making sure it could run fast enough to satisfy me. This effort led
-to this small utility, minimotif.
+to creating a faster replacement, yamscan, and then later a smattering of
+additional related programs/utilities.
 
-## Usage
+## yamscan
+
+A regular DNA/RNA scanner with a focus on simplicity and speed.
+
+### Usage
 
 ```
-minimotif v1.2  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
+yamscan v1.4  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
 
-Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
+Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
  -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,
             JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-50 bases wide.
@@ -34,9 +41,9 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             flags are unused.
  -s <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences
             to scan. Can be gzipped. Use '-' for stdin. Omitting -s will cause
-            minimotif to print the parsed motifs instead of scanning.
+            yamscan to print the parsed motifs instead of scanning.
             Alternatively, solely providing -s and not -m/-1 will cause
-            minimotif to return sequence stats. Non-standard characters (i.e.
+            yamscan to return sequence stats. Non-standard characters (i.e.
             other than ACGTU) will be read but are treated as gaps during
             scanning.
  -x <str>   Filename of a BED-formatted file containing ranges within
@@ -70,7 +77,7 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             performance in cases of slow disk access or gzipped files. Note
             that this flag is automatically set when reading sequences from
             stdin, and when multithreading is enabled.
- -j <int>   Number of threads minimotif can use to scan. Default: 1. Note that
+ -j <int>   Number of threads yamscan can use to scan. Default: 1. Note that
             increasing this number will also increase memory usage slightly.
             The number of threads is limited by the number of motifs being
             scanned.
@@ -82,9 +89,9 @@ Usage:  minimotif [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
  -h         Print this help message.
 ```
 
-## Output
+### Output
 
-minimotif reports basic information about matches, including coordinates,
+yamscan reports basic information about matches, including coordinates,
 scores, P-values, percent of the scores from the max, and the actual match.
 Additional information about the motifs and sequences is included in the
 header, which can be used for calculating Q-values after the fact. The
@@ -93,7 +100,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##minimotif v1.2 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v1.4 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -105,11 +112,11 @@ Example output:
 3	28	32	+	1-motifA	0.01953125	3.725	56.1	GTCTA
 ```
 
-One can also use minimotif to get basic information about motifs and sequences.
-By only using minimotif with one of these at a time, the following is output:
+One can also use yamscan to get basic information about motifs and sequences.
+By only using yamscan with one of these at a time, the following is output:
 
 ```sh
-$ bin/minimotif -m test/motif.jaspar
+$ bin/yamscan -m test/motif.jaspar
 ----------------------------------------
 Motif: 1-motifA (N1 L1)
 MaxScore=6.64	Threshold=[exceeds max]
@@ -127,13 +134,13 @@ Score=3.32	-->     p=0.022
 Score=6.64	-->     p=0.00098
 ----------------------------------------
 
-$ bin/minimotif -s test/dna.fa
+$ bin/yamscan -s test/dna.fa
 ##seq_num	seq_name	size	gc_pct	n_count
 1	1	55	49.09	0
 2	2	70	45.71	0
 3	3	33	39.39	0
 
-$ bin/minimotif -s test/dna.fa -x test/dna.bed
+$ bin/yamscan -s test/dna.fa -x test/dna.bed
 ##bed_range	bed_name	seq_num	seq_name	size	gc_pct	n_count
 1:1-35(+)	A	1	1	35	51.43	0
 2:11-48(-)	B	2	2	38	50.00	0
@@ -151,7 +158,7 @@ speed-ups to the runtime proportional to the fraction of the input sequences
 being scanned. Example output:
 
 ```
-##minimotif v1.2 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
+##yamscan v1.4 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
 ##MotifCount=1 MotifSize=5 BedCount=2 BedSize=73 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##bed_range	bed_name	seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1:1-35(+)	A	1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -159,7 +166,7 @@ being scanned. Example output:
 2:11-48(-)	B	2	43	47	-	1-motifA	0.015625	3.867	58.3	TCTAG
 ```
 
-### Comparing minimotif and fimo
+### Comparing yamscan and fimo
 
 The two programs have slightly different defaults, so right out of the box they
 will not give identical values for scores and P-values. However with some slight
@@ -179,10 +186,10 @@ motif		2	43	47	-	3.91262	0.0137		CTAGA
 motif		3	28	32	+	3.69903	0.0195		GTCTA
 ```
 
-minimotif (also manually setting the nsites value found in the motif file):
+yamscan (also manually setting the nsites value found in the motif file):
 ```sh
-$ bin/minimotif -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
-##minimotif v1.2 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+$ bin/yamscan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
+##yamscan v1.4 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
@@ -193,116 +200,139 @@ $ bin/minimotif -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m tes
 3	28	32	+	motif	0.01953125	3.704	55.7	GTCTA
 ```
 
-(Actually, you might notice one small difference: minimotif always returns the
+(Actually, you might notice one small difference: yamscan always returns the
 sequence on the forward strand for each hit, whereas fimo will return reverse
 complement sequences when hits are on the reverse strand. If you prefer the
-fimo behaviour you can pipe the minimotif output to `scripts/flip_rc.sh`)
+fimo behaviour you can pipe the yamscan output to `scripts/flip_rc.sh`)
 
-## Benchmarking
+### Benchmarking
 
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to
 record time elapsed and peak memory usage.
 
-### Default minimotif settings (low-mem mode active):
+Default yamscan settings (low-mem mode active):
 ```sh
-minimotif -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+yamscan -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 ```
-### minimotif with multi-threading (and low-mem mode implicitly disabled):
+yamscan with multi-threading (and low-mem mode implicitly disabled):
 ```sh
-minimotif -j4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+yamscan -j4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 ```
-### fimo with Q-values disabled and immediate printing of results:
+fimo with Q-values disabled and immediate printing of results:
 ```sh
 fimo --verbosity 1 --thresh 0.0001 --text motifs.txt seqs.fa > res.txt
 ```
+homer using motifs with logodds scores matching P = 0.0001:
+```sh
+scanMotifGenomeWide.pl motifs.txt seqs.fa > res.txt
+```
 
-|                                |     `minimotif`    |   `minimotif -j4`  |      `fimo`      |
-|:------------------------------:|:------------------:|:------------------:|:----------------:|
-| 100x1Kbp (100Kbp) +  10 motifs |    0.02s,   4.30MB |    0.02s,   9.91MB |    0.23s, 3.92MB |
-| 100x1Kbp (100Kbp) + 100 motifs |    0.20s,   5.89MB |    0.07s,  12.31MB |    1.96s, 4.44MB |
-| 100x10Kbp (1Mbp)  +  10 motifs |    0.10s,   4.28MB |    0.06s,  11.44MB |    2.44s, 4.20MB |
-| 100x10Kbp (1Mbp)  + 100 motifs |    0.70s,   6.02MB |    0.23s,  15.80MB |   23.24s, 4.77MB |
-|   TAIR10 (120Mbp) +  10 motifs |    6.89s,  41.08MB |    2.36s, 153.10MB | 4m41.99s, 4.01MB |
-|   TAIR10 (120Mbp) + 100 motifs | 1m06.29s,  41.59MB |   19.14s, 152.10MB |     (not run)    |
-|   GRCh38 (3.2Gbp) +  10 motifs | 3m04.80s, 249.50MB | 1m02.30s,   3.09GB |     (not run)    |
+|                                |      `yamscan`     |    `yamscan -j4`   |      `fimo`      |      `homer`      |
+|:------------------------------:|:------------------:|:------------------:|:----------------:|:-----------------:|
+| 100x1Kbp (100Kbp) +  10 motifs |    0.02s,   4.30MB |    0.02s,   9.91MB |    0.23s, 3.92MB |    0.48s,  6.64MB |
+| 100x1Kbp (100Kbp) + 100 motifs |    0.20s,   5.89MB |    0.07s,  12.31MB |    1.96s, 4.44MB |    1.43s,  6.63MB |
+| 100x10Kbp (1Mbp)  +  10 motifs |    0.10s,   4.28MB |    0.06s,  11.44MB |    2.44s, 4.20MB |    1.45s,  6.67MB |
+| 100x10Kbp (1Mbp)  + 100 motifs |    0.70s,   6.02MB |    0.23s,  15.80MB |   23.24s, 4.77MB |   10.32s,  6.66MB |
+|   TAIR10 (120Mbp) +  10 motifs |    6.89s,  41.08MB |    2.36s, 153.10MB | 4m41.99s, 4.01MB | 1m55.18s, 34.11MB |
+|   TAIR10 (120Mbp) + 100 motifs | 1m06.29s,  41.59MB |   19.14s, 152.10MB |     (not run)    |     (not run)     |
+|   GRCh38 (3.2Gbp) +  10 motifs | 3m04.80s, 249.50MB | 1m02.30s,   3.09GB |     (not run)    |     (not run)     |
 
 ### It's still not fast enough!
 
 If you are unfortunate enough to be working with genomes sized in the billions
 and find this is not fast enough, then if you are willing to lose out on the
-dependency-free convenience of minimotif I recommend trying out
+dependency-free convenience of yamscan I recommend trying out
 [MOODS](https://github.com/jhkorhonen/MOODS). This library makes use of several
-filtering algorithms to significantly speed up scanning (whereas minimotif
+filtering algorithms to significantly speed up scanning (whereas yamscan
 dumbly scores every possible match for all motifs across all sequences). I have
 found after some brief testing that when scanning hundreds of motifs across
-sequences in the Mbp-Gbp range several-fold speed-ups can be achieved.
-(Alternatively, if CPU time is meaningless to you and you have access to a large
-number of cores you can surpass even these impressive scanning times by
-making liberal use of minimotif's `-j` flag.) See the latest MOODS
+sequences in the Mbp-Gbp range several-fold speed-ups can be achieved. (In my
+limited testing I also noticed that for smaller scanning jobs MOODS can itself
+be several times slower due to the it's large startup cost -- an additional
+tradeoff to keep in mind.) Alternatively, if CPU time is meaningless to you and
+you have access to a large number of cores you can surpass even these
+impressive scanning times by making liberal use of yamscan's `-j` flag. See
+the latest MOODS
 [paper](https://academic.oup.com/bioinformatics/article/33/4/514/2726114) for
 details.
+
+## yamdedup
+
+This program is meant to work with direct yamscan output, and can work with a
+piped `stdin`. (It can however also work with regular BED files). This means it 
+expects sequence/motif/strand combinations to be in ascending order by their
+start coordinates. Separate sequence/motif/strand combinations can be
+interleaved (which is the case when yamscan is run using multiple threads),
+but within each unique combination the entries must be coordinate sorted.
+In theory starting from a fully sorted file (sorting first by
+sequence/strand/motif and then by start coordinate) will make yamdedup run
+faster, since it won't need to spend as much time checking which
+sequence/strand/motif combination it is juggling in memory matches the next
+row.
 
 ## Extra scripts
 
 A few extra utilities are included in the `scripts/` folder. These take the
-minimotif results via `stdin` and output their results to `stdout`.
+yamscan results via `stdin` and output their results to `stdout`.
+
+### Utilities requiring the `sort` program
 
 - `add_qvals.sh`: Calculate Benjamini-Hochberg adjusted P-values (or Q-values)
   and add them as a tenth column. (Note: Do *not* deduplicate/remove
   overlapping hits before calculating Q-values.) Currently not compatible with
-  minimotif run using the `-x` flag. (Generally I find it doesn't make much
-  sense to calculate these.)
+  yamscan run using the `-x` flag. (Generally I find it doesn't make much
+  sense to calculate Q-values when scanning for motifs.) Be warned that this can
+  be quite slow for big inputs, since it has to sort everything twice.
 - `dedup_hits.sh`: Remove lower-scoring overlapping hits (of the same motif).
-  Currently not compatible with minimotif run using the `-x` flag.
+  Currently not compatible with yamscan run using the `-x` flag. This should
+  only be used for very small inputs (eg <100,000 rows) unless you are willing
+  to wait a while. *As of yamscan v1.4 this scripts has been deprecated in
+  favour of the yamdedup program.*
 - `sort_coord.sh`: Sort the results by coordinate.
 - `sort_motif.sh`: Sort the results by motif name.
 - `sort_pval.sh`: Sort the results by P-value.
-- `to_bed.sh`: Convert the output to a BED6+4 format.
 
-All of these scripts use the `sort` program. Extra arguments (e.g.
-`--buffer-size`) can be used by setting a `SORT_ARGS` variable. (Be careful
-not to change the sorting behaviour.)
-
-In this example, the output of minimotif is piped to `add_qvals.sh` to first
-calculate Q-values, then to `dedup_hits.sh` to remove overlapping hits,
-and finally coordinate sorted with `sort_coord.sh`:
+Extra arguments can be provided by setting a `SORT_ARGS` environmental variable
+in the shell. For example:
 
 ```sh
-bin/minimotif -t 0.1 -m test/motif.homer -s test/dna.fa \
+$ SORT_ARGS="--buffer-size=1G" scripts/add_qvals.sh < results.txt
+```
+
+### Simple operations/format conversions
+
+- `flip_rc.sh`: Reverse complement sequence matches on the reverse strand. This
+  can be useful if you wish to see matches from the strand the motif was
+  matched from, as the default is to always return the sequence from the forward
+  strand.
+- `to_bed.sh`: Convert the results to a BED6+4 format.
+- `to_gff3.sh`: Convert the results to GFF3.
+- `to_gtf.sh`: Convert the results to GTF/GFF2.
+
+See the scripts for a description of the output formats.
+
+### Example
+
+In this example, the output of yamscan is first piped to `flip_rc.sh` to
+reverse complement the reverse strand motif matches, then to `add_qvals.sh`
+to calculate Q-values, to `dedup_hits.sh` to remove overlapping hits,
+coordinate sorted with `sort_coord.sh`, and finally converted to BED with
+`to_bed.sh`:
+
+```sh
+bin/yamscan -t 0.05 -m test/motif.homer -s test/dna.fa \
+  | scripts/flip_rc.sh \
   | scripts/add_qvals.sh \
   | scripts/dedup_hits.sh \
   | scripts/sort_coord.sh \
+  | scripts/to_bed.sh \
   > res.clean.txt
 ```
 
 ## Compatible motif formats
 
-The format will be auto-detected by minimotif. A brief overview of the
+The format will be auto-detected by yamscan. A brief overview of the
 requirements for each format follows.
-
-### [HOCOMOCO](https://hocomoco11.autosome.ru)
-
-Example HOCOMOCO motif:
-
-```
->1-motifA
-144.000000003	180.000000003	79.000000001	97.000000001
-179.000000003	57.000000001	181.000000003	83.000000001
-176.000000003	53.000000001	255.000000003	16.0000000004
-9.0000000002	3.0000000001	16.0000000004	472.000000006
-10.0000000002	5.0000000001	476.000000006	9.0000000002
-473.000000006	5.0000000001	8.0000000002	14.0000000002
-16.0000000004	415.000000006	27.0000000004	42.000000001
-12.0000000002	8.0000000002	438.000000006	42.000000001
-39.000000001	159.000000003	8.0000000002	294.000000006
-144.000000003	233.000000003	72.000000001	51.000000001
-268.000000006	57.000000001	93.000000001	82.000000001
-```
-
-HOCOMOCO motifs have a header line starting with `>` followed by the motif
-name. Only mononucleotide count matrices (PCM) can be used. The counts are
-split into four columns (A,C,G,T/U). These counts need not be integers. The
-headers cannot contain the tab character.
 
 ### [JASPAR](https://jaspar.genereg.net/docs/)
 
@@ -338,11 +368,11 @@ Example HOMER motif:
 HOMER motif header lines have (at least) three tab-separated essential elements,
 in addition to needing to begin with the `>` character:
 
-1. Consensus sequence (minimotif ignores this but requires something be here)
+1. Consensus sequence (yamscan ignores this but requires something be here)
 
 2. One-word name
 
-3. Minimum logodds score (minimotif ignores this but will warn if missing and
+3. Minimum logodds score (yamscan ignores this but will warn if missing and
    running with `-v`/`-w`)
 
 This header line is immediately followed by the motif probability values (first
@@ -384,16 +414,40 @@ There are three essential elements to a MEME motif file:
 
 Other optional lines:
 
-- The `ALPHABET` line is checked by minimotif; if using a custom alphabet
+- The `ALPHABET` line is checked by yamscan; if using a custom alphabet
   definition then it is ignored (it is up to the user to ensure the custom
   alphabet represents DNA/RNA)
 
-- The `strands:` line is briefly examined, and if it does not match the minimotif
+- The `strands:` line is briefly examined, and if it does not match the yamscan
   settings for which strands to scan a warning will be emitted if using `-v`/`-w`
 
 - Background values will be used if a line starting with `Background letter
   frequencies` and immediately followed by probabilities for A,C,G,T/U is found
 
-Both full and minimal MEME motif files can be used (alongside its derivatives
+Both full and yamscan MEME motif files can be used (alongside its derivatives
 DREME and STREME).
+
+### [HOCOMOCO](https://hocomoco11.autosome.ru)
+
+Example HOCOMOCO motif:
+
+```
+>1-motifA
+144.000000003	180.000000003	79.000000001	97.000000001
+179.000000003	57.000000001	181.000000003	83.000000001
+176.000000003	53.000000001	255.000000003	16.0000000004
+9.0000000002	3.0000000001	16.0000000004	472.000000006
+10.0000000002	5.0000000001	476.000000006	9.0000000002
+473.000000006	5.0000000001	8.0000000002	14.0000000002
+16.0000000004	415.000000006	27.0000000004	42.000000001
+12.0000000002	8.0000000002	438.000000006	42.000000001
+39.000000001	159.000000003	8.0000000002	294.000000006
+144.000000003	233.000000003	72.000000001	51.000000001
+268.000000006	57.000000001	93.000000001	82.000000001
+```
+
+HOCOMOCO motifs have a header line starting with `>` followed by the motif
+name. Only mononucleotide count matrices (PCM) can be used. The counts are
+split into four columns (A,C,G,T/U). These counts need not be integers. The
+headers cannot contain the tab character.
 

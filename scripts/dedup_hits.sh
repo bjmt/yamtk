@@ -9,6 +9,11 @@
 # 2. For each motif/seqname/strand combination, check if the hit overlaps
 #    a previous (higher scoring) hit; if so, skip.
 
+# Testing with a results file containing ~100,000 lines from 10 motifs scanned
+# across TAIR10: time = 48 seconds, max memory = 57.3 MB
+
+printf "Warning: dedup_hits.sh has been deprecated. Please use yamdedup instead.\n" > /dev/stderr
+
 awk '/^##/ { print ; next }
   {
     if (NF != 9 && NF != 10) {
