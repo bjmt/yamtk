@@ -6,16 +6,16 @@ ifneq ($(shell uname -s),Darwin)
 endif
 
 all: CFLAGS+=-O3
-all: minidedup minimotif
+all: yamdedup yamscan
 
-debug: CFLAGS+=-g -Wall -Wextra -Wno-sign-compare
-debug: minidedup minimotif
+debug: CFLAGS+=-g -Wall -Wextra -Wno-sign-compare -DDEBUG
+debug: yamdedup yamscan
 
-minimotif: src/minimotif.c
+yamscan: src/yamscan.c
 	mkdir -p bin ;\
 	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
 
-minidedup: src/minidedup.c
+yamdedup: src/yamdedup.c
 	mkdir -p bin ;\
 	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
 
