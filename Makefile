@@ -8,7 +8,7 @@ endif
 all: CFLAGS+=-O3
 all: yamdedup yamscan
 
-debug: CFLAGS+=-g -Wall -Wextra -Wno-sign-compare -DDEBUG
+debug: CFLAGS+=-g -Og -Wall -Wextra -Wno-sign-compare -fsanitize=address,undefined -DDEBUG
 debug: yamdedup yamscan
 
 yamscan: src/yamscan.c

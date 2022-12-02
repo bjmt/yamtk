@@ -26,8 +26,10 @@
 #include <math.h>
 #include <zlib.h>
 #include "kseq.h"
+#include "khash.h"
 
 KSEQ_INIT(gzFile, gzread)
+KHASH_MAP_INIT_STR(str_h, size_t)
 
 #define YAMDEDUP_VERSION            "1.0"
 #define YAMDEDUP_YEAR                2022
@@ -156,6 +158,8 @@ void usage(void) {
   );
 }
 
+khash_t(str_h) *hash_tab;
+
 typedef struct feat_tab_t {
   char  ***lines;
   char   **seq_name;
@@ -201,6 +205,10 @@ void free_feat_tab(void) {
   free(feat_tab.scores);
   free(feat_tab.n);
   free(feat_tab.n_alloc);
+  for (khint_t k = 0; k < kh_end(hash_tab); k++) {
+    if (kh_exist(hash_tab, k)) free((char *) kh_key(hash_tab, k));
+  }
+  kh_destroy(str_h, hash_tab);
 }
 
 static inline int alloc_more_to_feat_one(const size_t i) {
@@ -442,40 +450,29 @@ static inline size_t dedup_and_purge_feat(const size_t i) {
   return n_discarded;
 }
 
-/*
-static inline unsigned long hash_feature(const char *seq, const char *motif, const char strand) {
-  unsigned long hash = 5381;
-  hash = ((hash << 5) + hash) + (unsigned char) strand;
-  for (size_t i = 0; i < MAX_NAME_SIZE && motif[i] != '\0'; i++) {
-    hash = ((hash << 5) + hash) + (unsigned char) motif[i];
-  }
-  for (size_t i = 0; i < SEQ_NAME_MAX_CHAR && seq[i] != '\0'; i++) {
-    hash = ((hash << 5) + hash) + (unsigned char) seq[i];
-  }
-  return hash;
-}
-
-size_t *hash_tab;
-size_t hash_tab_n = 0;
-size_t hash_tab_n_used = 0;
-*/
-
 static inline size_t find_matching_feat(const char *seq, const char *motif, const char strand) {
-  // TODO: use hashes, this becomes way too slow during super large jobs
-  size_t feat_index = 0;
-  /*
-  if (hash_tab_n_used > 3 * (hash_tab_n / 4)) {
+  size_t feat_index = 0, hash_key_i = 1, j, hash_key_n = 2 + MAX_NAME_SIZE + SEQ_NAME_MAX_CHAR;
+  char hash_key[hash_key_n];
+  hash_key[0] = strand;
+  for (j = 0; hash_key_i < hash_key_n && j < MAX_NAME_SIZE; hash_key_i++, j++) {
+    if (motif[j] == '\0') break;
+    hash_key[hash_key_i] = motif[j];
   }
-  unsigned long hash = hash_feature(seq, motif, strand);
-  fprintf(stderr, "%lu\n", hash % 128);
-  */
-  for (size_t i = 0; i < feat_tab.n_total; i++) {
-    if (strcmp(feat_tab.seq_name[i], seq) == 0 &&
-        strcmp(feat_tab.motif_name[i], motif) == 0 &&
-        feat_tab.strand[i] == strand) {
-      feat_index = i;
-      return feat_index;
-    }
+  for (j = 0; hash_key_i < hash_key_n && j < SEQ_NAME_MAX_CHAR; hash_key_i++, j++) {
+    if (seq[j] == '\0') break;
+    hash_key[hash_key_i] = seq[j];
+  }
+  hash_key[hash_key_i] = '\0';
+#ifdef DEBUG
+  fprintf(stderr, "HashKey:%s\n", hash_key);
+#endif
+  int absent;
+  khint_t k = kh_put(str_h, hash_tab, hash_key, &absent);
+  if (absent) {
+    kh_key(hash_tab, k) = strdup(hash_key);
+    kh_val(hash_tab, k) = feat_tab.n_total;
+  } else {
+    return kh_val(hash_tab, k);
   }
   if (args.w) {
     fprintf(stderr,
@@ -737,8 +734,11 @@ void run_minidedup(void) {
     if ((feature_index = find_matching_feat(seq, motif, strand[0])) == -1) {
       goto error_mem;
     }
-    if (feat_tab.n[feature_index] &&
-        start > feat_tab.ends[feature_index][feat_tab.n[feature_index] - 1]) {
+#ifdef DEBUG
+    fprintf(stderr, "L:%zu\tI:%zu\tN:%zu\n", n_lines, feature_index, feat_tab.n[feature_index]);
+#endif
+    if (feat_tab.n[feature_index] > 0 &&
+      start > feat_tab.ends[feature_index][feat_tab.n[feature_index] - 1]) {
       if (feat_tab.n[feature_index] > score2index_n_alloc) {
         score2index_t *tmp = realloc(score2index,
           sizeof(score2index) * (score2index_n_alloc + ALLOC_CHUNK_SIZE));
@@ -900,16 +900,9 @@ int main(int argc, char **argv) {
     badexit("");
   }
   score2index_n_alloc += ALLOC_CHUNK_SIZE;
-  
-  /*
-  hash_tab = malloc(sizeof(size_t) * HASH_TABLE_SIZE);
-  if (hash_tab == NULL) {
-    fprintf(stderr, "Error: Memory allocation failed");
-    badexit("");
-  }
-  hash_tab_n = HASH_TABLE_SIZE;
-  */
 
+  hash_tab = kh_init(str_h);
+  
   if (args.v) {
     if (args.ignore_strand) fprintf(stderr, "Ignoring strand column.\n");
     if (args.ignore_motif) fprintf(stderr, "Ignoring motif name column.\n");
@@ -926,7 +919,6 @@ int main(int argc, char **argv) {
   }
 
   free(score2index);
-  /* free(hash_tab); */
   free_feat_tab();
   close_files();
 

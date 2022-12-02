@@ -2481,7 +2481,6 @@ void fill_bed_seq_indices(void) {
     badexit("Error: Failed to allocate memory for bed sequence indices.");
   }
   bed.indices_are_filled = 1;
-  // TODO: this is potentially very slow for lots of small sequences, use hashes
   for (size_t i = 0; i < bed.n_regions; i++) {
     bed.seq_indices[i] = -1;
     if (i > 0 && strcmp(bed.seq_names[i - 1], bed.seq_names[i]) == 0) {
@@ -2489,6 +2488,8 @@ void fill_bed_seq_indices(void) {
       bed.seq_indices[i] = bed.seq_indices[i - 1];
     } else {
       for (size_t j = 0; j < seq_info.n; j++) {
+        /* TODO: Use a hash table instead. Not super high priority, since this is
+         * still super fast when there are <1 million ranges, but would be nice. */
         if (strcmp(bed.seq_names[i], seq_names[j]) == 0) {
           bed.seq_indices[i] = j;
           break;
