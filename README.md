@@ -21,7 +21,7 @@ the wait time exceeds my limited patience. Eventually I decided to perform my
 own re-write of fimo, only this time I would only include features I need in
 addition to making sure it could run fast enough to satisfy me. This effort led
 to creating a faster replacement, yamscan, and then later a smattering of
-additional related programs/utilities.
+additional related programs/utilities as my needs demanded.
 
 ## yamscan
 
@@ -30,7 +30,7 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamscan v1.4  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
+yamscan v1.5  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
 
 Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
@@ -53,8 +53,8 @@ Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             scanning will be restricted to the indicated strand. Note that -f
             is disabled when -x is used. It is recommended the BED be sorted
             for speed. Overlapping ranges are allowed, but be warned that they
-            will individually scanned thus potentially introducing duplicate
-            hits. The file can be gzipped.
+            will be individually scanned thus potentially introducing
+            duplicate hits. The file can be gzipped.
  -o <str>   Filename to output results. By default output goes to stdout.
  -b <dbl,   Comma-separated background probabilities for A,C,G,T|U. By default
      dbl,   the background probability values from the motif file (MEME only)
@@ -68,9 +68,9 @@ Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             integer.
  -n <int>   Number of motif sites used in PWM generation. Default: 1000.
  -d         Deduplicate motif/sequence names. Default: abort. Duplicates will
-            have the motif/sequence numbers appended.
- -r         Don't trim motif (HOCOMOCO/JASPAR only) and sequence names to the
-            first word.
+            have the motif/sequence numbers appended. Incompatible with -x.
+ -r         Don't trim motif (HOCOMOCO/JASPAR only, HOMER/MEME must already be
+            one word) and sequence names to the first word.
  -l         Deactivate low memory mode. Normally only a single sequence is
             stored in memory at a time. Setting this flag allows the program
             to instead store the entire input into memory, which can help with
@@ -100,7 +100,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##yamscan v1.4 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v1.5 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -158,7 +158,7 @@ speed-ups to the runtime proportional to the fraction of the input sequences
 being scanned. Example output:
 
 ```
-##yamscan v1.4 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
+##yamscan v1.5 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
 ##MotifCount=1 MotifSize=5 BedCount=2 BedSize=73 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##bed_range	bed_name	seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1:1-35(+)	A	1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -189,7 +189,7 @@ motif		3	28	32	+	3.69903	0.0195		GTCTA
 yamscan (also manually setting the nsites value found in the motif file):
 ```sh
 $ bin/yamscan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
-##yamscan v1.4 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+##yamscan v1.5 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
@@ -258,17 +258,111 @@ details.
 
 ## yamdedup
 
+Remove overlapping motif hits (or any type of sequence range).
+
 This program is meant to work with direct yamscan output, and can work with a
-piped `stdin`. (It can however also work with regular BED files). This means it 
+piped `stdin`. (However it can also work with regular BED files!) This means it 
 expects sequence/motif/strand combinations to be in ascending order by their
 start coordinates. Separate sequence/motif/strand combinations can be
 interleaved (which is the case when yamscan is run using multiple threads),
 but within each unique combination the entries must be coordinate sorted.
-In theory starting from a fully sorted file (sorting first by
-sequence/strand/motif and then by start coordinate) will make yamdedup run
-faster, since it won't need to spend as much time checking which
-sequence/strand/motif combination it is juggling in memory matches the next
-row.
+It tries its utmost to use the least amount of memory required to faithfully
+remove overlapping hits across the entire file, but for complex inputs it
+may still end up using several dozen MBs. As an example, running yamdedup
+with a BED file containing ~30,000,000 unique hits duplicated three times
+(final range count of ~120,000,000, or <2 GB gzip-compressed) for ~500 motifs
+(interleaved) across the Arabidopsis genome runs in about 48 seconds and
+reaches 80 MB peak memory usage. Of course this will vary wildly depending on
+how much of the input is overlapping; if all ranges in a file are overlapping
+in one big chain, then yamdedup will be forced to store the entire input in
+memory at a time.
+
+### Usage
+
+```sh
+yamdedup v1.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay               
+                                                                              
+Usage:  yamdedup [options] -i [ results.txt | ranges.bed ]                    
+                                                                              
+ -i <str>   Filename of yamscan results file or a tab-delimited BED file      
+            with at least six columns: (1) sequence name, (2) 0-based start,  
+            (3) end, (4) motif name, (5) motif score, and (6) the strand.     
+            If a yamscan results file is provided the P-value is used for     
+            deciding which overlapping hit(s) to discard, otherwise for BED   
+            the score column is used and lower scores are discarded. The input
+            is assumed to be partially sorted: different sequence/motif/strand
+            combinations can be interleaved, but the individual combinations  
+            themselves must be sorted by their start coordinates. The         
+            yamscan program outputs its results this way, so no additional    
+            sorting is needed. Can be gzipped. Use '-' for stdin.             
+ -o <str>   Filename to output results. By default output goes to stdout.     
+ -s         Ignore strand when finding overlapping ranges.                    
+ -m         Ignore motif name when finding overlapping ranges.                
+ -0         Ignore scores when removing overlapping ranges, causing yamdedup  
+            to simply remove overlapping ranges in the order they appear.     
+ -S         Sort on range size instead of score/p-value (keeping larger ones).
+ -r         Sort in opposite order (i.e., keep lower scores, higher p-values, 
+            or smaller ranges).                                               
+ -y         Force yamdedup to treat the input as a yamscan output file.       
+ -b         Force yamdedup to treat the input as a BED file.                  
+ -v         Verbose mode.                                                     
+ -w         Very verbose mode.                                                
+ -h         Print this help message. 
+```
+
+### Examples
+
+Let us consider the following basic scenario:
+
+```sh
+$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
+##yamscan v1.5 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
+##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
+1	7	11	+	1-motifA	0.1640625	-1.165	-17.6	ACTGA
+1	11	15	+	1-motifA	0.0654296875	1.236	18.6	ATCGA
+```
+
+In this example we can see that all three hits overlap, but the middle hit has
+a much worse score. yamdedup will recognize this and simply remove only that hit:
+
+```sh
+$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | bin/yamdedup -i-
+##yamscan v1.5 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
+##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
+1	11	15	+	1-motifA	0.0654296875	1.236	18.6	ATCGA
+```
+
+Again, yamdedup won't mind if the input is a properly formatted BED file:
+
+```sh
+$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | bin/yamdedup -i-
+1	2	7	1-motifA	12	+	1.459	22.0	0.060546875	.
+1	10	15	1-motifA	11	+	1.236	18.6	0.0654296875	.
+```
+
+There are a few options available for controlling the behaviour of yamdedup.
+For example, the default behaviour for BED files is to prioritize keeping
+higher scores, but this can be reversed using `-r`:
+
+```sh
+$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | bin/yamdedup -i- -r
+1	6	11	1-motifA	7	+	-1.165	-17.6	0.1640625	.
+```
+
+Now we can see that the middle lower-scoring hit was kept instead.
+
+Other options include ignoring the strand of motif hits (`-s`) if you wish to
+consider hits on opposite strands to be seen as overlapping, or even ignore the
+motif names (`-m`) themselves to remove any overlapping range period.
+Overlapping hits can be removed in the order they appear, irrespective of their
+hit score, using `-0`, or even consider the size of the ranges (`-S`) instead
+of the scores (perhaps more useful for non-motif BED inputs). (In the future I
+may consider adding additional options such as requiring specific amounts of
+overlap.)
 
 ## Extra scripts
 

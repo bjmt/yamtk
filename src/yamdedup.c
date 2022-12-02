@@ -664,6 +664,7 @@ void run_minidedup(void) {
         }
         seq_loc = 1; start_loc = 2; end_loc = 3; strand_loc = 4; motif_loc = 5; score_loc = 6;
       } else if (n_fields == 11 || n_fields == 12) {
+        if (!feat_tab.n_total) is_yamscan_bed = 1;
         if (!is_yamscan_bed && n_ranges) {
           fprintf(stderr, "Error: Found 11-12 fields on line %'zu, but previous lines had 9-10.",
             n_lines);
