@@ -380,8 +380,8 @@ yamscan results via `stdin` and output their results to `stdout`.
 - `dedup_hits.sh`: Remove lower-scoring overlapping hits (of the same motif).
   Currently not compatible with yamscan run using the `-x` flag. This should
   only be used for very small inputs (eg <100,000 rows) unless you are willing
-  to wait a while. *As of yamscan v1.4 this scripts has been deprecated in
-  favour of the yamdedup program.*
+  to wait a while. *Note: As of yamscan v1.4 this scripts has been deprecated
+  in favour of the yamdedup program.*
 - `sort_coord.sh`: Sort the results by coordinate.
 - `sort_motif.sh`: Sort the results by motif name.
 - `sort_pval.sh`: Sort the results by P-value.
@@ -518,7 +518,7 @@ Other optional lines:
 - Background values will be used if a line starting with `Background letter
   frequencies` and immediately followed by probabilities for A,C,G,T/U is found
 
-Both full and yamscan MEME motif files can be used (alongside its derivatives
+Both full and minimal MEME motif files can be used (alongside its derivatives
 DREME and STREME).
 
 ### [HOCOMOCO](https://hocomoco11.autosome.ru)
