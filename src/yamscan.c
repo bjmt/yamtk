@@ -35,7 +35,7 @@ KSEQ_INIT(gzFile, gzread)
 KHASH_MAP_INIT_STR(seq_str_h, size_t);
 KHASH_SET_INIT_STR(motif_str_h);
 
-#define YAMSCAN_VERSION                    "1.4"
+#define YAMSCAN_VERSION                    "1.5"
 #define YAMSCAN_YEAR                        2022
 
 /* ChangeLog
