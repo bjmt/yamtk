@@ -468,9 +468,11 @@ static inline size_t find_matching_feat(const char *seq, const char *motif, cons
 #endif
   int absent;
   khint_t k = kh_put(str_h, hash_tab, hash_key, &absent);
-  if (absent) {
+  if (absent > 0) {
     kh_key(hash_tab, k) = strdup(hash_key);
     kh_val(hash_tab, k) = feat_tab.n_total;
+  } else if (absent == -1) {
+    return -1;
   } else {
     return kh_val(hash_tab, k);
   }

@@ -17,8 +17,6 @@
  *
  */
 
-// TODO: add checks for errors on str->num conversions
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,13 +29,21 @@
 #include <pthread.h>
 #include <zlib.h>
 #include "kseq.h"
+#include "khash.h"
 
 KSEQ_INIT(gzFile, gzread)
+KHASH_MAP_INIT_STR(seq_str_h, size_t);
+KHASH_SET_INIT_STR(motif_str_h);
 
 #define YAMSCAN_VERSION                    "1.4"
 #define YAMSCAN_YEAR                        2022
 
 /* ChangeLog
+ *
+ * v1.5 (2 December 2022)
+ * - Use hash tables instead of linear searches for motif/sequence names
+ * - Use safer alternatives to atof, atoi, atoll: strtod, strtol, strtoull
+ * - Fix a bug in isolating the end position field in BED files
  *
  * v1.4 (11 November 2022)
  * - Improve memory usage predictions
@@ -273,9 +279,9 @@ void usage(void) {
     "            integer.                                                          \n"
     " -n <int>   Number of motif sites used in PWM generation. Default: %d.         \n"
     " -d         Deduplicate motif/sequence names. Default: abort. Duplicates will \n"
-    "            have the motif/sequence numbers appended.                         \n"
-    " -r         Don't trim motif (HOCOMOCO/JASPAR only) and sequence names to the \n"
-    "            first word.                                                       \n"
+    "            have the motif/sequence numbers appended. Incompatible with -x.   \n"
+    " -r         Don't trim motif (HOCOMOCO/JASPAR only, HOMER/MEME must already be\n"
+    "            one word) and sequence names to the first word.                   \n"
     " -l         Deactivate low memory mode. Normally only a single sequence is    \n"
     "            stored in memory at a time. Setting this flag allows the program  \n"
     "            to instead store the entire input into memory, which can help with\n"
@@ -296,6 +302,8 @@ void usage(void) {
       DEFAULT_PVALUE, DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES
   );
 }
+
+khash_t(seq_str_h) *seq_hash_tab;
 
 const unsigned char char2index[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -641,19 +649,28 @@ static inline int get_score_rc(const motif_t *motif, const unsigned char let, co
   return motif->pwm_rc[char2index[let] + pos * 5];
 }
 
+void free_ht(void) {
+  /* khash.h doesn't own the memory, it's (de)allocated in seq_names
+  for (khint_t k = 0; k < kh_end(seq_hash_tab); k++) {
+    if (kh_exist(seq_hash_tab, k)) free((char *) kh_key(seq_hash_tab, k));
+  }
+  */
+  kh_destroy(seq_str_h, seq_hash_tab);
+}
+
 void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamscan -h to see usage.\n", msg);
   free(threads);
   free_motifs();
   free_seqs();
   free_bed();
+  free_ht();
   close_files();
   exit(EXIT_FAILURE);
 }
 
-/* TODO: uncomment and use these functions (need to replace atof, atoi, atoll) */
-/*
-static inline int safe_strtod(char *str, double *res) {
+static inline int str_to_double(char *str, double *res) {
+  /* Replace atof */
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
   if (str == tmp || errno != 0 || *tmp != '\0') {
@@ -663,7 +680,21 @@ static inline int safe_strtod(char *str, double *res) {
   }
 }
 
-static inline int safe_strtoull(char *str, size_t *res) {
+static inline int str_to_int(char *str, int *res) {
+  /* Replace atoi */
+  char *tmp; errno = 0;
+  long int res_long = strtol(str, &tmp, 10); 
+  if (res_long > INT_MAX) return 1;
+  *res = (int) res_long;
+  if (str == tmp || errno != 0 || *tmp != '\0') {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
+static inline int str_to_size_t(char *str, size_t *res) {
+  /* Replace atoll */
   char *tmp; errno = 0;
   *res = (size_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') {
@@ -672,7 +703,6 @@ static inline int safe_strtoull(char *str, size_t *res) {
     return 0;
   }
 }
-*/
 
 /* For the motif half of yamscan, this function is (by far) where it spends
  * most of its time.
@@ -827,14 +857,22 @@ void parse_user_bkg(const char *bkg_usr) {
       if (bi > 2) {
         badexit("Error: Too many background values provided (need 4).");
       }
-      b[bi] = atof(bc);
+      if (str_to_double(bc, &b[bi])) {
+        fprintf(stderr, "Error: Failed to parse background value.\n");
+        fprintf(stderr, "  Input: %s\n  Bad value: %s", bkg_usr, bc);
+        badexit("");
+      }
       ERASE_ARRAY(bc, USER_BKG_MAX_SIZE);
       bi++;
       j = 0;
     }
     i++;
   }
-  b[3] = atof(bc);
+  if (str_to_double(bc, &b[3])) {
+    fprintf(stderr, "Error: Failed to parse background value.\n");
+    fprintf(stderr, "  Input: %s\n  Bad value: %s", bkg_usr, bc);
+    badexit("");
+  }
   if (check_and_load_bkg(b)) badexit("");
   if (args.w) {
     fprintf(stderr, "Using new background values:\n");
@@ -1006,7 +1044,13 @@ int get_line_probs(const motif_t *motif, const char *line, double *probs, const 
             "Error: Motif [%s] has too many columns (need %zu).",
             motif->name, n); return 1;
         }
-        probs[which_i] = atof(pos_i);
+        if (str_to_double(pos_i, &probs[which_i])) {
+          if (args.w) fprintf(stderr, "\n");
+          fprintf(stderr, "Error: Failed to parse probability value for motif: %s.\n",
+            motif->name);
+          fprintf(stderr, "  Line: %s  Bad value: %s", line, pos_i);
+          return 1;
+        }
         ERASE_ARRAY(pos_i, MOTIF_VALUE_MAX_CHAR);
         j = 0;
       }
@@ -1023,7 +1067,13 @@ int get_line_probs(const motif_t *motif, const char *line, double *probs, const 
         "Error: Motif [%s] has too many columns (need %zu).",
         motif->name, n); return 1;
     }
-    probs[which_i] = atof(pos_i);
+    if (str_to_double(pos_i, &probs[which_i])) {
+      if (args.w) fprintf(stderr, "\n");
+      fprintf(stderr, "Error: Failed to parse probability value for motif: %s.\n",
+        motif->name);
+      fprintf(stderr, "  Line: %s  Bad value: %s", line, pos_i);
+      return 1;
+    }
   }
 
   if (which_i == -1) {
@@ -1112,7 +1162,11 @@ int get_meme_bkg(const char *line, const size_t line_num) {
             "Error: Expected 'C' to be second letter in MEME background (L%zu).",
             line_num); return 1;
         }
-        bkg_probs[let_i] = atof(bkg_char);
+        if (str_to_double(bkg_char, &bkg_probs[let_i])) {
+          fprintf(stderr, "Error: Failed to parse background value.\n");
+          fprintf(stderr, "  Line: %s  Bad value: %s", line, bkg_char);
+          return 1;
+        }
         ERASE_ARRAY(bkg_char, MEME_BKG_MAX_SIZE);
         let_i = 1; j = 0;
       } else if (line[i] == 'G') {
@@ -1125,7 +1179,11 @@ int get_meme_bkg(const char *line, const size_t line_num) {
             "Error: Expected 'G' to be third letter in MEME background (L%zu).",
             line_num); return 1;
         }
-        bkg_probs[let_i] = atof(bkg_char);
+        if (str_to_double(bkg_char, &bkg_probs[let_i])) {
+          fprintf(stderr, "Error: Failed to parse background value.\n");
+          fprintf(stderr, "  Line: %s  Bad value: %s", line, bkg_char);
+          return 1;
+        }
         ERASE_ARRAY(bkg_char, MEME_BKG_MAX_SIZE);
         let_i = 2; j = 0;
       } else if (line[i] == 'T' || line[i] == 'U') {
@@ -1138,7 +1196,11 @@ int get_meme_bkg(const char *line, const size_t line_num) {
             "Error: Expected 'T/U' to be fourth letter in MEME background (L%zu).",
             line_num); return 1;
         }
-        bkg_probs[let_i] = atof(bkg_char);
+        if (str_to_double(bkg_char, &bkg_probs[let_i])) {
+          fprintf(stderr, "Error: Failed to parse background value.\n");
+          fprintf(stderr, "  Line: %s  Bad value: %s", line, bkg_char);
+          return 1;
+        }
         ERASE_ARRAY(bkg_char, MEME_BKG_MAX_SIZE);
         let_i = 3; j = 0;
       } else if (check_char_is_one_of(line[i], "0123456789.\0")) {
@@ -1155,7 +1217,13 @@ int get_meme_bkg(const char *line, const size_t line_num) {
     }
     i++;
   }
-  if (bkg_char[0] != '\0') bkg_probs[let_i] = atof(bkg_char);
+  if (bkg_char[0] != '\0') {
+    if (str_to_double(bkg_char, &bkg_probs[let_i])) {
+      fprintf(stderr, "Error: Failed to parse background value.\n");
+      fprintf(stderr, "  Line: %s  Bad value: %s", line, bkg_char);
+      return 1;
+    }
+  }
   if (check_and_load_bkg(bkg_probs)) return 1;
   if (args.w) {
     fprintf(stderr, "Found MEME background values:\n");
@@ -1530,7 +1598,7 @@ int add_jaspar_row(motif_t *motif, const char *line) {
     return 1;
   }
   size_t k = 0, pos_i = -1;
-  int prev_line_was_space = 1;
+  int prev_line_was_space = 1, tmp_value = 0;
   char prob_c[MOTIF_VALUE_MAX_CHAR];
   ERASE_ARRAY(prob_c, MOTIF_VALUE_MAX_CHAR);
   i = left_bracket + 1;
@@ -1549,7 +1617,14 @@ int add_jaspar_row(motif_t *motif, const char *line) {
           fprintf(stderr, "Error: Motif [%s] has too many columns (need %zu).",
             motif->name, MAX_MOTIF_SIZE); return 1;
         }
-        set_score(motif, let, pos_i, atoi(prob_c));
+        if (str_to_int(prob_c, &tmp_value)) {
+          if (args.w) fprintf(stderr, "\n");
+          fprintf(stderr, "Error: Failed to parse count value for motif: %s.\n",
+            motif->name);
+          fprintf(stderr, "  Line: %s  Bad value: %s", line, prob_c);
+          return 1;
+        }
+        set_score(motif, let, pos_i, tmp_value);
         ERASE_ARRAY(prob_c, MOTIF_VALUE_MAX_CHAR);
         k = 0;
       }
@@ -1562,7 +1637,14 @@ int add_jaspar_row(motif_t *motif, const char *line) {
       fprintf(stderr, "Error: Motif [%s] has too many columns (need %zu).",
         motif->name, MAX_MOTIF_SIZE); return 1;
     }
-    set_score(motif, let, pos_i, atoi(prob_c));
+    if (str_to_int(prob_c, &tmp_value)) {
+      if (args.w) fprintf(stderr, "\n");
+      fprintf(stderr, "Error: Failed to parse count value for motif: %s.\n",
+        motif->name);
+      fprintf(stderr, "  Line: %s  Bad value: %s", line, prob_c);
+      return 1;
+    }
+    set_score(motif, let, pos_i, tmp_value);
   }
   if (pos_i == -1) {
     fprintf(stderr, "Error: Motif [%s] has an empty row.", motif->name); return 1;
@@ -1744,6 +1826,10 @@ void load_motifs(void) {
     case FMT_HOCOMOCO: read_hocomoco(); break;
     case FMT_UNKNOWN:
       badexit("Error: Failed to detect motif format.");
+  }
+  if (motif_info.n > 100000) {
+    fprintf(stderr,
+      "Warning: yamscan may be quite slow to process this many motifs!\n");
   }
   complete_motifs();
   size_t empty_motifs = 0;
@@ -2071,14 +2157,19 @@ void find_motif_dupes(void) {
     badexit("Error: Failed to allocate memory for motif name duplication check.");
   }
   ERASE_ARRAY(is_dup, motif_info.n);
+  khash_t(motif_str_h) *motif_hash_tab = kh_init(motif_str_h);
+  khint_t k;
+  int absent;
   for (size_t i = 0; i < motif_info.n - 1; i++) {
-    for (size_t j = i + 1; j < motif_info.n; j++) {
-      if (is_dup[j]) continue;
-      if (char_arrays_are_equal(motifs[i]->name, motifs[j]->name, MAX_NAME_SIZE)) {
-        is_dup[i] = 1; is_dup[j] = 1;
-      }
+    k = kh_put(motif_str_h, motif_hash_tab, motifs[i]->name, &absent);
+    if (absent == -1) {
+      free(is_dup);
+      badexit("Error: Failed to hash motif names.");
+    } else if (absent == 0) {
+      is_dup[i] = 1;
     }
   }
+  kh_destroy(motif_str_h, motif_hash_tab);
   size_t dup_count = 0;
   for (size_t i = 0; i < motif_info.n; i++) dup_count += is_dup[i];
   if (dup_count) {
@@ -2119,16 +2210,19 @@ void find_motif_dupes(void) {
 }
 
 void find_seq_dupes(void) {
-  if (seq_info.n == 1) return;
   size_t *is_dup = malloc(sizeof(size_t) * seq_info.n);
   ERASE_ARRAY(is_dup, seq_info.n);
-  for (size_t i = 0; i < seq_info.n - 1; i++) {
-    for (size_t j = i + 1; j < seq_info.n; j++) {
-      if (is_dup[j]) continue;
-      if (char_arrays_are_equal(seq_names[i], seq_names[j],
-            MAX(strlen(seq_names[i]), strlen(seq_names[j])))) {
-        is_dup[i] = 1; is_dup[j] = 1;
-      }
+  khint_t k;
+  int absent;
+  for (size_t i = 0; i < seq_info.n; i++) {
+    k = kh_put(seq_str_h, seq_hash_tab, seq_names[i], &absent);
+    if (absent == 0) {
+      is_dup[i] = 1;
+    } else if (absent == -1) {
+      free(is_dup);
+      badexit("Error: Failed to hash sequence names");
+    } else {
+      kh_val(seq_hash_tab, k) = i;
     }
   }
   size_t dup_count = 0;
@@ -2147,8 +2241,13 @@ void find_seq_dupes(void) {
         }
       }
     } else {
-      fprintf(stderr,
-        "Error: Encountered duplicate sequence name (use -d to deduplicate).");
+      if (!args.use_bed) {
+        fprintf(stderr,
+          "Error: Encountered duplicate sequence name (use -d to deduplicate).");
+      } else {
+        fprintf(stderr,
+          "Error: Encountered duplicate sequence name; these cannot exist with -x.");
+      }
       size_t to_print = 5;
       if (to_print > dup_count) to_print = dup_count;
       for (size_t i = 0; i < seq_info.n; i++) {
@@ -2196,10 +2295,9 @@ size_t count_field_size(const char *line, const size_t k) {
 }
 
 size_t field_start(const char *line, const size_t k) {
-  int i = 0, n = 0, len = 0;
+  int i = 0, n = 0;
   for (;;) {
     if (line[i] == '\0') break;
-    len++;
     if (line[i] == '\t') {
       n++;
     } else if (n + 1 == k) {
@@ -2211,13 +2309,14 @@ size_t field_start(const char *line, const size_t k) {
 }
 
 size_t field_end(const char *line, const size_t k) {
-  int i = 0, n = 0, len = 0;
+  int i = 0, n = 0;
   for (;;) {
     if (line[i] == '\0') break;
-    len++;
     if (line[i] == '\t') {
       n++;
-    } else if (n == k) {
+    }
+    if (n == k) {
+      i--;
       break;
     }
     i++;
@@ -2285,7 +2384,7 @@ void read_bed(void) {
   bed.n_alloc = ALLOC_CHUNK_SIZE;
   int ret_val;
   size_t line_num = 0, empty_lines = 0, comment_lines = 0;
-  size_t n_fields = 0, field_size = 0;
+  size_t n_fields = 0, field_size = 0, tmp_value = 0;
   char tmp_field[MOTIF_VALUE_MAX_CHAR];
   kstream_t *kbed = ks_init(files.b);
   kstring_t line = { 0, 0, 0 };
@@ -2376,13 +2475,25 @@ void read_bed(void) {
       fprintf(stderr, "Error: Line %'zu in bed has an empty start field.", line_num);
       badexit("");
     }
-    bed.starts[bed.n_regions] = (size_t) atoll(tmp_field);
+    if (str_to_size_t(tmp_field, &tmp_value)) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Failed to parse bed start value on line %'zu.\n", line_num);
+      fprintf(stderr, "  Line: %s\n  Bad value: %s", line.s, tmp_field);
+      badexit("");
+    }
+    bed.starts[bed.n_regions] = tmp_value;
     if (parse_bed_field(line.s, 3, tmp_field) == 0) {
       ks_destroy(kbed);
       fprintf(stderr, "Error: Line %'zu in bed has an empty end field.", line_num);
       badexit("");
     }
-    bed.ends[bed.n_regions] = (size_t) atoll(tmp_field);
+    if (str_to_size_t(tmp_field, &tmp_value)) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Failed to parse bed end value on line %'zu.\n", line_num);
+      fprintf(stderr, "  Line: %s\n  Bad value: %s", line.s, tmp_field);
+      badexit("");
+    }
+    bed.ends[bed.n_regions] = tmp_value;
     if (bed.starts[bed.n_regions] >= bed.ends[bed.n_regions]) {
       ks_destroy(kbed);
       fprintf(stderr, "Error: Line %'zu in bed has a start >= end value.", line_num);
@@ -2481,26 +2592,15 @@ void fill_bed_seq_indices(void) {
     badexit("Error: Failed to allocate memory for bed sequence indices.");
   }
   bed.indices_are_filled = 1;
+  khint_t k;
   for (size_t i = 0; i < bed.n_regions; i++) {
-    bed.seq_indices[i] = -1;
-    if (i > 0 && strcmp(bed.seq_names[i - 1], bed.seq_names[i]) == 0) {
-      /* Speed things up by assuming sorted input */
-      bed.seq_indices[i] = bed.seq_indices[i - 1];
-    } else {
-      for (size_t j = 0; j < seq_info.n; j++) {
-        /* TODO: Use a hash table instead. Not super high priority, since this is
-         * still super fast when there are <1 million ranges, but would be nice. */
-        if (strcmp(bed.seq_names[i], seq_names[j]) == 0) {
-          bed.seq_indices[i] = j;
-          break;
-        }
-      }
-      if (bed.seq_indices[i] == -1) {
-        fprintf(stderr, "Error: Range #%'zu in bed file has a sequence name not in input sequences (%s).",
-          i + 1, bed.seq_names[i]);
-        badexit("");
-      }
+    k = kh_get(seq_str_h, seq_hash_tab, bed.seq_names[i]);
+    if (k == kh_end(seq_hash_tab)) {
+      fprintf(stderr, "Error: Range #%'zu in bed file has a sequence name not in input sequences (%s).",
+        i + 1, bed.seq_names[i]);
+      badexit("");
     }
+    bed.seq_indices[i] = kh_val(seq_hash_tab, k);
   }
 }
 
@@ -2951,23 +3051,34 @@ int main(int argc, char **argv) {
         args.scan_rc = 0;
         break;
       case 't':
-        args.pvalue = atof(optarg);
+        if (str_to_double(optarg, &args.pvalue)) {
+          badexit("Error: Failed to parse -t value.");
+        }
+        if (args.pvalue > 1.0 || args.pvalue < 0.0) {
+          badexit("Error: -t cannot be less than 0 or more than 1.");
+        }
         use_manual_thresh = 1;
         break;
       case 'p':
-        args.pseudocount = atof(optarg);
+        if (str_to_int(optarg, &args.pseudocount)) {
+          badexit("Error: Failed to parse -p value.");
+        }
         if (!args.pseudocount) {
           badexit("Error: -p must be a positive integer.");
         }
         break;
       case 'n':
-        args.nsites = atoi(optarg);
+        if (str_to_int(optarg, &args.nsites)) {
+          badexit("Error: Failed to parse -n value.");
+        }
         if (!args.nsites) {
           badexit("Error: -n must be a positive integer.");
         }
         break;
       case 'j':
-        args.nthreads = atoi(optarg);
+        if (str_to_int(optarg, &args.nthreads)) {
+          badexit("Error: Failed to parse -j value.");
+        }
         if (!args.nthreads) {
           badexit("Error: -j must be a positive integer.");
         }
@@ -3002,6 +3113,10 @@ int main(int argc, char **argv) {
 
   if (setlocale(LC_NUMERIC, "en_US") == NULL && args.v) {
     fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
+  }
+
+  if (args.dedup && args.use_bed) {
+    badexit("Error: Cannot use both -x and -d.");
   }
 
   if (use_manual_thresh && args.thresh0) {
@@ -3055,6 +3170,8 @@ int main(int argc, char **argv) {
   }
 
   if (args.v && args.low_mem) fprintf(stderr, "Running in low-mem mode.\n");
+
+  seq_hash_tab = kh_init(seq_str_h);
 
   if (has_motifs) {
     pthread_t *tmp_threads = realloc(threads, sizeof(pthread_t) * args.nthreads);
@@ -3277,6 +3394,7 @@ int main(int argc, char **argv) {
   free_motifs();
   free_seqs();
   free_bed();
+  free_ht();
 
   return EXIT_SUCCESS;
 
