@@ -46,8 +46,6 @@ KHASH_MAP_INIT_STR(str_h, size_t)
 #define ALLOC_CHUNK_SIZE          ((size_t) 256)
 /* Print a progress message (when -v is used) every N ranges */
 #define PROGRESS_TRIGGER       ((size_t) 500000)
-#define HASH_TABLE_SIZE          ((size_t) 1024)
-#define HASH_TABLE_GROW          ((size_t) 1024)
 
 #define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
@@ -205,7 +203,7 @@ void free_feat_tab(void) {
   free(feat_tab.scores);
   free(feat_tab.n);
   free(feat_tab.n_alloc);
-  for (khint_t k = 0; k < kh_end(hash_tab); k++) {
+  for (khint64_t k = 0; k < kh_end(hash_tab); k++) {
     if (kh_exist(hash_tab, k)) free((char *) kh_key(hash_tab, k));
   }
   kh_destroy(str_h, hash_tab);
@@ -467,7 +465,7 @@ static inline size_t find_matching_feat(const char *seq, const char *motif, cons
   fprintf(stderr, "HashKey:%s\n", hash_key);
 #endif
   int absent;
-  khint_t k = kh_put(str_h, hash_tab, hash_key, &absent);
+  khint64_t k = kh_put(str_h, hash_tab, hash_key, &absent);
   if (absent > 0) {
     kh_key(hash_tab, k) = strdup(hash_key);
     kh_val(hash_tab, k) = feat_tab.n_total;

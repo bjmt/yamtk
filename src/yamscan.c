@@ -2158,7 +2158,7 @@ void find_motif_dupes(void) {
   }
   ERASE_ARRAY(is_dup, motif_info.n);
   khash_t(motif_str_h) *motif_hash_tab = kh_init(motif_str_h);
-  khint_t k;
+  khint64_t k;
   int absent;
   for (size_t i = 0; i < motif_info.n - 1; i++) {
     k = kh_put(motif_str_h, motif_hash_tab, motifs[i]->name, &absent);
@@ -2212,7 +2212,7 @@ void find_motif_dupes(void) {
 void find_seq_dupes(void) {
   size_t *is_dup = malloc(sizeof(size_t) * seq_info.n);
   ERASE_ARRAY(is_dup, seq_info.n);
-  khint_t k;
+  khint64_t k;
   int absent;
   for (size_t i = 0; i < seq_info.n; i++) {
     k = kh_put(seq_str_h, seq_hash_tab, seq_names[i], &absent);
@@ -2592,7 +2592,7 @@ void fill_bed_seq_indices(void) {
     badexit("Error: Failed to allocate memory for bed sequence indices.");
   }
   bed.indices_are_filled = 1;
-  khint_t k;
+  khint64_t k;
   for (size_t i = 0; i < bed.n_regions; i++) {
     k = kh_get(seq_str_h, seq_hash_tab, bed.seq_names[i]);
     if (k == kh_end(seq_hash_tab)) {
@@ -2712,11 +2712,11 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
   const char bed_strand_i = bed.strands[bed_i];
   const char *bed_name = bed.range_names[bed_i];
   const int mot_size = motif->size;
-  if (bed_size < motif->size || motif->threshold == INT_MAX) return;
+  if (bed_size < mot_size || motif->threshold == INT_MAX) return;
   const int threshold = motif->threshold - 1;
   int score = INT_MIN, score_rc = INT_MIN;
   if (bed_strand_i == '.') {
-    for (size_t i = bed_start_i - 1; i < bed_end_i - motif->size; i++) {
+    for (size_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
@@ -2727,7 +2727,7 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
           bed_name,
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score),
           score / PWM_INT_MULTIPLIER,
@@ -2744,7 +2744,7 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
           bed_name,
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score_rc),
           score_rc / PWM_INT_MULTIPLIER,
@@ -2754,7 +2754,7 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
       }
     }
   } else if (bed_strand_i == '+') {
-    for (size_t i = bed_start_i - 1; i < bed_end_i - motif->size; i++) {
+    for (size_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
       score_subseq(motif, seq, i, &score);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
@@ -2765,7 +2765,7 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
           bed_name,
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score),
           score / PWM_INT_MULTIPLIER,
@@ -2775,7 +2775,7 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
       }
     }
   } else if (bed_strand_i == '-') {
-    for (size_t i = bed_start_i - 1; i < bed_end_i - motif->size; i++) {
+    for (size_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
       score_subseq_rev(motif, seq, i, &score);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s:%zu-%zu(%c)\t%s\t%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
@@ -2786,7 +2786,7 @@ void score_seq_in_bed(const motif_t *motif, const size_t seq_loc, const size_t b
           bed_name,
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score),
           score / PWM_INT_MULTIPLIER,
@@ -2803,17 +2803,17 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
   const char *seq_name = seq_names[seq_i];
   const size_t seq_size = seq_sizes[seq_i];
   const int mot_size = motif->size;
-  if (seq_size < motif->size || motif->threshold == INT_MAX) return;
+  if (seq_size < mot_size || motif->threshold == INT_MAX) return;
   const int threshold = motif->threshold - 1;
   int score = INT_MIN, score_rc = INT_MIN;
   if (args.scan_rc) {
-    for (size_t i = 0; i <= seq_size - motif->size; i++) {
+    for (size_t i = 0; i <= seq_size - mot_size; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score),
           score / PWM_INT_MULTIPLIER,
@@ -2825,7 +2825,7 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
         fprintf(files.o, "%s\t%zu\t%zu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score_rc),
           score_rc / PWM_INT_MULTIPLIER,
@@ -2835,13 +2835,13 @@ void score_seq(const motif_t *motif, const size_t seq_i, const size_t seq_loc) {
       }
     }
   } else {
-    for (size_t i = 0; i <= seq_size - motif->size; i++) {
+    for (size_t i = 0; i <= seq_size - mot_size; i++) {
       score_subseq(motif, seq, i, &score);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s\t%zu\t%zu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
           seq_name,
           i + 1,
-          i + motif->size,
+          i + mot_size,
           motif->name,
           score2pval(motif, score),
           score / PWM_INT_MULTIPLIER,
