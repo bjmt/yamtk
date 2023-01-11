@@ -2,7 +2,8 @@
 
 ## Installation
 
-Make sure you have a C compiler, GNU Make, and [Zlib](https://zlib.net).
+Make sure you have a 64-bit C compiler compatible with C99 + GNU extensions,
+GNU Make, and [Zlib](https://zlib.net).
 
 ```sh
 git clone https://github.com/bjmt/yam-toolkit  # Or download a recent release
@@ -22,6 +23,10 @@ own re-write of fimo, only this time I would only include features I need in
 addition to making sure it could run fast enough to satisfy me. This effort led
 to creating a faster replacement, yamscan, and then later a smattering of
 additional related programs/utilities as my needs demanded.
+
+I would also like to mention that the fast performance of these programs was
+made possible by making use of several functions from Dr. Heng Li's amazing
+[klib](https://github.com/attractivechaos/klib) C library.
 
 ## yamscan
 

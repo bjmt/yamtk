@@ -23,29 +23,30 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <stdint.h>
 #include <math.h>
 #include <zlib.h>
 #include "kseq.h"
 #include "khash.h"
 
 KSEQ_INIT(gzFile, gzread)
-KHASH_MAP_INIT_STR(str_h, size_t)
+KHASH_MAP_INIT_STR(str_h, uint64_t)
 
 #define YAMDEDUP_VERSION            "1.0"
 #define YAMDEDUP_YEAR                2022
 
 /* Maximum number of characters allowed for motif names */
-#define MAX_NAME_SIZE             ((size_t) 256)
+#define MAX_NAME_SIZE           ((uint64_t) 256)
 /* Maximum number of characters allowed for sequence names */
-#define SEQ_NAME_MAX_CHAR         ((size_t) 512)
+#define SEQ_NAME_MAX_CHAR       ((uint64_t) 512)
 /* Maximum number of characters allowed for individual fields */
-#define FIELD_MAX_CHAR            ((size_t) 512)
+#define FIELD_MAX_CHAR          ((uint64_t) 512)
 /* Maximum number of characters allowed for entire lines */
-#define LINE_MAX_CHAR         ((size_t) 1048576)
+#define LINE_MAX_CHAR       ((uint64_t) 1048576)
 /* Number of elements when calling malloc/realloc */
-#define ALLOC_CHUNK_SIZE          ((size_t) 256)
+#define ALLOC_CHUNK_SIZE        ((uint64_t) 256)
 /* Print a progress message (when -v is used) every N ranges */
-#define PROGRESS_TRIGGER       ((size_t) 500000)
+#define PROGRESS_TRIGGER     ((uint64_t) 500000)
 
 #define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
@@ -81,16 +82,16 @@ long peak_mem(void) {
 #endif
 
 #ifdef DEBUG
-size_t malloc_count = 0;
-size_t malloc_fun_counts = 0;
-size_t realloc_count = 0;
-size_t realloc_fun_counts = 0;
+uint64_t malloc_count = 0;
+uint64_t malloc_fun_counts = 0;
+uint64_t realloc_count = 0;
+uint64_t realloc_fun_counts = 0;
 void print_mem_alloc_counts(int malloc, int realloc) {
   malloc_count += malloc;
   realloc_count += realloc;
   if (malloc) malloc_fun_counts += 1;
   if (realloc) realloc_fun_counts += 1;
-  fprintf(stderr, "[DEBUG] malloc count: %'zu (%'zu)  realloc count: %'zu (%'zu)\n",
+  fprintf(stderr, "[DEBUG] malloc count: %'llu (%'llu)  realloc count: %'llu (%'llu)\n",
       malloc_fun_counts, malloc_count, realloc_fun_counts, realloc_count);
 }
 #endif
@@ -159,17 +160,17 @@ void usage(void) {
 khash_t(str_h) *hash_tab;
 
 typedef struct feat_tab_t {
-  char  ***lines;
-  char   **seq_name;
-  char   **motif_name;
-  char    *strand;
-  size_t **starts;
-  size_t **ends;
-  double **scores;
-  size_t  *n;
-  size_t  *n_alloc;
-  size_t   n_total;
-  size_t   n_total_alloc;
+  char    ***lines;
+  char     **seq_name;
+  char     **motif_name;
+  char      *strand;
+  uint64_t **starts;
+  uint64_t **ends;
+  double   **scores;
+  uint64_t  *n;
+  uint64_t  *n_alloc;
+  uint64_t   n_total;
+  uint64_t   n_total_alloc;
 } feat_tab_t;
 
 feat_tab_t feat_tab = {
@@ -179,10 +180,10 @@ feat_tab_t feat_tab = {
 
 void free_feat_tab(void) {
   if (feat_tab.n_total_alloc) {
-    for (size_t i = 0; i < feat_tab.n_total; i++) {
+    for (uint64_t i = 0; i < feat_tab.n_total; i++) {
       if (feat_tab.n_alloc[i]) {
         if (feat_tab.n[i]) {
-          for (size_t j = 0; j < feat_tab.n[i]; j++) {
+          for (uint64_t j = 0; j < feat_tab.n[i]; j++) {
             free(feat_tab.lines[i][j]);
           }
         }
@@ -209,11 +210,11 @@ void free_feat_tab(void) {
   kh_destroy(str_h, hash_tab);
 }
 
-static inline int alloc_more_to_feat_one(const size_t i) {
+static inline int alloc_more_to_feat_one(const uint64_t i) {
   if (i < feat_tab.n_total) {
     REALLOC_OR_RET1(feat_tab.lines[i], ALLOC_CHUNK_SIZE + feat_tab.n_alloc[i], char *);
-    REALLOC_OR_RET1(feat_tab.starts[i], ALLOC_CHUNK_SIZE + feat_tab.n_alloc[i], size_t);
-    REALLOC_OR_RET1(feat_tab.ends[i], ALLOC_CHUNK_SIZE + feat_tab.n_alloc[i], size_t);
+    REALLOC_OR_RET1(feat_tab.starts[i], ALLOC_CHUNK_SIZE + feat_tab.n_alloc[i], uint64_t);
+    REALLOC_OR_RET1(feat_tab.ends[i], ALLOC_CHUNK_SIZE + feat_tab.n_alloc[i], uint64_t);
     REALLOC_OR_RET1(feat_tab.scores[i], ALLOC_CHUNK_SIZE + feat_tab.n_alloc[i], double);
   } else {
     feat_tab.lines[i] = malloc(sizeof(char *) * ALLOC_CHUNK_SIZE);
@@ -229,13 +230,13 @@ static inline int alloc_more_to_feat_one(const size_t i) {
       free(feat_tab.seq_name[i]);
       return 1;
     }
-    feat_tab.starts[i] = malloc(sizeof(size_t) * ALLOC_CHUNK_SIZE);
+    feat_tab.starts[i] = malloc(sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
     if (feat_tab.starts[i] == NULL) {
       free(feat_tab.seq_name[i]);
       free(feat_tab.motif_name[i]);
       return 1;
     }
-    feat_tab.ends[i] = malloc(sizeof(size_t) * ALLOC_CHUNK_SIZE);
+    feat_tab.ends[i] = malloc(sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
     if (feat_tab.ends[i] == NULL) {
       free(feat_tab.seq_name[i]);
       free(feat_tab.motif_name[i]);
@@ -263,21 +264,21 @@ static inline int alloc_more_to_feat_tab(void) {
     REALLOC_OR_RET1(feat_tab.seq_name, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, char *);
     REALLOC_OR_RET1(feat_tab.motif_name, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, char *);
     REALLOC_OR_RET1(feat_tab.strand, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, char);
-    REALLOC_OR_RET1(feat_tab.starts, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, size_t *);
-    REALLOC_OR_RET1(feat_tab.ends, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, size_t *);
+    REALLOC_OR_RET1(feat_tab.starts, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t *);
+    REALLOC_OR_RET1(feat_tab.ends, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t *);
     REALLOC_OR_RET1(feat_tab.scores, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, double *);
-    REALLOC_OR_RET1(feat_tab.n, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, size_t);
-    REALLOC_OR_RET1(feat_tab.n_alloc, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, size_t);
+    REALLOC_OR_RET1(feat_tab.n, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t);
+    REALLOC_OR_RET1(feat_tab.n_alloc, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t);
   } else {
     MALLOC_OR_RET1(feat_tab.lines, sizeof(char **) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.seq_name, sizeof(char *) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.motif_name, sizeof(char *) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.strand, sizeof(char) * ALLOC_CHUNK_SIZE);
-    MALLOC_OR_RET1(feat_tab.starts, sizeof(size_t *) * ALLOC_CHUNK_SIZE);
-    MALLOC_OR_RET1(feat_tab.ends, sizeof(size_t *) * ALLOC_CHUNK_SIZE);
+    MALLOC_OR_RET1(feat_tab.starts, sizeof(uint64_t *) * ALLOC_CHUNK_SIZE);
+    MALLOC_OR_RET1(feat_tab.ends, sizeof(uint64_t *) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.scores, sizeof(double *) * ALLOC_CHUNK_SIZE);
-    MALLOC_OR_RET1(feat_tab.n, sizeof(size_t) * ALLOC_CHUNK_SIZE);
-    MALLOC_OR_RET1(feat_tab.n_alloc, sizeof(size_t) * ALLOC_CHUNK_SIZE);
+    MALLOC_OR_RET1(feat_tab.n, sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
+    MALLOC_OR_RET1(feat_tab.n_alloc, sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
   }
   feat_tab.n_total_alloc += ALLOC_CHUNK_SIZE;
   return 0;
@@ -325,14 +326,14 @@ void close_files(void) {
 }
 
 typedef struct score2index_t {
-  double score;
-  size_t index;
-  int active;
+  double   score;
+  uint64_t index;
+  int      active;
 } score2index_t;
 
 score2index_t *score2index;
-size_t score2index_n = 0;
-size_t score2index_n_alloc = 0;
+uint64_t score2index_n = 0;
+uint64_t score2index_n_alloc = 0;
 
 void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamdedup -h to see usage.\n", msg);
@@ -342,16 +343,16 @@ void badexit(const char *msg) {
   exit(EXIT_FAILURE);
 }
 
-static inline void print_progress(const size_t n_ranges, const size_t n_discarded) {
+static inline void print_progress(const uint64_t n_ranges, const uint64_t n_discarded) {
   if (n_ranges % PROGRESS_TRIGGER == 0) {
-    fprintf(stderr, "Processed %'zu ranges (%'zu discarded) ...\n",
+    fprintf(stderr, "Processed %'llu ranges (%'llu discarded) ...\n",
         n_ranges, n_discarded);
   }
 }
 
-static inline size_t count_nonempty_chars(const char *line) {
-  size_t total_chars = 0;
-  for (size_t i = 0; i < LINE_MAX_CHAR; i++) {
+static inline uint64_t count_nonempty_chars(const char *line) {
+  uint64_t total_chars = 0;
+  for (uint64_t i = 0; i < LINE_MAX_CHAR; i++) {
     switch (line[i]) {
       case ' ':
       case '\t':
@@ -366,9 +367,9 @@ static inline size_t count_nonempty_chars(const char *line) {
   return total_chars;
 }
 
-static inline size_t count_fields(const char *line) {
+static inline uint64_t count_fields(const char *line) {
   int res = 1;
-  for (size_t i = 0; i < LINE_MAX_CHAR; i++) {
+  for (uint64_t i = 0; i < LINE_MAX_CHAR; i++) {
     if (line[i] == '\0') break;
     if (line[i] == '\t') res += 1;
   }
@@ -387,7 +388,7 @@ int compare_scores(const void *a, const void *b) {
   }
 }
 
-static inline int ranges_are_overlapping(const size_t start1, const size_t end1, const size_t start2, const size_t end2) {
+static inline int ranges_are_overlapping(const uint64_t start1, const uint64_t end1, const uint64_t start2, const uint64_t end2) {
   if ( 
       ((start1 >= start2) && (start1 <= end2)) ||
       ((end1   >= start2) && (end1   <= end2)) ||
@@ -399,12 +400,12 @@ static inline int ranges_are_overlapping(const size_t start1, const size_t end1,
   }
 }
 
-static inline size_t dedup_and_purge_feat(const size_t i) {
+static inline uint64_t dedup_and_purge_feat(const uint64_t i) {
 #ifdef DEBUG
     fprintf(stderr, "[DEBUG] Found non-overlapping range, triggering deduplication for:\n");
     fprintf(stderr, "[DEBUG]    %s(%c): %s\n", feat_tab.seq_name[i], feat_tab.strand[i], feat_tab.motif_name[i]);
 #endif
-  size_t n_discarded = 0;
+  uint64_t n_discarded = 0;
   if (feat_tab.n[i] == 2) {
     if (feat_tab.scores[i][1] > feat_tab.scores[i][0]) {
       free(feat_tab.lines[i][0]);
@@ -415,14 +416,14 @@ static inline size_t dedup_and_purge_feat(const size_t i) {
     }
     n_discarded = 1;
   } else if (feat_tab.n[i] > 2) {
-    for (size_t j = 0; j < feat_tab.n[i]; j++) {
+    for (uint64_t j = 0; j < feat_tab.n[i]; j++) {
       score2index[j].score = feat_tab.scores[i][j];
       score2index[j].index = j;
       score2index[j].active = 1;
     }
     qsort(score2index, feat_tab.n[i], sizeof(score2index_t), compare_scores);
-    for (size_t j = 1; j < feat_tab.n[i]; j++) {
-      for (size_t k = 0; k < j; k++) {
+    for (uint64_t j = 1; j < feat_tab.n[i]; j++) {
+      for (uint64_t k = 0; k < j; k++) {
         if (score2index[k].active &&
             ranges_are_overlapping(
               feat_tab.starts[i][score2index[j].index],
@@ -438,7 +439,7 @@ static inline size_t dedup_and_purge_feat(const size_t i) {
       }
     }
   }
-  for (size_t j = 0; j < feat_tab.n[i]; j++) {
+  for (uint64_t j = 0; j < feat_tab.n[i]; j++) {
     if (feat_tab.lines[i][j] != NULL) {
       fprintf(files.o, "%s\n", feat_tab.lines[i][j]);
       free(feat_tab.lines[i][j]);
@@ -448,8 +449,8 @@ static inline size_t dedup_and_purge_feat(const size_t i) {
   return n_discarded;
 }
 
-static inline size_t find_matching_feat(const char *seq, const char *motif, const char strand) {
-  size_t feat_index = 0, hash_key_i = 1, j, hash_key_n = 2 + MAX_NAME_SIZE + SEQ_NAME_MAX_CHAR;
+static inline uint64_t find_matching_feat(const char *seq, const char *motif, const char strand) {
+  uint64_t feat_index = 0, hash_key_i = 1, j, hash_key_n = 2 + MAX_NAME_SIZE + SEQ_NAME_MAX_CHAR;
   char hash_key[hash_key_n];
   hash_key[0] = strand;
   for (j = 0; hash_key_i < hash_key_n && j < MAX_NAME_SIZE; hash_key_i++, j++) {
@@ -476,7 +477,7 @@ static inline size_t find_matching_feat(const char *seq, const char *motif, cons
   }
   if (args.w) {
     fprintf(stderr,
-      "Found new seq/strand/motif combination (#%'zu):\n    %s(%c): %s\n",
+      "Found new seq/strand/motif combination (#%'llu):\n    %s(%c): %s\n",
       feat_tab.n_total + 1, seq, strand, motif);
   }
   if (feat_tab.n_total + 1 > feat_tab.n_total_alloc && alloc_more_to_feat_tab()) {
@@ -486,11 +487,11 @@ static inline size_t find_matching_feat(const char *seq, const char *motif, cons
     return -1;
   }
   feat_tab.strand[feat_tab.n_total] = strand;
-  for (size_t i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
+  for (uint64_t i = 0; i < SEQ_NAME_MAX_CHAR; i++) {
     feat_tab.seq_name[feat_tab.n_total][i] = seq[i];
     if (seq[i] == '\0') break;
   }
-  for (size_t i = 0; i < MAX_NAME_SIZE; i++) {
+  for (uint64_t i = 0; i < MAX_NAME_SIZE; i++) {
     feat_tab.motif_name[feat_tab.n_total][i] = motif[i];
     if (motif[i] == '\0') break;
   }
@@ -499,7 +500,7 @@ static inline size_t find_matching_feat(const char *seq, const char *motif, cons
   return feat_index;
 }
 
-static inline int push_feat_tab(const size_t i, char *line, const size_t start, const size_t end, const double score) {
+static inline int push_feat_tab(const uint64_t i, char *line, const uint64_t start, const uint64_t end, const double score) {
   if (feat_tab.n_alloc[i] < feat_tab.n[i] + 1) {
     if (alloc_more_to_feat_one(i)) return 1;
   }
@@ -511,10 +512,10 @@ static inline int push_feat_tab(const size_t i, char *line, const size_t start, 
   return 0;
 }
 
-static inline size_t extract_field(const char *line, const size_t k, char *field) {
-  size_t start = 0, end = 0, field_i = 1, size = 0;
+static inline uint64_t extract_field(const char *line, const uint64_t k, char *field) {
+  uint64_t start = 0, end = 0, field_i = 1, size = 0;
   ERASE_ARRAY(field, FIELD_MAX_CHAR);
-  for (size_t i = 0; i < LINE_MAX_CHAR; i++) {
+  for (uint64_t i = 0; i < LINE_MAX_CHAR; i++) {
     if (line[i] == '\0' || (line[i] == '\t' && field_i == k)) {
       end = i - 1;
       break;
@@ -526,19 +527,19 @@ static inline size_t extract_field(const char *line, const size_t k, char *field
     }
   }
   if (size > 0 && size < FIELD_MAX_CHAR) {
-    for (size_t i = start, j = 0; i <= end; i++, j++) {
+    for (uint64_t i = start, j = 0; i <= end; i++, j++) {
       field[j] = line[i];
     }
   }
   return size;
 }
 
-static inline int check_field_size(const size_t size, const size_t line_num) {
+static inline int check_field_size(const uint64_t size, const uint64_t line_num) {
   if (!size) {
-    fprintf(stderr, "Error: Found empty field on line #%'zu.", line_num);
+    fprintf(stderr, "Error: Found empty field on line #%'llu.", line_num);
     return 1;
   } else if (size > FIELD_MAX_CHAR) {
-    fprintf(stderr, "Error: Field on line #%'zu exceeds max allowed size (%'zu>%'zu).",
+    fprintf(stderr, "Error: Field on line #%'llu exceeds max allowed size (%'llu>%'llu).",
       line_num, size, FIELD_MAX_CHAR);
     return 1;
   }
@@ -552,9 +553,9 @@ static inline int check_strand(const char *strand) {
   return 0;
 }
 
-static inline size_t purge_remaining_feat_tab(void) {
-  size_t n_discarded = 0;
-  for (size_t i = 0; i < feat_tab.n_total; i++) {
+static inline uint64_t purge_remaining_feat_tab(void) {
+  uint64_t n_discarded = 0;
+  for (uint64_t i = 0; i < feat_tab.n_total; i++) {
     n_discarded += dedup_and_purge_feat(i);
   }
   return n_discarded;
@@ -570,9 +571,9 @@ static inline int safe_strtod(char *str, double *res) {
   }
 }
 
-static inline int safe_strtoull(char *str, size_t *res) {
+static inline int safe_strtoull(char *str, uint64_t *res) {
   char *tmp; errno = 0;
-  *res = (size_t) strtoull(str, &tmp, 10);
+  *res = (uint64_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') {
     return 1;
   } else {
@@ -590,20 +591,20 @@ void run_minidedup(void) {
   const int ignore_score = args.ignore_score;
   const int reverse_sort = args.reverse_sort;
   const int sort_sizes = args.sort_sizes;
-  size_t n_ranges = 0, n_discarded = 0, n_comments = 0, n_empty = 0;
-  size_t n_lines = 0, n_fields = 0, field_size = 0;
-  size_t start, end;
+  uint64_t n_ranges = 0, n_discarded = 0, n_comments = 0, n_empty = 0;
+  uint64_t n_lines = 0, n_fields = 0, field_size = 0;
+  uint64_t start, end;
   double score;
   char seq[FIELD_MAX_CHAR], motif[FIELD_MAX_CHAR], strand[FIELD_MAX_CHAR];
   char str_start[FIELD_MAX_CHAR], str_end[FIELD_MAX_CHAR], str_score[FIELD_MAX_CHAR];
-  size_t start_loc, end_loc, seq_loc, motif_loc, strand_loc, score_loc;
-  size_t feature_index;
+  uint64_t start_loc, end_loc, seq_loc, motif_loc, strand_loc, score_loc;
+  uint64_t feature_index;
   kstream_t *kinput = ks_init(files.i);
   kstring_t line = { 0, 0, 0 };
   while ((ret_val = ks_getuntil(kinput, '\n', &line, 0)) >= 0) {
     n_lines += 1;
     if (line.l > LINE_MAX_CHAR) {
-      fprintf(stderr, "Error: Line #%'zu exceeded max allowed line length (%'zu>%'zu).\n",
+      fprintf(stderr, "Error: Line #%'llu exceeded max allowed line length (%'zu>%'llu).\n",
         n_lines, line.l, LINE_MAX_CHAR);
       goto error_blank;
     }
@@ -639,11 +640,11 @@ void run_minidedup(void) {
     }
     n_fields = count_fields(line.s);
     if (is_yamscan && n_fields < 9) {
-      fprintf(stderr, "Error: Found too few fields at line %'zu; expect 9-12 for yamscan output.",
+      fprintf(stderr, "Error: Found too few fields at line %'llu; expect 9-12 for yamscan output.",
         n_lines);
       goto error_blank;
     } else if (n_fields < 4) {
-      fprintf(stderr, "Error: Found too few fields at line %'zu; expect at least 4 for BED or 9 for yamscan output.",
+      fprintf(stderr, "Error: Found too few fields at line %'llu; expect at least 4 for BED or 9 for yamscan output.",
         n_lines);
       goto error_blank;
     }
@@ -656,7 +657,7 @@ void run_minidedup(void) {
     if (is_yamscan) {
       if (n_fields == 9 || n_fields == 10) {
         if (is_yamscan_bed) {
-          fprintf(stderr, "Error: Found 9-10 fields on line %'zu, but previous lines had 11-12.",
+          fprintf(stderr, "Error: Found 9-10 fields on line %'llu, but previous lines had 11-12.",
             n_lines);
           goto error_blank;
         }
@@ -664,13 +665,13 @@ void run_minidedup(void) {
       } else if (n_fields == 11 || n_fields == 12) {
         if (!feat_tab.n_total) is_yamscan_bed = 1;
         if (!is_yamscan_bed && n_ranges) {
-          fprintf(stderr, "Error: Found 11-12 fields on line %'zu, but previous lines had 9-10.",
+          fprintf(stderr, "Error: Found 11-12 fields on line %'llu, but previous lines had 9-10.",
             n_lines);
           goto error_blank;
         }
         seq_loc = 3; start_loc = 4; end_loc = 5; strand_loc = 6; motif_loc = 7; score_loc = 8;
       } else {
-        fprintf(stderr, "Error: Found %'zu fields on line %'zu; expect 9-12 for yamscan output.",
+        fprintf(stderr, "Error: Found %'llu fields on line %'llu; expect 9-12 for yamscan output.",
           n_fields, n_lines);
         goto error_blank;
       }
@@ -696,17 +697,17 @@ void run_minidedup(void) {
       goto error_blank;
     }
     if (safe_strtoull(str_start, &start)) {
-      fprintf(stderr, "Error: Failed to parse number in start column on line %'zu; found: %s",
+      fprintf(stderr, "Error: Failed to parse number in start column on line %'llu; found: %s",
         n_lines, str_start);
       goto error_blank;
     }
     if (safe_strtoull(str_end, &end)) {
-      fprintf(stderr, "Error: Failed to parse number in end column on line %'zu; found: %s",
+      fprintf(stderr, "Error: Failed to parse number in end column on line %'llu; found: %s",
         n_lines, str_end);
       goto error_blank;
     }
     if (safe_strtod(str_score, &score)) {
-      fprintf(stderr, "Error: Failed to parse number in scores column on line %'zu; found: %s",
+      fprintf(stderr, "Error: Failed to parse number in scores column on line %'llu; found: %s",
         n_lines, str_score);
       goto error_blank;
     }
@@ -716,12 +717,12 @@ void run_minidedup(void) {
       start += 1;
     }
     if (start > end) {
-      fprintf(stderr, "Error: Incorrect start/end values on line %'zu (start: %'zu, end: %'zu)",
+      fprintf(stderr, "Error: Incorrect start/end values on line %'llu (start: %'llu, end: %'llu)",
         n_lines, start, end);
       goto error_blank;
     }
     if (check_strand(strand)) {
-      fprintf(stderr, "Error: Incorrect strand column on line %'zu; expect +/-/., found: %s",
+      fprintf(stderr, "Error: Incorrect strand column on line %'llu; expect +/-/., found: %s",
         n_lines, strand);
       goto error_blank;
     }
@@ -736,7 +737,7 @@ void run_minidedup(void) {
       goto error_mem;
     }
 #ifdef DEBUG
-    fprintf(stderr, "L:%zu\tI:%zu\tN:%zu\n", n_lines, feature_index, feat_tab.n[feature_index]);
+    fprintf(stderr, "L:%llu\tI:%llu\tN:%llu\n", n_lines, feature_index, feat_tab.n[feature_index]);
 #endif
     if (feat_tab.n[feature_index] > 0 &&
       start > feat_tab.ends[feature_index][feat_tab.n[feature_index] - 1]) {
@@ -750,7 +751,7 @@ void run_minidedup(void) {
       n_discarded += dedup_and_purge_feat(feature_index);
     } else if (feat_tab.n[feature_index] &&
         start < feat_tab.starts[feature_index][feat_tab.n[feature_index] - 1]) {
-      fprintf(stderr, "Error: Input isn't properly sorted (line %'zu).\n", n_lines);
+      fprintf(stderr, "Error: Input isn't properly sorted (line %'llu).\n", n_lines);
       fprintf(stderr, "Found the following order of ranges:\n%s\n%s",
         feat_tab.lines[feature_index][feat_tab.n[feature_index] - 1], line.s);
       goto error_blank;
@@ -762,7 +763,7 @@ void run_minidedup(void) {
     n_ranges += 1;
     if (args.v && n_ranges) print_progress(n_ranges, n_discarded);
   }
-  for (size_t i = 0; i < feat_tab.n_total; i++) {
+  for (uint64_t i = 0; i < feat_tab.n_total; i++) {
     if (feat_tab.n[i] > score2index_n_alloc) {
       score2index_t *tmp = realloc(score2index,
         sizeof(score2index) * (score2index_n_alloc + ALLOC_CHUNK_SIZE));
@@ -774,7 +775,7 @@ void run_minidedup(void) {
   n_discarded += purge_remaining_feat_tab();
   if (args.v) {
     fprintf(stderr,
-      "Done. Total ranges: %'zu\nRemaining ranges: %'zu (%'.2f%%)\nDiscarded ranges: %'zu (%'.2f%%)\n",
+      "Done. Total ranges: %'llu\nRemaining ranges: %'llu (%'.2f%%)\nDiscarded ranges: %'llu (%'.2f%%)\n",
       n_ranges, n_ranges - n_discarded,
       100.0 * ((double) (n_ranges - n_discarded) / (double) n_ranges),
       n_discarded,
@@ -795,13 +796,13 @@ error_blank:
   badexit("");
 }
 
-void print_time(const size_t s, const char *what) {
+void print_time(const uint64_t s, const char *what) {
   if (s > 7200) {
     fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
   } else if (s > 120) {
     fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
   } else if (s > 1) {
-    fprintf(stderr, "Needed %'zu seconds to %s.\n", s, what);
+    fprintf(stderr, "Needed %'llu seconds to %s.\n", s, what);
   }
 }
 
@@ -915,7 +916,7 @@ int main(int argc, char **argv) {
   time_t time2 = time(NULL);
   if (args.v) {
     time_t time3 = difftime(time2, time1);
-    print_time((size_t) time3, "deduplicate"); 
+    print_time((uint64_t) time3, "deduplicate"); 
     print_peak_mb();
   }
 
