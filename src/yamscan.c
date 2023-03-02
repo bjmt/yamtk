@@ -36,10 +36,13 @@ KSEQ_INIT(gzFile, gzread)
 KHASH_MAP_INIT_STR(seq_str_h, uint64_t);
 KHASH_SET_INIT_STR(motif_str_h);
 
-#define YAMSCAN_VERSION                    "1.5"
-#define YAMSCAN_YEAR                        2022
+#define YAMSCAN_VERSION                    "1.6"
+#define YAMSCAN_YEAR                        2023
 
 /* ChangeLog
+ *
+ * v1.6 (March 2023)
+ * - Fix loop for scanning in BED regions
  *
  * v1.5 (2 December 2022)
  * - Use hash tables instead of linear searches for motif/sequence names
@@ -715,7 +718,7 @@ static inline int str_to_uint64_t(char *str, uint64_t *res) {
  * most of its time.
  */
 void fill_cdf(motif_t *motif) {
-  uint64_t max_step, s;
+  uint64_t max_step, s; //s0, s1, s2, s3;
   double pdf_sum = 0.0;
   if (args.w && args.nthreads == 1 && !args.progress) {
     fprintf(stderr, "        Generating CDF for [%s] (n=%'llu) ... ",
@@ -759,6 +762,8 @@ void fill_cdf(motif_t *motif) {
       motif->tmp_pdf[j] = motif->cdf[j];
     }
     ERASE_ARRAY(motif->cdf, max_step + motif->cdf_max + 1);
+    // TODO: check if manual unroll is faster
+    // - answer: nope, maybe compilter already does it
     for (int j = 0; j < 4; j++) {
       s = get_score_i(motif, j, i) - motif->min;
       /* This loop is where the majority of time is spent for motif-related code. */
@@ -766,6 +771,16 @@ void fill_cdf(motif_t *motif) {
         motif->cdf[k+s] += motif->tmp_pdf[k] * args.bkg[j];
       }
     }
+    /* s0 = get_score_i(motif, 0, i) - motif->min; */
+    /* s1 = get_score_i(motif, 1, i) - motif->min; */
+    /* s2 = get_score_i(motif, 2, i) - motif->min; */
+    /* s3 = get_score_i(motif, 3, i) - motif->min; */
+    /* for (uint64_t k = 0; k < max_step + 1; k++) { */
+    /*   motif->cdf[k+s0] += motif->tmp_pdf[k] * args.bkg[0]; */
+    /*   motif->cdf[k+s1] += motif->tmp_pdf[k] * args.bkg[1]; */
+    /*   motif->cdf[k+s2] += motif->tmp_pdf[k] * args.bkg[2]; */
+    /*   motif->cdf[k+s3] += motif->tmp_pdf[k] * args.bkg[3]; */
+    /* } */
   }
   for (uint64_t i = 0; i < motif->cdf_size; i++) pdf_sum += motif->cdf[i];
   if (fabs(pdf_sum - 1.0) > 0.0001) {
@@ -891,7 +906,7 @@ void parse_user_bkg(const char *bkg_usr) {
 }
 
 int check_line_contains(const char *line, const char *substring) {
-  uint64_t ss_len = strlen(substring);
+  const uint64_t ss_len = strlen(substring);
   if (strlen(line) < ss_len) return 0;
   for (uint64_t i = 0; i < ss_len; i++) {
     if (line[i] != substring[i]) return 0;
@@ -918,7 +933,8 @@ uint64_t count_nonempty_chars(const char *line) {
 }
 
 int check_char_is_one_of(const char c, const char *list) {
-  for (uint64_t i = 0; i < strlen(list); i++) {
+  const uint64_t s_len = (uint64_t) strlen(list);
+  for (uint64_t i = 0; i < s_len; i++) {
     if (list[i] == c) return 1;
   }
   return 0;
@@ -2814,7 +2830,7 @@ void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_lo
   const int threshold = motif->threshold - 1;
   int score = INT_MIN, score_rc = INT_MIN;
   if (args.scan_rc) {
-    for (uint64_t i = 0; i <= seq_size - mot_size; i++) {
+    for (uint64_t i = 0; i < seq_size - mot_size + 1; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s\t%llu\t%llu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
@@ -2842,7 +2858,7 @@ void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_lo
       }
     }
   } else {
-    for (uint64_t i = 0; i <= seq_size - mot_size; i++) {
+    for (uint64_t i = 0; i < seq_size - mot_size + 1; i++) {
       score_subseq(motif, seq, i, &score);
       if (__builtin_expect(score > threshold, 0)) {
         fprintf(files.o, "%s\t%llu\t%llu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
