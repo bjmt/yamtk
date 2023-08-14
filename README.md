@@ -457,7 +457,7 @@ fasta-shuffle-letters -k $K 100Mbp.fa shuffled.fa
 | 10x10Mbp, k = 8 | 3.07s, 23.87MB | 2.72s, 22.54MB | 0.32s, 19.46MB |       (not run)       |
 | 10x10Mbp, k = 9 | 5.51s, 41.26MB | 4.76s, 34.72MB | 0.30s, 19.42MB |       (not run)       |
 
-### Limitations
+### Limitations of the Euler and Markov methods
 
 yamshuf is a rather limited program in that it only recognizes a
 five letter alphabet (ACGTN or ACGUN; all other characters are recognized as
@@ -466,7 +466,21 @@ This is in contrast to other tools such as uShuffle (and my own programs
 [universalmotif](https://bioconductor.org/packages/universalmotif) and
 [sequence-utils](https://github.com/bjmt/sequence-utils)) which are generically
 coded to allow for any alphabet, but in turn (likely) allow for fewer compiler
-optimizations.
+optimizations. Additionally, yamshuf constructs a k-mer edge graph for the
+complete set of possible k-mers for any k, even if some k-mers are absent in
+the input sequences. This means that for increasing values of k, the graph
+structure increases exponentially. As a result shuffling with high values of k
+is impractical. uShuffle gets around this by building a k-mer edge graph using
+only available k-mers, thus allowing for much higher values of k when shuffling
+short sequences (for longer sequences, so many k-mers will likely be present
+that it becomes affected by the same issue of impractically large edge graphs).
+
+If there is not a requirement that the shuffled sequences have the exact same
+k-mer counts as the input sequences, then none of these limitations apply when
+using the linear method (`-l`). This is because yamshuf merely moves around
+chunks of the input sequences without needing to count k-mers or build any
+edge graph. (In fact, the higher the value of k, the fewer chunks there are
+to move around, thus increasing the speed of the shuffling.)
 
 ## Extra scripts
 
