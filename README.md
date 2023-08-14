@@ -407,6 +407,21 @@ Usage:  yamshuf [options] -i sequences.fa
  -h         Print this help message.    
 ```
 
+### Overview of shuffling algorithms
+
+yamshuf uses a few different shuffling implementations. When k = 1, it performs
+a Fisher-Yates shuffle of the input sequences. For higher values of k, there
+are three available methods. The default method (Euler) involves constructing
+a k-mer edge graph from the k-mer counts of the input sequences and finding a
+random Eulerian walk through all of the available k-mers (thus ending up with
+the exact same number of k-mers in the final shuffled sequences). The `-m`
+flag triggers the use of the Markov method, where a Markov chain is constructed
+from the k-mer counts in the sequences and the resulting probabilities are used
+for generating new sequences of equal length (thus ending up with new sequences
+with similar, but not exactly the same, k-mer counts). Finally, the `-l` flag
+results in the input sequences being split linearly into chunks (with length k)
+which are then shuffled via the Fisher-Yates method.
+
 ### Benchmarking
 
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to
