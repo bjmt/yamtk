@@ -1,5 +1,5 @@
 /*
- *   yamsshuf: A small super-fast higher-order DNA/RNA sequence shuffler
+ *   yamshuf: A small super-fast higher-order DNA/RNA sequence shuffler
  *   Copyright (C) 2023  Benjamin Jean-Marie Tremblay
  *
  *   This program is free software: you can redistribute it and/or modify
