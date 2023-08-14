@@ -213,7 +213,7 @@ fimo behaviour you can pipe the yamscan output to `scripts/flip_rc.sh`)
 ### Benchmarking
 
 Using GNU Time on my MacbookPro M1 and the following equivalent commands to
-record time elapsed and peak memory usage.
+record time elapsed and peak memory usage. fimo is from MEME v5.4.1.
 
 Default yamscan settings (low-mem mode active):
 ```sh
@@ -368,6 +368,90 @@ hit score, using `-0`, or even consider the size of the ranges (`-S`) instead
 of the scores (perhaps more useful for non-motif BED inputs). (In the future I
 may consider adding additional options such as requiring specific amounts of
 overlap.)
+
+## yamshuf
+
+A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
+
+### Usage
+
+```
+yamshuf v1.0  Copyright (C) 2023  Benjamin Jean-Marie Tremblay                
+                                                                              
+Usage:  yamshuf [options] -i sequences.fa                                     
+                                                                              
+ -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences 
+            to scan. Can be gzipped. Use '-' for stdin.  Non-standard         
+            characters (i.e. other than ACGTU) will be read but are treated as
+            the letter N during shuffling (exceptions: when -l is used or when
+            -k is set to 1). Fastq files will be output as fasta.             
+ -k <int>   Size of shuffled k-mers. Default: 3. When k = 1 a Fisher-Yates    
+            shuffle is performed. Max k for Euler/Markov methods: 9.        
+ -o <str>   Filename to output results. By default output goes to stdout.     
+ -s <int>   Seed to initialize random number generator. Default: 4.           
+ -m         Use Markov shuffling instead of performing a random Eulerian walk.
+            Essentially generates random sequences with similar k-mer         
+            compositions. Generally requires large sequences to be effective. 
+ -l         Split up the sequences linearly into k-mers and do a Fisher-Yates 
+            shuffle instead of performing a random Eulerian walk. Very fast.  
+ -r <int>   Repeat shuffling for each sequence any number of times. The repeat
+            number will be appended to the sequence name. Default: 0.         
+ -R         Reset the random number generator every time a new sequence is    
+            shuffled using the set seed instead of only setting it once.      
+ -n         Output sequence as RNA. By default the sequence is output as DNA, 
+            even if the input is RNA. This flag only applies when k > 1 and -l
+            is not used, since in such cases the existing sequence letters are
+            simply being rearranged.                                          
+ -v         Verbose mode.                                                     
+ -w         Very verbose mode.                                                
+ -h         Print this help message.    
+```
+
+### Benchmarking
+
+Using GNU Time on my MacbookPro M1 and the following equivalent commands to
+record time elapsed and peak memory usage. A fasta file containing 10 sequences
+(each 10 Mbp long) with the alphabet ACGTN is used as input.
+
+Default yamshuf settings (Euler shuffling, or regular Fisher-Yates for k = 1):
+```sh
+yamshuf -k $K -i 100Mbp.fa > shuffled.fa
+```
+yamshuf with Markov shuffling:
+```sh
+yamshuf -m -k $K -i 100Mbp.fa > shuffled.fa
+```
+yamshuf with linear shuffling:
+```sh
+yamshuf -l -k $K -i 100Mbp.fa > shuffled.fa
+```
+MEME v5.4.1 `fasta-shuffle-letters` tool (using the uShuffle library):
+```sh
+fasta-shuffle-letters -k $K 100Mbp.fa shuffled.fa
+```
+
+|                 |   `yamshuf`    |  `yamshuf -m`  |  `yamshuf -l`  |`fasta-shuffle-letters`|
+|:---------------:|:--------------:|:--------------:|:--------------:|:---------------------:|
+| 10x10Mbp, k = 1 | 0.75s, 19.46MB |      (n/a)     |      (n/a)     |     0.66s,  52.82MB   |
+| 10x10Mbp, k = 2 | 2.10s, 19.49MB | 1.77s, 19.49MB | 0.43s, 19.52MB |     2.62s, 416.46MB   |
+| 10x10Mbp, k = 3 | 2.11s, 19.42MB | 1.87s, 19.42MB | 0.38s, 19.42MB |     3.40s, 416.50MB   |
+| 10x10Mbp, k = 4 | 2.19s, 19.49MB | 1.88s, 19.42MB | 0.33s, 19.42MB |     4.36s, 416.50MB   |
+| 10x10Mbp, k = 5 | 2.24s, 19.46MB | 2.17s, 19.47MB | 0.32s, 19.42MB |     6.86s, 425.68MB   |
+| 10x10Mbp, k = 6 | 2.33s, 19.66MB | 2.04s, 19.55MB | 0.33s, 19.42MB |    13.42s, 416.98MB   |
+| 10x10Mbp, k = 7 | 2.84s, 20.35MB | 2.51s, 20.05MB | 0.32s, 19.42MB |    33.55s, 418.54MB   |
+| 10x10Mbp, k = 8 | 3.07s, 23.87MB | 2.72s, 22.54MB | 0.32s, 19.46MB |       (not run)       |
+| 10x10Mbp, k = 9 | 5.51s, 41.26MB | 4.76s, 34.72MB | 0.30s, 19.42MB |       (not run)       |
+
+### Limitations
+
+yamshuf is a rather limited program in that it only recognizes a
+five letter alphabet (ACGTN or ACGUN; all other characters are recognized as
+N). This allows the program to use hard-coded constants and graph structures.
+This is in contrast to other tools such as uShuffle (and my own programs
+[universalmotif](https://bioconductor.org/packages/universalmotif) and
+[sequence-utils](https://github.com/bjmt/sequence-utils)) which are generically
+coded to allow for any alphabet, but in turn (likely) allow for fewer compiler
+optimizations.
 
 ## Extra scripts
 
