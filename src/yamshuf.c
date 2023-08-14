@@ -469,7 +469,7 @@ int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t k, uin
   //   in the sequence.
 
   for (uint64_t current_vertex, next_edge, kmer_index, i = k - 2; i < size - 2; i++) {
-    current_vertex = chars2kmer(seq, k - 1, i - k + 2);
+    current_vertex = chars2kmer(seq, k - 1, (i + 2) - k);
     kmer_index = current_vertex * 5;
     if (LIKELY(COUNT_EDGES(kmer_index, kmer_tab))) {
       // Use up all available edges per vertex.
