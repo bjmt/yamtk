@@ -73,7 +73,7 @@
 
 KSEQ_INIT(gzFile, gzread)
 
-#define YAMSHUF_VERSION             "1.0"
+#define YAMSHUF_VERSION             "1.1"
 #define YAMSHUF_YEAR                 2023
 
 /* ChangeLog
