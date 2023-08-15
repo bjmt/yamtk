@@ -457,6 +457,12 @@ fasta-shuffle-letters -k $K 100Mbp.fa shuffled.fa
 | 10x10Mbp, k = 8 | 3.07s, 23.87MB | 2.72s, 22.54MB | 0.32s, 19.46MB |       (not run)       |
 | 10x10Mbp, k = 9 | 5.51s, 41.26MB | 4.76s, 34.72MB | 0.30s, 19.42MB |       (not run)       |
 
+For some reason the `fasta-shuffle-letters` program is very memory hungry, much
+more so than the original uShuffle program. However the standalone uShuffle
+program did not include a fasta reader, meaning it could only take sequences
+as command line arguments, severely limiting the maximum sequence size (and
+thus I cannot benchmark it with the above sequence sizes).
+
 ### Limitations of the Euler and Markov methods
 
 yamshuf is a rather limited program in that it only recognizes a

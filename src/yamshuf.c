@@ -76,6 +76,13 @@ KSEQ_INIT(gzFile, gzread)
 #define YAMSHUF_VERSION             "1.0"
 #define YAMSHUF_YEAR                 2023
 
+/* ChangeLog
+ *
+ * v1.1 (15 Aug 2023)
+ * - Add -p flag to print k-mer counts
+ *
+ */
+
 // Maybe test which one is faster?
 /* Using a complete k-mer table: */
 /* #define MAX_K_TABLE                            8 */
@@ -174,6 +181,8 @@ void usage(void) {
     "            even if the input is RNA. This flag only applies when k > 1 and -l\n"
     "            is not used, since in such cases the existing sequence letters are\n"
     "            simply being rearranged.                                          \n"
+    " -p         Activate an alternate mode which prints k-mer counts instead of   \n"
+    "            shuffling. All options excepting -i, -k and -o are ignored.       \n"
     " -v         Verbose mode.                                                     \n"
     " -w         Very verbose mode.                                                \n"
     " -h         Print this help message.                                          \n"
@@ -191,6 +200,7 @@ typedef struct args_t {
   int      rna_out : 1;
   int      v : 1;
   int      w : 1;
+  int      print_kmers : 1;
   int      shuf_repeats;
   uint64_t window_step;
   uint64_t window_overlap;
@@ -206,6 +216,7 @@ args_t args = {
   .rna_out        = 0,
   .v              = 0,
   .w              = 0,
+  .print_kmers    = 0,
   .shuf_repeats   = 0,
   .window_step    = 0,
   .window_overlap = 0
@@ -341,21 +352,6 @@ static inline void count_kmers(const unsigned char *seq, const uint64_t size, ui
   }
 }
 
-/*
-static inline void index_to_kmer(const uint64_t index, char *kmer, const uint64_t k, const char *index2xna) {
-  uint64_t decomposed[MAX_K];
-  decomposed[k - 1] = index;
-  for (uint64_t i = k - 2; i < -1; i--) {
-    decomposed[i] = decomposed[i + 1] / 5;
-  }
-  kmer[0] = index2xna[decomposed[0]];
-  kmer[k] = '\0';
-  for (uint64_t i = 1; i < k; i++) {
-    kmer[i] = index2xna[5 + (decomposed[i] - (decomposed[i - 1] + 1) * 5)];
-  }
-}
-*/
-
 static inline uint64_t cumsum_and_pick_next_letter(const uint64_t *kmers) {
   const uint64_t k0 =      kmers[0];
   const uint64_t k1 = k0 + kmers[1];
@@ -464,9 +460,6 @@ int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t k, uin
   }
 
   // Walk through Eulerian path, using up all available edges.
-  // - Use up all edges per vertex, then once all edges = 0 use the final
-  //   euler_path[u] edge to exit to next vertex. Start from first (k-1)mer
-  //   in the sequence.
 
   for (uint64_t current_vertex, next_edge, kmer_index, i = k - 2; i < size - 2; i++) {
     current_vertex = chars2kmer(seq, k - 1, (i + 2) - k);
@@ -501,13 +494,41 @@ void write_seq(const unsigned char *seq, const uint64_t size, const char *name, 
   }
 }
 
+void print_kmer_table_header(const uint64_t k, const int is_dna) {
+  const char *index2xna = is_dna ? index2dna : index2rna;
+  fputs("seq", files.o);
+  if (k == 1) {
+    fprintf(files.o, "\tA\tC\tG\t%c\tN", index2xna[3]);
+  } else {
+    // This is way more complicated than it needs to be, but I wish to
+    // keep this code around in case I ever encounter a situation where
+    // it would be needed.
+    char kmer[MAX_K + 1];
+    uint64_t decomposed[MAX_K];
+    for (uint64_t j = 0; j < pow5[k]; j++) {
+      fputc('\t', files.o);
+      decomposed[k - 1] = j;
+      for (uint64_t i = k - 2; i < -1; i--) {
+        decomposed[i] = decomposed[i + 1] / 5;
+      }
+      kmer[0] = index2xna[decomposed[0]];
+      kmer[k] = '\0';
+      for (uint64_t i = 1; i < k; i++) {
+        kmer[i] = index2xna[5 + (decomposed[i] - (decomposed[i - 1] + 1) * 5)];
+      }
+      fputs(kmer, files.o);
+    }
+  }
+  fputc('\n', files.o);
+}
+
 int main(int argc, char **argv) {
 
   kseq_t *kseq;
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rgnvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rgnpvwh")) != -1) {
     switch (opt) {
       case 'i':
         if (optarg[0] == '-' && optarg[1] == '\0') {
@@ -587,6 +608,9 @@ int main(int argc, char **argv) {
       case 'n':
         args.rna_out = 1;
         break;
+      case 'p':
+        args.print_kmers = 1;
+        break;
       case 'w':
         args.w = 1;
       case 'v':
@@ -600,19 +624,29 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (args.use_linear && args.use_markov) {
+  if (args.use_linear && args.use_markov && !args.print_kmers) {
     badexit("Error: Cannot use both -m and -l.");
   }
-  if (!args.use_linear && args.k > MAX_K) {
+  if (!args.use_linear && args.k > MAX_K && !args.print_kmers) {
     fprintf(stderr, "Error: -k%d exceeds allowed max for Euler/Markov [MAX_K=%d]", args.k, MAX_K);
     badexit("");
+  } else if (args.k > MAX_K && args.print_kmers) {
+    fprintf(stderr, "Error: -k%d exceeds allowed max for k-mer printing [MAX_K=%d]", args.k, MAX_K);
+    badexit("");
+  }
+
+  if (args.print_kmers) {
+    args.v = 0;
+    args.w = 0;
+    args.use_markov = 0;
+    args.use_linear = 0;
   }
 
   if (setlocale(LC_NUMERIC, "en_US") == NULL && args.v) {
     fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
   }
 
-  if (args.v && args.rna_out && (args.k == 1 || args.use_linear)) {
+  if (args.v && args.rna_out && (args.k == 1 || args.use_linear) && !args.print_kmers) {
     fprintf(stderr, "Warning: The -n flag is ignored when -k is 1 or -l is used.\n");
   }
 
@@ -621,11 +655,11 @@ int main(int argc, char **argv) {
     files.o_open = 1;
   }
 
-  if (args.window_step && !args.window_overlap) {
+  if (args.window_step && !args.window_overlap && !args.print_kmers) {
     args.window_overlap = args.window_step;
   }
 
-  if (args.leave_gaps) {
+  if (args.leave_gaps && !args.print_kmers) {
     const unsigned char s_len = (unsigned char) strlen(gapchars);
     for (unsigned char i = 0; i < s_len; i++) {
       gap2bool[(unsigned char) gapchars[i]] = 1;
@@ -653,7 +687,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (k > 1 && !args.use_linear && !args.use_markov) {
+  if (k > 1 && !args.use_linear && !args.use_markov && !args.print_kmers) {
     invalid_vertex = malloc(sizeof(unsigned char) * pow5[k - 1]);
     if (invalid_vertex == NULL) {
       badexit("Failed to allocate memory for vertex table.");
@@ -666,6 +700,10 @@ int main(int argc, char **argv) {
     if (next_index == NULL) {
       badexit("Failed to allocate memory for Eulerian index vector.");
     }
+  }
+
+  if (args.print_kmers) {
+    print_kmer_table_header(k, is_dna);
   }
 
   int markov_warning_has_been_emitted = 0;
@@ -686,36 +724,54 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "Shuffling sequence #%'llu: %s\n", n_seqs, seq_name);
       }
-      if (args.w) {
-        ERASE_ARRAY(char_counts, 256);
-        count_bases(seq, size);
-        // TODO: what about custom gap chars
-        gaps = char_counts['.'] + char_counts['-'];
-        unknowns = size - gaps - char_counts['A'] - char_counts['a'] -
-        char_counts['C'] - char_counts['c'] - char_counts['G'] - char_counts['g'] -
-        char_counts['T'] - char_counts['t'] - char_counts['U'] - char_counts['u'];
-        gc_pct = (double) (char_counts['G'] + char_counts['C'] + char_counts['g'] + char_counts['c']);
-        gc_pct /= (double) (size - unknowns - gaps);
-        gc_pct *= 100.0;
-        fprintf(stderr, "  Sequence size: %'llu (%.2f%% non-standard)\n", size,
-          100.0 * (double) unknowns / (double) size);
-        fprintf(stderr, "  GC content: %.2f%%\n", gc_pct); 
+    }
+    if (args.w || args.print_kmers) {
+      ERASE_ARRAY(char_counts, 256);
+      count_bases(seq, size);
+      gaps = 0;
+      for (size_t i = 0; i < strlen(gapchars); i++) {
+        gaps += char_counts[(unsigned char) gapchars[i]];
       }
+      unknowns = size - gaps - char_counts['A'] - char_counts['a'] -
+      char_counts['C'] - char_counts['c'] - char_counts['G'] - char_counts['g'] -
+      char_counts['T'] - char_counts['t'] - char_counts['U'] - char_counts['u'];
+      gc_pct = (double) (char_counts['G'] + char_counts['C'] + char_counts['g'] + char_counts['c']);
+      gc_pct /= (double) (size - unknowns - gaps);
+      gc_pct *= 100.0;
+    }
+    if (args.w) {
+      fprintf(stderr, "  Sequence size: %'llu (%.2f%% non-standard)\n", size,
+        100.0 * (double) unknowns / (double) size);
+      fprintf(stderr, "  GC content: %.2f%%\n", gc_pct); 
     }
 
     if (args.reset_seed) {
       kr_srand_r(&krng, args.seed);
     }
 
-    /*
-    char kmer[MAX_K + 1];
-    for (uint64_t i = 0; i < pow5[k]; i++) {
-      index_to_kmer(i, kmer, k, index2dna);
-      fprintf(stderr, "[%zu] %s: %zu\n", i, kmer, kmer_tab[i]);
-    }
-    */
-
-    if (size < k * 2) {
+    if (args.print_kmers) {
+      fputs(seq_name, files.o);
+      if (seq_comment_l) fprintf(files.o, " %s", seq_comment);
+      if (k == 1) {
+        fprintf(files.o, "\t%llu\t%llu\t%llu\t%llu\t%llu",
+          char_counts['a'] + char_counts['A'],
+          char_counts['c'] + char_counts['C'],
+          char_counts['g'] + char_counts['G'],
+          char_counts['t'] + char_counts['T'] + char_counts['u'] + char_counts['U'],
+          unknowns + gaps);
+      } else if (size >= k) {
+        ERASE_ARRAY(kmer_tab, pow5[k]);
+        count_kmers(seq, size, kmer_tab, k);
+        for (uint64_t i = 0; i < pow5[k]; i++) {
+          fprintf(files.o, "\t%llu", kmer_tab[i]);
+        }
+      } else {
+        for (uint64_t i = 0; i < pow5[k]; i++) {
+          fputs("\t0", files.o);
+        }
+      }
+      fputc('\n', files.o);
+    } else if (size < k * 2) {
       if (args.v) {
         fprintf(stderr, "! Warning: Sequence too short to shuffle (size = %'llu, k = %llu)\n",
           size, k);
@@ -766,7 +822,7 @@ int main(int argc, char **argv) {
   }
 
   if (k > 1 && !args.use_linear) free(kmer_tab);
-  if (k > 1 && !args.use_linear && !args.use_markov) {
+  if (k > 1 && !args.use_linear && !args.use_markov && !args.print_kmers) {
     free(invalid_vertex);
     free(euler_path);
     free(next_index);
