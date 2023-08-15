@@ -99,9 +99,9 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_SEED                           4
 
 /* Which characters should be seen as gaps? */
-#define GAP_CHARS                           ".-"
+/* #define GAP_CHARS                           ".-" */
 /* When writing the gaps, use which character? */
-#define FINAL_GAP                            '-'
+/* #define FINAL_GAP                            '-' */
 
 #define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 
@@ -196,7 +196,7 @@ typedef struct args_t {
   int      reset_seed : 1;
   int      use_markov : 1;
   int      use_linear : 1;
-  int      leave_gaps : 1;
+  /* int      leave_gaps : 1; */
   int      rna_out : 1;
   int      v : 1;
   int      w : 1;
@@ -212,7 +212,7 @@ args_t args = {
   .reset_seed     = 0,
   .use_markov     = 0,
   .use_linear     = 0,
-  .leave_gaps     = 0,
+  /* .leave_gaps     = 0, */
   .rna_out        = 0,
   .v              = 0,
   .w              = 0,
@@ -262,8 +262,8 @@ const unsigned char char2index[] = { /* 16 x 16 */
 const char index2dna[] = "ACGTN";
 const char index2rna[] = "ACGUN";
 
-unsigned char gap2bool[256] = { 0 };
-const char gapchars[] = GAP_CHARS;
+/* unsigned char gap2bool[256] = { 0 }; */
+/* const char gapchars[] = GAP_CHARS; */
 
 uint64_t char_counts[256];
 
@@ -528,7 +528,7 @@ int main(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rgnpvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rnpvwh")) != -1) {
     switch (opt) {
       case 'i':
         if (optarg[0] == '-' && optarg[1] == '\0') {
@@ -602,9 +602,9 @@ int main(int argc, char **argv) {
       case 'R':
         args.reset_seed = 1;
         break;
-      case 'g':
-        args.leave_gaps = 1;
-        break;
+      /* case 'g': */
+      /*   args.leave_gaps = 1; */
+      /*   break; */
       case 'n':
         args.rna_out = 1;
         break;
@@ -659,16 +659,19 @@ int main(int argc, char **argv) {
     args.window_overlap = args.window_step;
   }
 
+  /*
   if (args.leave_gaps && !args.print_kmers) {
     const unsigned char s_len = (unsigned char) strlen(gapchars);
     for (unsigned char i = 0; i < s_len; i++) {
       gap2bool[(unsigned char) gapchars[i]] = 1;
     }
   }
+  */
 
   time_t time1 = time(NULL);
   unsigned char *seq;
-  uint64_t size, gaps, unknowns, seq_comment_l;
+  /* uint64_t gaps; */
+  uint64_t size, unknowns, seq_comment_l;
   uint64_t n_seqs = 0;
   uint64_t *kmer_tab, *euler_path, *next_index;
   unsigned char *invalid_vertex;
@@ -728,15 +731,17 @@ int main(int argc, char **argv) {
     if (args.w || args.print_kmers) {
       ERASE_ARRAY(char_counts, 256);
       count_bases(seq, size);
-      gaps = 0;
-      for (size_t i = 0; i < strlen(gapchars); i++) {
-        gaps += char_counts[(unsigned char) gapchars[i]];
-      }
-      unknowns = size - gaps - char_counts['A'] - char_counts['a'] -
-      char_counts['C'] - char_counts['c'] - char_counts['G'] - char_counts['g'] -
-      char_counts['T'] - char_counts['t'] - char_counts['U'] - char_counts['u'];
+      /* gaps = 0; */
+      /* for (size_t i = 0; i < strlen(gapchars); i++) { */
+      /*   gaps += char_counts[(unsigned char) gapchars[i]]; */
+      /* } */
+      unknowns = size - //gaps -
+        char_counts['A'] - char_counts['a'] -
+        char_counts['C'] - char_counts['c'] -
+        char_counts['G'] - char_counts['g'] -
+        char_counts['T'] - char_counts['t'] - char_counts['U'] - char_counts['u'];
       gc_pct = (double) (char_counts['G'] + char_counts['C'] + char_counts['g'] + char_counts['c']);
-      gc_pct /= (double) (size - unknowns - gaps);
+      gc_pct /= (double) (size - unknowns);// - gaps);
       gc_pct *= 100.0;
     }
     if (args.w) {
@@ -758,7 +763,7 @@ int main(int argc, char **argv) {
           char_counts['c'] + char_counts['C'],
           char_counts['g'] + char_counts['G'],
           char_counts['t'] + char_counts['T'] + char_counts['u'] + char_counts['U'],
-          unknowns + gaps);
+          unknowns);// + gaps);
       } else if (size >= k) {
         ERASE_ARRAY(kmer_tab, pow5[k]);
         count_kmers(seq, size, kmer_tab, k);
@@ -817,6 +822,7 @@ int main(int argc, char **argv) {
     // - for markov: just skip over gaps
     // - for linear: don't swap chars when a gap is present
     // - for euler: shuffle between gaps (only way to preserve kmers)
+
     // TODO: send to window-aware handler or not
 
   }
