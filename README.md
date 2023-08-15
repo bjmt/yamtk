@@ -376,35 +376,37 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamshuf v1.0  Copyright (C) 2023  Benjamin Jean-Marie Tremblay                
-                                                                              
-Usage:  yamshuf [options] -i sequences.fa                                     
-                                                                              
- -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences 
-            to scan. Can be gzipped. Use '-' for stdin.  Non-standard         
+yamshuf v1.1  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
+
+Usage:  yamshuf [options] -i sequences.fa
+
+ -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences
+            to scan. Can be gzipped. Use '-' for stdin.  Non-standard
             characters (i.e. other than ACGTU) will be read but are treated as
             the letter N during shuffling (exceptions: when -l is used or when
-            -k is set to 1). Fastq files will be output as fasta.             
- -k <int>   Size of shuffled k-mers. Default: 3. When k = 1 a Fisher-Yates    
-            shuffle is performed. Max k for Euler/Markov methods: 9.        
- -o <str>   Filename to output results. By default output goes to stdout.     
- -s <int>   Seed to initialize random number generator. Default: 4.           
+            -k is set to 1). Fastq files will be output as fasta.
+ -k <int>   Size of shuffled k-mers. Default: 3. When k = 1 a Fisher-Yates
+            shuffle is performed. Max k for Euler/Markov methods: 9.
+ -o <str>   Filename to output results. By default output goes to stdout.
+ -s <int>   Seed to initialize random number generator. Default: 4.
  -m         Use Markov shuffling instead of performing a random Eulerian walk.
-            Essentially generates random sequences with similar k-mer         
-            compositions. Generally requires large sequences to be effective. 
- -l         Split up the sequences linearly into k-mers and do a Fisher-Yates 
-            shuffle instead of performing a random Eulerian walk. Very fast.  
+            Essentially generates random sequences with similar k-mer
+            compositions. Generally requires large sequences to be effective.
+ -l         Split up the sequences linearly into k-mers and do a Fisher-Yates
+            shuffle instead of performing a random Eulerian walk. Very fast.
  -r <int>   Repeat shuffling for each sequence any number of times. The repeat
-            number will be appended to the sequence name. Default: 0.         
- -R         Reset the random number generator every time a new sequence is    
-            shuffled using the set seed instead of only setting it once.      
- -n         Output sequence as RNA. By default the sequence is output as DNA, 
+            number will be appended to the sequence name. Default: 0.
+ -R         Reset the random number generator every time a new sequence is
+            shuffled using the set seed instead of only setting it once.
+ -n         Output sequence as RNA. By default the sequence is output as DNA,
             even if the input is RNA. This flag only applies when k > 1 and -l
             is not used, since in such cases the existing sequence letters are
-            simply being rearranged.                                          
- -v         Verbose mode.                                                     
- -w         Very verbose mode.                                                
- -h         Print this help message.    
+            simply being rearranged.
+ -p         Activate an alternate mode which prints k-mer counts instead of
+            shuffling. All options excepting -i, -k and -o are ignored.
+ -v         Verbose mode.
+ -w         Very verbose mode.
+ -h         Print this help message.
 ```
 
 ### Overview of shuffling algorithms
