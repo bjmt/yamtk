@@ -525,6 +525,8 @@ $ SORT_ARGS="--buffer-size=1G" scripts/add_qvals.sh < results.txt
   can be useful if you wish to see matches from the strand the motif was
   matched from, as the default is to always return the sequence from the forward
   strand.
+- `std_kmers.sh`: Filter the output of `yamshuf -p` to only include k-mers
+  containing standard letters (ACGT or ACGU).
 - `to_bed.sh`: Convert the results to a BED6+4 format.
 - `to_gff3.sh`: Convert the results to GFF3.
 - `to_gtf.sh`: Convert the results to GTF/GFF2.
