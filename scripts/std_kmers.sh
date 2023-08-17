@@ -3,9 +3,6 @@
 # Filter the k-mer count output from yamshuf to only include ACGT/ACGU.
 
 awk -F "\t" '
-  BEGIN{
-    OFS = "\t"
-  }
   NR == 1 {
     printf "%s", $1
     for (i = 2; i < NF; i++) {
