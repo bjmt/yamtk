@@ -756,7 +756,13 @@ int main(int argc, char **argv) {
 
     if (args.print_kmers) {
       fputs(seq_name, files.o);
-      if (seq_comment_l) fprintf(files.o, " %s", seq_comment);
+      if (seq_comment_l) {
+        for (uint64_t i = 0; i < seq_comment_l; i++) {
+          // Since the output is a TSV, it makes no sense to allow tabs in the column
+          if (seq_comment[i] == '\t') seq_comment[i] = ' ';
+        }
+        fprintf(files.o, " %s", seq_comment);
+      }
       if (k == 1) {
         fprintf(files.o, "\t%llu\t%llu\t%llu\t%llu\t%llu",
           char_counts['a'] + char_counts['A'],
