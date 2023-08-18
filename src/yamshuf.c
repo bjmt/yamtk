@@ -69,14 +69,16 @@
 #include <stdint.h>
 #include <zlib.h>
 #include "kseq.h"
-#include "krng.h"
 
 KSEQ_INIT(gzFile, gzread)
 
-#define YAMSHUF_VERSION             "1.1"
+#define YAMSHUF_VERSION             "1.2"
 #define YAMSHUF_YEAR                 2023
 
 /* ChangeLog
+ *
+ * v1.2 (18 Aug 2023)
+ * - Use xoroshiro128++ intead of xoroshiro128+
  *
  * v1.1 (15 Aug 2023)
  * - Add -p flag to print k-mer counts
@@ -124,6 +126,38 @@ long peak_mem(void) {
 #endif
 }
 #endif
+
+// Modified krng.h code from Heng Li to use xoroshiro128++ 1.0 instead
+
+typedef struct {
+  uint64_t s[2];
+} krng_t;
+
+static inline uint64_t kr_splitmix64(uint64_t x) {
+  uint64_t z = (x += 0x9E3779B97F4A7C15ULL);
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  return z ^ (z >> 31);
+}
+
+#define ROTL(X, K) (((X) << (K)) | ((X) >> (64 - (K))))
+
+static inline uint64_t kr_rand_r(krng_t *r) {
+  const uint64_t s0 = r->s[0];
+  uint64_t s1 = r->s[1];
+  const uint64_t result = ROTL(s0 + s1, 17) + s0;
+  s1 ^= s0;
+  r->s[0] = ROTL(s0, 49) ^ s1 ^ (s1 << 21); 
+  r->s[1] = ROTL(s1, 28);
+  return result;
+}
+
+static inline void kr_srand_r(krng_t *r, uint64_t seed) {
+  r->s[0] = kr_splitmix64(seed);
+  r->s[1] = kr_splitmix64(r->s[0]);
+}
+
+// rng code end
 
 void print_peak_mb(void) {
   long bytes = peak_mem();
