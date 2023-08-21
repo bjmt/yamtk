@@ -131,9 +131,9 @@ long peak_mem(void) {
 
 typedef struct {
   uint64_t s[2];
-} krng_t;
+} xrng_t;
 
-static inline uint64_t kr_splitmix64(uint64_t x) {
+static inline uint64_t splitmix64(uint64_t x) {
   uint64_t z = (x += 0x9E3779B97F4A7C15ULL);
   z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
   z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
@@ -142,7 +142,7 @@ static inline uint64_t kr_splitmix64(uint64_t x) {
 
 #define ROTL(X, K) (((X) << (K)) | ((X) >> (64 - (K))))
 
-static inline uint64_t kr_rand_r(krng_t *r) {
+static inline uint64_t xrand_r(xrng_t *r) {
   const uint64_t s0 = r->s[0];
   uint64_t s1 = r->s[1];
   const uint64_t result = ROTL(s0 + s1, 17) + s0;
@@ -152,9 +152,9 @@ static inline uint64_t kr_rand_r(krng_t *r) {
   return result;
 }
 
-static inline void kr_srand_r(krng_t *r, uint64_t seed) {
-  r->s[0] = kr_splitmix64(seed);
-  r->s[1] = kr_splitmix64(r->s[0]);
+static inline void sxrand_r(xrng_t *r, uint64_t seed) {
+  r->s[0] = splitmix64(seed);
+  r->s[1] = splitmix64(r->s[0]);
 }
 
 // rng code end
@@ -302,16 +302,13 @@ const char index2rna[] = "ACGUN";
 uint64_t char_counts[256];
 
 const uint64_t pow5[] = {
-                    1 ,                   5 ,                  25 ,                 125
-,                 625 ,                3125 ,               15625 ,               78125
-,              390625 ,             1953125 ,             9765625 ,            48828125
-,           244140625 ,          1220703125 ,          6103515625 ,         30517578125
-,        152587890625 ,        762939453125 ,       3814697265625 ,      19073486328125
-,      95367431640625 ,     476837158203125 ,    2384185791015625 ,   11920928955078124
-,   59604644775390624 ,  298023223876953152 , 1490116119384765696 , 7450580596923828224
+           1 ,           5 ,         25 ,         125
+,        625 ,        3125 ,      15625 ,       78125
+,     390625 ,     1953125 ,    9765625 ,    48828125
+,  244140625 ,  1220703125 , 6103515625 , 30517578125
 };
 
-krng_t krng;
+xrng_t xrng;
 
 void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamshuf -h to see usage.\n", msg);
@@ -353,7 +350,7 @@ static inline void swap(unsigned char *seq, const uint64_t i, const uint64_t j) 
 
 int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {
   for (uint64_t i = 0, l = len - 1; i < l; i++) {
-    swap(seq, i, i + kr_rand_r(&krng) % (l - i));
+    swap(seq, i, i + xrand_r(&xrng) % (l - i));
   }
   return 0;
 }
@@ -366,7 +363,7 @@ static inline void swap_k(unsigned char *seq, const uint64_t i, const uint64_t j
 
 int shuffle_linear(unsigned char *seq, const uint64_t size, const uint64_t k) {
   for (uint64_t r, i = 0; i < size - 2 * k + 1; i += k) {
-    r = kr_rand_r(&krng) % (size - 2 * k + 1 - i);
+    r = xrand_r(&xrng) % (size - 2 * k + 1 - i);
     swap_k(seq, i, i + k + r - r % k, k);
   }
   return 0;
@@ -392,7 +389,7 @@ static inline uint64_t cumsum_and_pick_next_letter(const uint64_t *kmers) {
   const uint64_t k2 = k1 + kmers[2];
   const uint64_t k3 = k2 + kmers[3];
   const uint64_t k4 = k3 + kmers[4];
-  const uint64_t r = kr_rand_r(&krng) % k4; 
+  const uint64_t r = xrand_r(&xrng) % k4; 
        if (r < k0) return 0;
   else if (r < k1) return 1;
   else if (r < k2) return 2;
@@ -402,9 +399,9 @@ static inline uint64_t cumsum_and_pick_next_letter(const uint64_t *kmers) {
 
 static inline uint64_t pick_next_letter(const uint64_t *kmers) {
   if (UNLIKELY(!kmers[4])) {
-    return (uint64_t) kr_rand_r(&krng) % 4;
+    return (uint64_t) xrand_r(&xrng) % 4;
   } else {
-    const uint64_t r = kr_rand_r(&krng) % kmers[4]; 
+    const uint64_t r = xrand_r(&xrng) % kmers[4]; 
          if (r < kmers[0]) return 0;
     else if (r < kmers[1]) return 1;
     else if (r < kmers[2]) return 2;
@@ -715,7 +712,7 @@ int main(int argc, char **argv) {
   const uint64_t k = (uint64_t) args.k;
   int ret_val, rep_counter;
   kseq = kseq_init(files.s);
-  kr_srand_r(&krng, args.seed);
+  sxrand_r(&xrng, args.seed);
 
   if (k > 1 && !args.use_linear) {
     kmer_tab = malloc(sizeof(uint64_t) * pow5[k]);
@@ -785,7 +782,7 @@ int main(int argc, char **argv) {
     }
 
     if (args.reset_seed) {
-      kr_srand_r(&krng, args.seed);
+      sxrand_r(&xrng, args.seed);
     }
 
     if (args.print_kmers) {
