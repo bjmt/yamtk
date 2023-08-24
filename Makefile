@@ -5,7 +5,7 @@ ifneq ($(shell uname -s),Darwin)
 	CFLAGS+=-march=native
 endif
 
-release: CFLAGS+=-O3
+release: CFLAGS+=-O2
 release: yamdedup yamscan yamshuf
 
 debug: CFLAGS+=-g -Og -Wall -Wextra -Wdouble-promotion -Wno-sign-compare -fsanitize=address,undefined -fno-omit-frame-pointer -DDEBUG
