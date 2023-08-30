@@ -1,5 +1,10 @@
 # yam-toolkit: Yet Another Motif toolkit
 
+* Motif scanning: [yamscan](#yamscan)
+* Deduplicate overlapping motif hits: [yamdedup](#yamdedup)
+* Higher-order sequence shuffling: [yamshuf](#yamshuf)
+* Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
+
 ## Installation
 
 Make sure you have a 64-bit C compiler compatible with C99 + GNU extensions,
