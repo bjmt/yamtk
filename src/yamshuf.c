@@ -345,7 +345,7 @@ static inline void count_bases(const unsigned char *seq, const uint64_t size) {
 }
 
 static inline void swap(unsigned char *seq, const uint64_t i, const uint64_t j) {
-  unsigned char tmp = seq[i]; seq[i] = seq[j]; seq[j] = tmp;
+  const unsigned char tmp = seq[i]; seq[i] = seq[j]; seq[j] = tmp;
 }
 
 int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {

@@ -174,6 +174,9 @@ KHASH_SET_INIT_STR(motif_str_h);
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
+#define LIKELY(COND) __builtin_expect(COND, 1)
+#define UNLIKELY(COND) __builtin_expect(COND, 0)
+
 /* Size of progress bar.
  */
 #define PROGRESS_BAR_WIDTH                    60
@@ -2702,12 +2705,7 @@ void print_seq_stats_in_bed(FILE *whereto) {
 static inline void score_subseq(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score) {
   *score = 0;
   for (uint64_t i = 0; i < motif->size; i++) {
-    /* if (__builtin_expect(char2index[seq[i + offset]] == 4, 0)) { */
-    /*   *score = AMBIGUITY_SCORE; */
-    /*   break; */
-    /* } */
     *score += get_score(motif, seq[i + offset], i);
-    // would breaking early speed things up here?
   }
 }
 
@@ -2726,6 +2724,14 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
   }
 }
 
+#define PRINT_RES_BED(BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, \
+  BED_RANGE1_STRAND, BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, \
+  PVALUE8, SCORE9, SCORE_PCT10, MATCH11_SIZE, MATCH11) \
+    fprintf(files.o, "%s:%llu-%llu(%c)\t%s\t%s\t%llu\t%llu\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
+      BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, BED_RANGE1_STRAND, \
+      BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, PVALUE8, SCORE9, \
+      SCORE_PCT10, MATCH11_SIZE, MATCH11)
+
 void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64_t bed_i) {
   const unsigned char *seq = seqs[seq_loc];
   const char *seq_name = seq_names[bed.seq_indices[bed_i]];
@@ -2741,85 +2747,43 @@ void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64
   if (bed_strand_i == '.') {
     for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc);
-      if (__builtin_expect(score > threshold, 0)) {
-        fprintf(files.o, "%s:%llu-%llu(%c)\t%s\t%s\t%llu\t%llu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          bed_start_i,
-          bed_end_i,
-          bed_strand_i,
-          bed_name,
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score),
-          score / PWM_INT_MULTIPLIER,
-          100.0 * score / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score > threshold)) {
+        PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
+          i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
       }
-      if (__builtin_expect(score_rc > threshold, 0)) {
-        fprintf(files.o, "%s:%llu-%llu(%c)\t%s\t%s\t%llu\t%llu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          bed_start_i,
-          bed_end_i,
-          bed_strand_i,
-          bed_name,
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score_rc),
-          score_rc / PWM_INT_MULTIPLIER,
-          100.0 * score_rc / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score_rc > threshold)) {
+        PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
+          i + 1, i + mot_size, '-', motif->name, score2pval(motif, score_rc),
+          score_rc / PWM_INT_MULTIPLIER, 100.0 * score_rc / motif->max_score, mot_size, seq + i);
       }
     }
   } else if (bed_strand_i == '+') {
     for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
       score_subseq(motif, seq, i, &score);
-      if (__builtin_expect(score > threshold, 0)) {
-        fprintf(files.o, "%s:%llu-%llu(%c)\t%s\t%s\t%llu\t%llu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          bed_start_i,
-          bed_end_i,
-          bed_strand_i,
-          bed_name,
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score),
-          score / PWM_INT_MULTIPLIER,
-          100.0 * score / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score > threshold)) {
+        PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
+          i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
       }
     }
   } else if (bed_strand_i == '-') {
     for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
       score_subseq_rev(motif, seq, i, &score);
-      if (__builtin_expect(score > threshold, 0)) {
-        fprintf(files.o, "%s:%llu-%llu(%c)\t%s\t%s\t%llu\t%llu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          bed_start_i,
-          bed_end_i,
-          bed_strand_i,
-          bed_name,
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score),
-          score / PWM_INT_MULTIPLIER,
-          100.0 * score / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score > threshold)) {
+        PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
+          i + 1, i + mot_size, '-', motif->name, score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
       }
     }
   }
 }
+
+#define PRINT_RES(SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, \
+  SCORE_PCT8, MATCH9_SIZE, MATCH9) \
+    fprintf(files.o, "%s\t%llu\t%llu\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
+      SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, SCORE_PCT8, \
+      MATCH9_SIZE, MATCH9)
 
 void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_loc) {
   const unsigned char *seq = seqs[seq_loc];
@@ -2832,45 +2796,21 @@ void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_lo
   if (args.scan_rc) {
     for (uint64_t i = 0; i < seq_size - mot_size + 1; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc);
-      if (__builtin_expect(score > threshold, 0)) {
-        fprintf(files.o, "%s\t%llu\t%llu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score),
-          score / PWM_INT_MULTIPLIER,
-          100.0 * score / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score > threshold)) {
+        PRINT_RES(seq_name, i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
       }
-      if (__builtin_expect(score_rc > threshold, 0)) {
-        fprintf(files.o, "%s\t%llu\t%llu\t-\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score_rc),
-          score_rc / PWM_INT_MULTIPLIER,
-          100.0 * score_rc / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score_rc > threshold)) {
+        PRINT_RES(seq_name, i + 1, i + mot_size, '-', motif->name, score2pval(motif, score_rc),
+          score_rc / PWM_INT_MULTIPLIER, 100.0 * score_rc / motif->max_score, mot_size, seq + i);
       }
     }
   } else {
     for (uint64_t i = 0; i < seq_size - mot_size + 1; i++) {
       score_subseq(motif, seq, i, &score);
-      if (__builtin_expect(score > threshold, 0)) {
-        fprintf(files.o, "%s\t%llu\t%llu\t+\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n",
-          seq_name,
-          i + 1,
-          i + mot_size,
-          motif->name,
-          score2pval(motif, score),
-          score / PWM_INT_MULTIPLIER,
-          100.0 * score / motif->max_score,
-          mot_size,
-          seq + i);
+      if (UNLIKELY(score > threshold)) {
+        PRINT_RES(seq_name, i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
+          score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
       }
     }
   }
