@@ -40,7 +40,7 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamscan v1.5  Copyright (C) 2022  Benjamin Jean-Marie Tremblay
+yamscan v1.7  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
 
 Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
@@ -76,7 +76,8 @@ Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             of zero or greater. Useful for manual filtering.
  -p <int>   Pseudocount for PWM generation. Default: 1. Must be a positive
             integer.
- -n <int>   Number of motif sites used in PWM generation. Default: 1000.
+ -n <int>   Number of motif sites used in PPM->PCM conversion. Default: 1000.
+ -M         Mask lower case letters and do not scan.
  -d         Deduplicate motif/sequence names. Default: abort. Duplicates will
             have the motif/sequence numbers appended. Incompatible with -x.
  -r         Don't trim motif (HOCOMOCO/JASPAR only, HOMER/MEME must already be
@@ -381,7 +382,7 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamshuf v1.1  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
+yamshuf v1.2  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
 
 Usage:  yamshuf [options] -i sequences.fa
 
