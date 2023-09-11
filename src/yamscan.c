@@ -36,10 +36,13 @@ KSEQ_INIT(gzFile, gzread)
 KHASH_MAP_INIT_STR(seq_str_h, uint64_t);
 KHASH_SET_INIT_STR(motif_str_h);
 
-#define YAMSCAN_VERSION                    "1.6"
+#define YAMSCAN_VERSION                    "1.7"
 #define YAMSCAN_YEAR                        2023
 
 /* ChangeLog
+ *
+ * v1.7 (September 2023)
+ * - Add option to mask lower case letters and skip scanning via -M
  *
  * v1.6 (March 2023)
  * - Fix loop for scanning in BED regions
@@ -288,11 +291,12 @@ void usage(void) {
     "            of zero or greater. Useful for manual filtering.                  \n"
     " -p <int>   Pseudocount for PWM generation. Default: %d. Must be a positive    \n"
     "            integer.                                                          \n"
-    " -n <int>   Number of motif sites used in PWM generation. Default: %d.         \n"
+    " -n <int>   Number of motif sites used in PPM->PCM conversion. Default: %d. \n"
+    " -M         Mask lower case letters and do not scan.                          \n"
     " -d         Deduplicate motif/sequence names. Default: abort. Duplicates will \n"
     "            have the motif/sequence numbers appended. Incompatible with -x.   \n"
-    " -r         Don't trim motif (HOCOMOCO/JASPAR only, HOMER/MEME must already be\n"
-    "            one word) and sequence names to the first word.                   \n"
+    " -r         Do not trim motif (HOCOMOCO/JASPAR only, HOMER/MEME must already  \n"
+    "            be one word) and sequence names to the first word.                \n"
     " -l         Deactivate low memory mode. Normally only a single sequence is    \n"
     "            stored in memory at a time. Setting this flag allows the program  \n"
     "            to instead store the entire input into memory, which can help with\n"
@@ -301,10 +305,9 @@ void usage(void) {
     "            stdin, and when multithreading is enabled.                        \n"
     " -j <int>   Number of threads yamscan can use to scan. Default: 1. Note that  \n"
     "            increasing this number will also increase memory usage slightly.  \n"
-    "            The number of threads is limited by the number of motifs being    \n"
-    "            scanned.                                                          \n"
+    "            The number of threads is limited by the number of input motifs.   \n"
     " -g         Print a progress bar during scanning. This turns off some of the  \n"
-    "            messages printed by -w. Note that it's only useful if there is    \n"
+    "            messages printed by -w. Note that it is only useful if there is   \n"
     "            more than one input motif.                                        \n"
     " -v         Verbose mode.                                                     \n"
     " -w         Very verbose mode.                                                \n"
@@ -316,15 +319,34 @@ void usage(void) {
 
 khash_t(seq_str_h) *seq_hash_tab;
 
+const unsigned char char2maskindex[] = {
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4, // A, C, G
+  4, 4, 4, 4, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // T, U
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // a, c, g
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // t, u
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
+};
+
 const unsigned char char2index[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-  4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4,
-  4, 4, 4, 4, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-  4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4,
-  4, 4, 4, 4, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+  4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4, // A, C, G
+  4, 4, 4, 4, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // T, U
+  4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4, // a, c, g
+  4, 4, 4, 4, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // t, u
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -396,6 +418,7 @@ typedef struct args_t {
   int      thresh0 : 1;
   int      progress : 1;
   int      use_bed : 1;
+  int      mask : 1;
   int      v : 1;
   int      w : 1;
 } args_t;
@@ -414,6 +437,7 @@ args_t args = {
   .thresh0         = 0,
   .progress        = 0,
   .use_bed         = 0,
+  .mask            = 0,
   .v               = 0,
   .w               = 0
 };
@@ -646,20 +670,20 @@ static inline void set_score(motif_t *motif, const unsigned char let, const uint
   motif->pwm[char2index[let] + pos * 5] = score;
 }
 
-static inline int get_score(const motif_t *motif, const unsigned char let, const uint64_t pos) {
-  return motif->pwm[char2index[let] + pos * 5];
-}
-
-static inline int get_score_i(const motif_t *motif, const int i, const uint64_t pos) {
-  return motif->pwm[i + pos * 5];
-}
-
 static inline void set_score_rc(motif_t *motif, const unsigned char let, const uint64_t pos, const int score) {
   motif->pwm_rc[char2index[let] + pos * 5] = score;
 }
 
-static inline int get_score_rc(const motif_t *motif, const unsigned char let, const uint64_t pos) {
-  return motif->pwm_rc[char2index[let] + pos * 5];
+static inline int get_score(const motif_t *motif, const unsigned char let, const uint64_t pos, const unsigned char *char2Xindex) {
+  return motif->pwm[char2Xindex[let] + pos * 5];
+}
+
+static inline int get_score_rc(const motif_t *motif, const unsigned char let, const uint64_t pos, const unsigned char *char2Xindex) {
+  return motif->pwm_rc[char2Xindex[let] + pos * 5];
+}
+
+static inline int get_score_i(const motif_t *motif, const int i, const uint64_t pos) {
+  return motif->pwm[i + pos * 5];
 }
 
 void free_ht(void) {
@@ -774,16 +798,6 @@ void fill_cdf(motif_t *motif) {
         motif->cdf[k+s] += motif->tmp_pdf[k] * args.bkg[j];
       }
     }
-    /* s0 = get_score_i(motif, 0, i) - motif->min; */
-    /* s1 = get_score_i(motif, 1, i) - motif->min; */
-    /* s2 = get_score_i(motif, 2, i) - motif->min; */
-    /* s3 = get_score_i(motif, 3, i) - motif->min; */
-    /* for (uint64_t k = 0; k < max_step + 1; k++) { */
-    /*   motif->cdf[k+s0] += motif->tmp_pdf[k] * args.bkg[0]; */
-    /*   motif->cdf[k+s1] += motif->tmp_pdf[k] * args.bkg[1]; */
-    /*   motif->cdf[k+s2] += motif->tmp_pdf[k] * args.bkg[2]; */
-    /*   motif->cdf[k+s3] += motif->tmp_pdf[k] * args.bkg[3]; */
-    /* } */
   }
   for (uint64_t i = 0; i < motif->cdf_size; i++) pdf_sum += motif->cdf[i];
   if (fabs(pdf_sum - 1.0) > 0.0001) {
@@ -1503,10 +1517,10 @@ int get_pwm_min(const motif_t *motif) {
 
 void fill_pwm_rc(motif_t *motif) {
   for (uint64_t pos = 0; pos < motif->size; pos++) {
-    set_score_rc(motif, 'A', motif->size - 1 - pos, get_score(motif, 'T', pos));
-    set_score_rc(motif, 'C', motif->size - 1 - pos, get_score(motif, 'G', pos));
-    set_score_rc(motif, 'G', motif->size - 1 - pos, get_score(motif, 'C', pos));
-    set_score_rc(motif, 'T', motif->size - 1 - pos, get_score(motif, 'A', pos));
+    set_score_rc(motif, 'A', motif->size - 1 - pos, get_score(motif, 'T', pos, char2index));
+    set_score_rc(motif, 'C', motif->size - 1 - pos, get_score(motif, 'G', pos, char2index));
+    set_score_rc(motif, 'G', motif->size - 1 - pos, get_score(motif, 'C', pos, char2index));
+    set_score_rc(motif, 'T', motif->size - 1 - pos, get_score(motif, 'A', pos, char2index));
   }
 }
 
@@ -1543,10 +1557,10 @@ void print_motif(motif_t *motif, const uint64_t n) {
   fprintf(files.o, "Motif PWM:\n\tA\tC\tG\tT\n");
   for (uint64_t i = 0; i < motif->size; i++) {
     fprintf(files.o, "%llu:\t%.2f\t%.2f\t%.2f\t%.2f\n", i + 1,
-      get_score(motif, 'A', i) / PWM_INT_MULTIPLIER,
-      get_score(motif, 'C', i) / PWM_INT_MULTIPLIER,
-      get_score(motif, 'G', i) / PWM_INT_MULTIPLIER,
-      get_score(motif, 'T', i) / PWM_INT_MULTIPLIER);
+      get_score(motif, 'A', i, char2index) / PWM_INT_MULTIPLIER,
+      get_score(motif, 'C', i, char2index) / PWM_INT_MULTIPLIER,
+      get_score(motif, 'G', i, char2index) / PWM_INT_MULTIPLIER,
+      get_score(motif, 'T', i, char2index) / PWM_INT_MULTIPLIER);
   }
   fprintf(files.o, "Score=%.2f\t-->     p=1\n",
       motif->min_score / PWM_INT_MULTIPLIER);
@@ -2702,25 +2716,25 @@ void print_seq_stats_in_bed(FILE *whereto) {
   }
 }
 
-static inline void score_subseq(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score) {
+static inline void score_subseq(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score, const unsigned char *char2Xindex) {
   *score = 0;
   for (uint64_t i = 0; i < motif->size; i++) {
-    *score += get_score(motif, seq[i + offset], i);
+    *score += get_score(motif, seq[i + offset], i, char2Xindex);
   }
 }
 
-static inline void score_subseq_rev(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score) {
+static inline void score_subseq_rev(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score, const unsigned char *char2Xindex) {
   *score = 0;
   for (uint64_t i = 0; i < motif->size; i++) {
-    *score += get_score_rc(motif, seq[i + offset], i);
+    *score += get_score_rc(motif, seq[i + offset], i, char2Xindex);
   }
 }
 
-static inline void score_subseq_rc(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score, int *score_rc) {
+static inline void score_subseq_rc(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score, int *score_rc, const unsigned char *char2Xindex) {
   *score = 0; *score_rc = 0;
   for (uint64_t i = 0; i < motif->size; i++) {
-    *score += get_score(motif, seq[i + offset], i);
-    *score_rc += get_score_rc(motif, seq[i + offset], i);
+    *score += get_score(motif, seq[i + offset], i, char2Xindex);
+    *score_rc += get_score_rc(motif, seq[i + offset], i, char2Xindex);
   }
 }
 
@@ -2733,6 +2747,7 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
       SCORE_PCT10, MATCH11_SIZE, MATCH11)
 
 void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64_t bed_i) {
+  const unsigned char *char2Xindex = args.mask ? char2maskindex : char2index;
   const unsigned char *seq = seqs[seq_loc];
   const char *seq_name = seq_names[bed.seq_indices[bed_i]];
   const uint64_t bed_size = bed.ends[bed_i] - bed.starts[bed_i];
@@ -2746,7 +2761,7 @@ void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64
   int score = INT_MIN, score_rc = INT_MIN;
   if (bed_strand_i == '.') {
     for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
-      score_subseq_rc(motif, seq, i, &score, &score_rc);
+      score_subseq_rc(motif, seq, i, &score, &score_rc, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
           i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
@@ -2760,7 +2775,7 @@ void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64
     }
   } else if (bed_strand_i == '+') {
     for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
-      score_subseq(motif, seq, i, &score);
+      score_subseq(motif, seq, i, &score, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
           i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
@@ -2769,7 +2784,7 @@ void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64
     }
   } else if (bed_strand_i == '-') {
     for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
-      score_subseq_rev(motif, seq, i, &score);
+      score_subseq_rev(motif, seq, i, &score, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
           i + 1, i + mot_size, '-', motif->name, score2pval(motif, score),
@@ -2786,6 +2801,7 @@ void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64
       MATCH9_SIZE, MATCH9)
 
 void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_loc) {
+  const unsigned char *char2Xindex = args.mask ? char2maskindex : char2index;
   const unsigned char *seq = seqs[seq_loc];
   const char *seq_name = seq_names[seq_i];
   const uint64_t seq_size = seq_sizes[seq_i];
@@ -2795,7 +2811,7 @@ void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_lo
   int score = INT_MIN, score_rc = INT_MIN;
   if (args.scan_rc) {
     for (uint64_t i = 0; i < seq_size - mot_size + 1; i++) {
-      score_subseq_rc(motif, seq, i, &score, &score_rc);
+      score_subseq_rc(motif, seq, i, &score, &score_rc, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES(seq_name, i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
           score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
@@ -2807,7 +2823,7 @@ void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_lo
     }
   } else {
     for (uint64_t i = 0; i < seq_size - mot_size + 1; i++) {
-      score_subseq(motif, seq, i, &score);
+      score_subseq(motif, seq, i, &score, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES(seq_name, i + 1, i + mot_size, '+', motif->name, score2pval(motif, score),
           score / PWM_INT_MULTIPLIER, 100.0 * score / motif->max_score, mot_size, seq + i);
@@ -2953,7 +2969,7 @@ int main(int argc, char **argv) {
 
   int opt;
 
-  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:x:dgrvwh0")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:x:dgrMvwh0")) != -1) {
     switch (opt) {
       case 'm':
         if (has_consensus) {
@@ -3045,6 +3061,9 @@ int main(int argc, char **argv) {
         if (!args.nthreads) {
           badexit("Error: -j must be a positive integer.");
         }
+        break;
+      case 'M':
+        args.mask = 1;
         break;
       case 'd':
         args.dedup = 1;
