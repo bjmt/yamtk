@@ -377,8 +377,8 @@ static inline uint64_t count_fields(const char *line) {
 }
 
 int compare_scores(const void *a, const void *b) {
-  const score2index_t *a_s = (score2index_t *) a;
-  const score2index_t *b_s = (score2index_t *) b;
+  const score2index_t *a_s = (const score2index_t *) a;
+  const score2index_t *b_s = (const score2index_t *) b;
   if (a_s->score < b_s->score) {
     return 1;
   } else if (a_s->score > b_s->score) {
