@@ -7,8 +7,7 @@
 
 ## Installation
 
-Make sure you have a 64-bit C compiler compatible with C99 + GNU extensions,
-GNU Make, and [Zlib](https://zlib.net).
+Requires a C compiler (tested with gcc/clang), GNU Make, and [Zlib](https://zlib.net).
 
 ```sh
 git clone https://github.com/bjmt/yam-toolkit  # Or download a recent release

@@ -111,12 +111,12 @@ KSEQ_INIT(gzFile, gzread)
 #define UNLIKELY(COND) __builtin_expect(COND, 0)
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-long peak_mem(void) {
+static long peak_mem(void) {
   return 0;
 }
 #else
 #include <sys/resource.h>
-long peak_mem(void) {
+static long peak_mem(void) {
   struct rusage r_mem;
   getrusage(RUSAGE_SELF, &r_mem);
 #ifdef __linux__
@@ -159,7 +159,7 @@ static inline void sxrand_r(xrng_t *r, uint64_t seed) {
 
 // rng code end
 
-void print_peak_mb(void) {
+static void print_peak_mb(void) {
   long bytes = peak_mem();
   if (bytes > (1 << 30)) {
     fprintf(stderr, "Approx. peak memory usage: %'.2f GB.\n",
@@ -173,7 +173,7 @@ void print_peak_mb(void) {
   }
 }
 
-void print_time(const uint64_t s, const char *what) {
+static void print_time(const uint64_t s, const char *what) {
   if (s > 7200) {
     fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
   } else if (s > 120) {
@@ -183,7 +183,7 @@ void print_time(const uint64_t s, const char *what) {
   }
 }
 
-void usage(void) {
+static void usage(void) {
   printf(
     "yamshuf v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay                \n"
     "                                                                              \n"
@@ -240,7 +240,7 @@ typedef struct args_t {
   uint64_t window_overlap;
 } args_t;
 
-args_t args = {
+static args_t args = {
   .k              = DEFAULT_K,
   .seed           = DEFAULT_SEED,
   .reset_seed     = 0,
@@ -263,7 +263,7 @@ typedef struct files_t {
   FILE  *o;
 } files_t;
 
-files_t files = {
+static files_t files = {
   .s_open = 0,
   .o_open = 0
 };
@@ -274,7 +274,7 @@ void close_files(void) {
 }
 
 /* aA = 0, cC = 1, gG = 2, tTuU = 3 */
-const unsigned char char2index[] = { /* 16 x 16 */
+static const unsigned char char2index[256] = { /* 16 x 16 */
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -293,24 +293,24 @@ const unsigned char char2index[] = { /* 16 x 16 */
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
 };
 
-const char index2dna[] = "ACGTN";
-const char index2rna[] = "ACGUN";
+static const char index2dna[6] = "ACGTN";
+static const char index2rna[6] = "ACGUN";
 
 /* unsigned char gap2bool[256] = { 0 }; */
 /* const char gapchars[] = GAP_CHARS; */
 
-uint64_t char_counts[256];
+static uint64_t char_counts[256];
 
-const uint64_t pow5[] = {
+static const uint64_t pow5[16] = {
            1 ,           5 ,         25 ,         125
 ,        625 ,        3125 ,      15625 ,       78125
 ,     390625 ,     1953125 ,    9765625 ,    48828125
 ,  244140625 ,  1220703125 , 6103515625 , 30517578125
 };
 
-xrng_t xrng;
+static xrng_t xrng;
 
-void badexit(const char *msg) {
+static void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamshuf -h to see usage.\n", msg);
   close_files();
   exit(EXIT_FAILURE);
@@ -348,7 +348,7 @@ static inline void swap(unsigned char *seq, const uint64_t i, const uint64_t j) 
   const unsigned char tmp = seq[i]; seq[i] = seq[j]; seq[j] = tmp;
 }
 
-int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {
+static int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {
   for (uint64_t i = 0, l = len - 1; i < l; i++) {
     swap(seq, i, i + xrand_r(&xrng) % (l - i));
   }
@@ -361,7 +361,7 @@ static inline void swap_k(unsigned char *seq, const uint64_t i, const uint64_t j
   }
 }
 
-int shuffle_linear(unsigned char *seq, const uint64_t size, const uint64_t k) {
+static int shuffle_linear(unsigned char *seq, const uint64_t size, const uint64_t k) {
   for (uint64_t r, i = 0; i < size - 2 * k + 1; i += k) {
     r = xrand_r(&xrng) % (size - 2 * k + 1 - i);
     swap_k(seq, i, i + k + r - r % k, k);
@@ -410,7 +410,7 @@ static inline uint64_t pick_next_letter(const uint64_t *kmers) {
   }
 }
 
-int shuffle_markov(unsigned char *seq, const uint64_t size, const uint64_t k, uint64_t *kmer_tab, const int is_dna) {
+static int shuffle_markov(unsigned char *seq, const uint64_t size, const uint64_t k, uint64_t *kmer_tab, const int is_dna) {
   const char *index2xna = is_dna ? index2dna : index2rna;
   for (uint64_t i = 0; i < pow5[k]; i += 5) {
     kmer_tab[i + 1] += kmer_tab[i];
@@ -432,7 +432,7 @@ int shuffle_markov(unsigned char *seq, const uint64_t size, const uint64_t k, ui
 
 #define COUNT_EDGES(OFFSET, TABLE) (TABLE[OFFSET]+TABLE[OFFSET+1]+TABLE[OFFSET+2]+TABLE[OFFSET+3]+TABLE[OFFSET+4])
 
-int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t k, uint64_t *kmer_tab, const int is_dna, unsigned char *invalid_vertex, uint64_t *euler_path, uint64_t *next_index) {
+static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t k, uint64_t *kmer_tab, const int is_dna, unsigned char *invalid_vertex, uint64_t *euler_path, uint64_t *next_index) {
 
   const char *index2xna = is_dna ? index2dna : index2rna;
 
@@ -510,7 +510,7 @@ int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t k, uin
 
 }
 
-void write_seq(const unsigned char *seq, const uint64_t size, const char *name, const char *comment, const uint64_t comment_l, const uint64_t n) {
+static void write_seq(const unsigned char *seq, const uint64_t size, const char *name, const char *comment, const uint64_t comment_l, const uint64_t n) {
   if (comment_l && n) {
     fprintf(files.o, ">%s %s-%llu\n", name, comment, n);
   } else if (comment_l) {
@@ -525,7 +525,7 @@ void write_seq(const unsigned char *seq, const uint64_t size, const char *name, 
   }
 }
 
-void print_kmer_table_header(const uint64_t k, const int is_dna) {
+static void print_kmer_table_header(const uint64_t k, const int is_dna) {
   const char *index2xna = is_dna ? index2dna : index2rna;
   fputs("seq", files.o);
   if (k == 1) {

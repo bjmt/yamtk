@@ -187,12 +187,12 @@ KHASH_SET_INIT_STR(motif_str_h);
   "============================================================"
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-long peak_mem(void) {
+static long peak_mem(void) {
   return 0;
 }
 #else
 #include <sys/resource.h>
-long peak_mem(void) {
+static long peak_mem(void) {
   struct rusage r_mem;
   getrusage(RUSAGE_SELF, &r_mem);
 #ifdef __linux__
@@ -203,7 +203,7 @@ long peak_mem(void) {
 }
 #endif
 
-void print_peak_mb(void) {
+static void print_peak_mb(void) {
   long bytes = peak_mem();
   if (bytes > (1 << 30)) {
     fprintf(stderr, "Approx. peak memory usage: %'.2f GB.\n",
@@ -217,7 +217,7 @@ void print_peak_mb(void) {
   }
 }
 
-void print_seq_mem(const uint64_t b) {
+static void print_seq_mem(const uint64_t b) {
   if (b > (1 << 30)) {
     fprintf(stderr, "Approx. memory usage for sequence(s): %'.2f GB.\n",
       (((double) b / 1024.0) / 1024.0) / 1024.0);
@@ -230,7 +230,7 @@ void print_seq_mem(const uint64_t b) {
   }
 }
 
-void print_motif_mem(const uint64_t b) {
+static void print_motif_mem(const uint64_t b) {
   if (b > (1 << 30)) {
     fprintf(stderr, "Approx. memory usage for motif(s): %'.2f GB.\n",
       (((double) b / 1024.0) / 1024.0) / 1024.0);
@@ -243,7 +243,7 @@ void print_motif_mem(const uint64_t b) {
   }
 }
 
-void print_time(const uint64_t s, const char *what) {
+static void print_time(const uint64_t s, const char *what) {
   if (s > 7200) {
     fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
   } else if (s > 120) {
@@ -253,7 +253,7 @@ void print_time(const uint64_t s, const char *what) {
   }
 }
 
-void usage(void) {
+static void usage(void) {
   printf(
     "yamscan v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay                \n"
     "                                                                              \n"
@@ -317,9 +317,9 @@ void usage(void) {
   );
 }
 
-khash_t(seq_str_h) *seq_hash_tab;
+static khash_t(seq_str_h) *seq_hash_tab;
 
-const unsigned char char2maskindex[] = {
+static const unsigned char char2maskindex[256] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -338,7 +338,7 @@ const unsigned char char2maskindex[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
 };
 
-const unsigned char char2index[] = {
+static const unsigned char char2index[256] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
@@ -357,9 +357,9 @@ const unsigned char char2index[] = {
   4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 
 };
 
-uint64_t char_counts[256];
+static uint64_t char_counts[256];
 
-const double consensus2probs[] = {
+static const double consensus2probs[] = {
   1.0,   0.0,   0.0,   0.0,        /*  0. A */
   0.0,   1.0,   0.0,   0.0,        /*  1. C */
   0.0,   0.0,   1.0,   0.0,        /*  2. G */
@@ -377,7 +377,7 @@ const double consensus2probs[] = {
   0.25,  0.25,  0.25,  0.25        /* 14. N */
 };
 
-const int consensus2index[] = {
+static const int consensus2index[256] = {
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -423,7 +423,7 @@ typedef struct args_t {
   int      w : 1;
 } args_t;
 
-args_t args = {
+static args_t args = {
   .bkg             = {0.25, 0.25, 0.25, 0.25},
   .pvalue          = DEFAULT_PVALUE,
   .nsites          = DEFAULT_NSITES,
@@ -458,7 +458,7 @@ typedef struct bed_t {
   uint64_t   indices_are_filled;
 } bed_t;
 
-bed_t bed = {
+static bed_t bed = {
   .n_regions          = 0,
   .n_comments         = 0,
   .n_lines            = 0,
@@ -468,7 +468,7 @@ bed_t bed = {
   .indices_are_filled = 0
 };
 
-void free_bed(void) {
+static void free_bed(void) {
   if (bed.n_alloc) {
     if (bed.n_regions) {
       for (uint64_t i = 0; i < bed.n_regions; i++) {
@@ -506,7 +506,7 @@ typedef struct motif_t {
   double     *tmp_pdf;
 } motif_t;
 
-motif_t **motifs;
+static motif_t **motifs;
 
 typedef struct motif_info_t {
   int       is_consensus : 1;
@@ -515,18 +515,18 @@ typedef struct motif_info_t {
   uint64_t  n_alloc;
 } motif_info_t;
 
-motif_info_t motif_info = {
+static motif_info_t motif_info = {
   .is_consensus = 0,
   .fmt          = 0,
   .n            = 0,
   .n_alloc      = 0
 };
 
-uint64_t   *cdf_real_size;
-double    **cdf;
-double    **tmp_pdf;
+static uint64_t   *cdf_real_size;
+static double    **cdf;
+static double    **tmp_pdf;
 
-int alloc_cdf(void) {
+static int alloc_cdf(void) {
   cdf_real_size = malloc(sizeof(uint64_t) * args.nthreads);
   if (cdf_real_size == NULL) {
     fprintf(stderr, "Error: Failed to allocate memory for real CDF sizes.");
@@ -568,7 +568,7 @@ typedef struct seq_info_t {
   double       gc_pct;
 } seq_info_t;
 
-seq_info_t seq_info = {
+static seq_info_t seq_info = {
   .n_alloc = 0,
   .n = 0,
   .total_bases = 0,
@@ -576,11 +576,11 @@ seq_info_t seq_info = {
   .gc_pct = 0.0
 };
 
-char            **seq_names;
-unsigned char   **seqs;
-uint64_t         *seq_sizes;
+static char            **seq_names;
+static unsigned char   **seqs;
+static uint64_t         *seq_sizes;
 
-void free_seqs(void) {
+static void free_seqs(void) {
   for (uint64_t i = 0; i < seq_info.n; i++) {
     free(seq_names[i]);
     if (!args.low_mem) free(seqs[i]);
@@ -590,14 +590,14 @@ void free_seqs(void) {
   free(seqs);
 }
 
-void free_motifs(void) {
+static void free_motifs(void) {
   for (uint64_t i = 0; i < motif_info.n; i++) {
     free(motifs[i]);
   }
   free(motifs);
 }
 
-void free_cdf(void) {
+static void free_cdf(void) {
   for (uint64_t i = 0; i < args.nthreads; i++) {
     free(cdf[i]);
     free(tmp_pdf[i]);
@@ -607,9 +607,9 @@ void free_cdf(void) {
   free(cdf_real_size);
 }
 
-pthread_t         *threads;
-pthread_mutex_t    pb_lock = PTHREAD_MUTEX_INITIALIZER;
-uint64_t           pb_counter = 0;
+static pthread_t         *threads;
+static pthread_mutex_t    pb_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t           pb_counter = 0;
 
 typedef struct files_t {
   int       m_open : 1;
@@ -622,21 +622,21 @@ typedef struct files_t {
   gzFile    b;
 } files_t;
 
-files_t files = {
+static files_t files = {
   .m_open = 0,
   .s_open = 0,
   .o_open = 0,
   .b_open = 0
 };
 
-void close_files(void) {
+static void close_files(void) {
   if (files.m_open) fclose(files.m);
   if (files.s_open) gzclose(files.s);
   if (files.o_open) fclose(files.o);
   if (files.b_open) gzclose(files.b);
 }
 
-void init_motif(motif_t *motif) {
+static void init_motif(motif_t *motif) {
   ERASE_ARRAY(motif->name, MAX_NAME_SIZE);
   motif->name[0] = 'm';
   motif->name[1] = 'o';
@@ -686,7 +686,7 @@ static inline int get_score_i(const motif_t *motif, const int i, const uint64_t 
   return motif->pwm[i + pos * 5];
 }
 
-void free_ht(void) {
+static void free_ht(void) {
   /* khash.h doesn't own the memory, it's (de)allocated in seq_names
   for (khint_t k = 0; k < kh_end(seq_hash_tab); k++) {
     if (kh_exist(seq_hash_tab, k)) free((char *) kh_key(seq_hash_tab, k));
@@ -695,7 +695,7 @@ void free_ht(void) {
   kh_destroy(seq_str_h, seq_hash_tab);
 }
 
-void badexit(const char *msg) {
+static void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamscan -h to see usage.\n", msg);
   free(threads);
   free_motifs();
@@ -744,7 +744,7 @@ static inline int str_to_uint64_t(char *str, uint64_t *res) {
 /* For the motif half of yamscan, this function is (by far) where it spends
  * most of its time.
  */
-void fill_cdf(motif_t *motif) {
+static void fill_cdf(motif_t *motif) {
   uint64_t max_step, s; //s0, s1, s2, s3;
   double pdf_sum = 0.0;
   if (args.w && args.nthreads == 1 && !args.progress) {
@@ -819,7 +819,7 @@ static inline double score2pval(const motif_t *motif, const int score) {
   return motif->cdf[score - motif->cdf_offset];
 }
 
-void set_threshold(motif_t *motif) {
+static void set_threshold(motif_t *motif) {
   uint64_t threshold_i = motif->cdf_size;
   for (uint64_t i = 0; i < motif->cdf_size; i++) {
     if (motif->cdf[i] < args.pvalue) {
@@ -859,7 +859,7 @@ void set_threshold(motif_t *motif) {
   }
 }
 
-int check_and_load_bkg(double *bkg) {
+static int check_and_load_bkg(double *bkg) {
   if (bkg[0] == -1.0 || bkg[1] == -1.0 || bkg[2] == -1.0 || bkg[3] == -1.0) {
     fprintf(stderr, "Error: Too few background values found (need 4)."); return 1;
   }
@@ -883,7 +883,7 @@ int check_and_load_bkg(double *bkg) {
   return 0;
 }
 
-void parse_user_bkg(const char *bkg_usr) {
+static void parse_user_bkg(const char *bkg_usr) {
   uint64_t i = 0, j = 0, bi = 0;
   char bc[USER_BKG_MAX_SIZE];
   double b[] = {-1.0, -1.0, -1.0, -1.0};
@@ -922,7 +922,7 @@ void parse_user_bkg(const char *bkg_usr) {
   }
 }
 
-int check_line_contains(const char *line, const char *substring) {
+static int check_line_contains(const char *line, const char *substring) {
   const uint64_t ss_len = strlen(substring);
   if (strlen(line) < ss_len) return 0;
   for (uint64_t i = 0; i < ss_len; i++) {
@@ -931,7 +931,7 @@ int check_line_contains(const char *line, const char *substring) {
   return 1;
 }
 
-uint64_t count_nonempty_chars(const char *line) {
+static uint64_t count_nonempty_chars(const char *line) {
   uint64_t total_chars = 0, i = 0;
   for (;;) {
     switch (line[i]) {
@@ -949,7 +949,7 @@ uint64_t count_nonempty_chars(const char *line) {
   return total_chars;
 }
 
-int check_char_is_one_of(const char c, const char *list) {
+static int check_char_is_one_of(const char c, const char *list) {
   const uint64_t s_len = (uint64_t) strlen(list);
   for (uint64_t i = 0; i < s_len; i++) {
     if (list[i] == c) return 1;
@@ -957,7 +957,7 @@ int check_char_is_one_of(const char c, const char *list) {
   return 0;
 }
 
-int detect_motif_fmt(void) {
+static int detect_motif_fmt(void) {
   int jaspar_or_hocomoco = 0, file_fmt = 0, has_tabs = 0;
   char *line = NULL;
   size_t len = 0;
@@ -1010,7 +1010,7 @@ int detect_motif_fmt(void) {
   return file_fmt;
 }
 
-int add_motif(void) {
+static int add_motif(void) {
   motif_info.n++;
   const uint64_t last_i = motif_info.n - 1;
   if (motif_info.n > motif_info.n_alloc) {
@@ -1033,7 +1033,7 @@ int add_motif(void) {
   return 0;
 }
 
-int calc_score(const double prob_i, const double bkg_i) {
+static int calc_score(const double prob_i, const double bkg_i) {
   double x;
   x = prob_i * args.nsites;
   x += ((double) args.pseudocount) / 4.0;
@@ -1041,7 +1041,7 @@ int calc_score(const double prob_i, const double bkg_i) {
   return (int) (log2(x / bkg_i) * PWM_INT_MULTIPLIER);
 }
 
-int normalize_probs(double *probs, const char *name) {
+static int normalize_probs(double *probs, const char *name) {
   double sum = probs[0] + probs[1] + probs[2] + probs[3];
   if (fabs(sum - 1.0) > 0.1) {
     if (args.w) fprintf(stderr, "\n");
@@ -1061,7 +1061,7 @@ int normalize_probs(double *probs, const char *name) {
   return 0;
 }
 
-int get_line_probs(const motif_t *motif, const char *line, double *probs, const uint64_t n) {
+static int get_line_probs(const motif_t *motif, const char *line, double *probs, const uint64_t n) {
   uint64_t i = 0, j = 0, which_i = -1;
   int prev_line_was_space = 1;
   char pos_i[MOTIF_VALUE_MAX_CHAR];
@@ -1131,8 +1131,8 @@ int get_line_probs(const motif_t *motif, const char *line, double *probs, const 
   return 0;
 }
 
-int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t pos) {
-  double probs[] = {-1.0, -1.0, -1.0, -1.0};
+static int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t pos) {
+  double probs[4] = {-1.0, -1.0, -1.0, -1.0};
   if (get_line_probs(motif, line, probs, 4)) return 1;
   if (normalize_probs(probs, motif->name)) return 1;
   set_score(motif, 'A', pos, calc_score(probs[0], args.bkg[0]));
@@ -1142,7 +1142,7 @@ int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t pos) {
   return 0;
 }
 
-int check_meme_alph(const char *line, const uint64_t line_num) {
+static int check_meme_alph(const char *line, const uint64_t line_num) {
   if (check_line_contains(line, "ALPHABET= ACDEFGHIKLMNPQRSTVWY\0")) {
     fprintf(stderr, "Error: Detected protein alphabet (L%llu).", line_num);
     return 1;
@@ -1150,7 +1150,7 @@ int check_meme_alph(const char *line, const uint64_t line_num) {
   return 0;
 }
 
-int check_meme_strand(const char *line, const uint64_t line_num) {
+static int check_meme_strand(const char *line, const uint64_t line_num) {
   uint64_t scan_fwd = 0, scan_rev = 0, i = 0;
   for (;;) {
     if (line[i] == '\0') break;
@@ -1176,7 +1176,7 @@ int check_meme_strand(const char *line, const uint64_t line_num) {
   return 0;
 }
 
-int get_meme_bkg(const char *line, const uint64_t line_num) {
+static int get_meme_bkg(const char *line, const uint64_t line_num) {
   if (args.use_user_bkg) return 0;
   double bkg_probs[] = {-1.0, -1.0, -1.0, -1.0};
   uint64_t i = 1, let_i = 0, j = 0, empty = 0;
@@ -1275,7 +1275,7 @@ int get_meme_bkg(const char *line, const uint64_t line_num) {
   return 0;
 }
 
-void parse_meme_name(const char *line, const uint64_t motif_i) {
+static void parse_meme_name(const char *line, const uint64_t motif_i) {
   uint64_t i = 5, j = 0, name_read = 0;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
     if (line[i] == ' ' && name_read) break;
@@ -1291,7 +1291,7 @@ void parse_meme_name(const char *line, const uint64_t motif_i) {
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
 }
 
-void read_meme(void) {
+static void read_meme(void) {
   motif_info.fmt = FMT_MEME;
   char *line = NULL;
   size_t len = 0;
@@ -1415,7 +1415,7 @@ void read_meme(void) {
   }
 }
 
-void parse_homer_name(const char *line, const uint64_t motif_i) {
+static void parse_homer_name(const char *line, const uint64_t motif_i) {
   uint64_t name_start = 0, name_end = 0, i = 1, in_between = 0, j = 0;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
     if (line[i] == '\t') {
@@ -1449,7 +1449,7 @@ void parse_homer_name(const char *line, const uint64_t motif_i) {
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
 }
 
-void read_homer(void) {
+static void read_homer(void) {
   motif_info.fmt = FMT_HOMER;
   char *line = NULL;
   size_t len = 0;
@@ -1493,7 +1493,7 @@ void read_homer(void) {
   }
 }
 
-int get_pwm_max(const motif_t *motif) {
+static int get_pwm_max(const motif_t *motif) {
   int max = 0, val;
   for (uint64_t pos = 0; pos < motif->size; pos++) {
     for (int let = 0; let < 4; let++) {
@@ -1504,7 +1504,7 @@ int get_pwm_max(const motif_t *motif) {
   return max;
 }
 
-int get_pwm_min(const motif_t *motif) {
+static int get_pwm_min(const motif_t *motif) {
   int min = 0, val;
   for (uint64_t pos = 0; pos < motif->size; pos++) {
     for (int let = 0; let < 4; let++) {
@@ -1515,7 +1515,7 @@ int get_pwm_min(const motif_t *motif) {
   return min;
 }
 
-void fill_pwm_rc(motif_t *motif) {
+static void fill_pwm_rc(motif_t *motif) {
   for (uint64_t pos = 0; pos < motif->size; pos++) {
     set_score_rc(motif, 'A', motif->size - 1 - pos, get_score(motif, 'T', pos, char2index));
     set_score_rc(motif, 'C', motif->size - 1 - pos, get_score(motif, 'G', pos, char2index));
@@ -1524,7 +1524,7 @@ void fill_pwm_rc(motif_t *motif) {
   }
 }
 
-void trim_motif_name(motif_t *motif) {
+static void trim_motif_name(motif_t *motif) {
   for (uint64_t i = 0; i < MAX_NAME_SIZE; i++) {
     if (motif->name[i] == ' ' || motif->name[i] == '\t' || motif->name[i] == '\0') {
       motif->name[i] = '\0';
@@ -1533,7 +1533,7 @@ void trim_motif_name(motif_t *motif) {
   }
 }
 
-void complete_motifs(void) {
+static void complete_motifs(void) {
   for (uint64_t i = 0; i < motif_info.n; i++) {
     motifs[i]->min = get_pwm_min(motifs[i]);
     motifs[i]->max = get_pwm_max(motifs[i]);
@@ -1545,7 +1545,7 @@ void complete_motifs(void) {
   }
 }
 
-void print_motif(motif_t *motif, const uint64_t n) {
+static void print_motif(motif_t *motif, const uint64_t n) {
   fprintf(files.o, "Motif: %s (N%llu L%llu)\n", motif->name, n, motif->file_line_num);
   if (motif->threshold == INT_MAX) {
     fprintf(files.o, "MaxScore=%.2f\tThreshold=%s\n",
@@ -1577,7 +1577,7 @@ void print_motif(motif_t *motif, const uint64_t n) {
       score2pval(motif, motif->max_score));
 }
 
-void parse_jaspar_name(const char *line, const uint64_t motif_i) {
+static void parse_jaspar_name(const char *line, const uint64_t motif_i) {
   uint64_t i = 0, j = 1;
   for (;;) {
     if (line[j] == '\r' || line[j] == '\n' || line[j] == '\0') break;
@@ -1588,7 +1588,7 @@ void parse_jaspar_name(const char *line, const uint64_t motif_i) {
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
 }
 
-int add_jaspar_row(motif_t *motif, const char *line) {
+static int add_jaspar_row(motif_t *motif, const char *line) {
   uint64_t row_i = -1, left_bracket = -1, right_bracket = -1, i = 0;
   char let = 'N';
   for (;;) {
@@ -1701,7 +1701,7 @@ int add_jaspar_row(motif_t *motif, const char *line) {
   return 0;
 }
 
-void pcm_to_pwm(motif_t *motif) {
+static void pcm_to_pwm(motif_t *motif) {
   int nsites = 0, nsites2;
   for (int i = 0; i < 4; i++) {
     nsites += get_score_i(motif, i, 0);
@@ -1719,7 +1719,7 @@ void pcm_to_pwm(motif_t *motif) {
         motif->name);
     }
   }
-  char lets[] = { 'A', 'C', 'G', 'T' };
+  const char lets[4] = { 'A', 'C', 'G', 'T' };
   for (uint64_t j = 0; j < motif->size; j++) {
     for (int i = 0; i < 4; i++) {
       set_score(motif, lets[i], j,
@@ -1731,7 +1731,7 @@ void pcm_to_pwm(motif_t *motif) {
   }
 }
 
-void read_jaspar(void) {
+static void read_jaspar(void) {
   motif_info.fmt = FMT_JASPAR;
   char *line = NULL;
   size_t len = 0;
@@ -1790,8 +1790,8 @@ void read_jaspar(void) {
   }
 }
 
-int add_motif_pcm_column(motif_t *motif, const char *line, const uint64_t pos) {
-  double probs[] = {-1.0, -1.0, -1.0, -1.0};
+static int add_motif_pcm_column(motif_t *motif, const char *line, const uint64_t pos) {
+  double probs[4] = {-1.0, -1.0, -1.0, -1.0};
   if (get_line_probs(motif, line, probs, 4)) return 1;
   double pcm_sum = probs[0] + probs[1] + probs[2] + probs[3];
   if (pcm_sum < 0.99) {
@@ -1806,7 +1806,7 @@ int add_motif_pcm_column(motif_t *motif, const char *line, const uint64_t pos) {
   return 0;
 }
 
-void read_hocomoco(void) {
+static void read_hocomoco(void) {
   motif_info.fmt = FMT_HOCOMOCO;
   char *line = NULL;
   size_t len = 0;
@@ -1858,7 +1858,7 @@ void read_hocomoco(void) {
   }
 }
 
-void load_motifs(void) {
+static void load_motifs(void) {
   switch (detect_motif_fmt()) {
     case FMT_MEME:     read_meme();     break;
     case FMT_HOMER:    read_homer();    break;
@@ -1891,7 +1891,7 @@ void load_motifs(void) {
   }
 }
 
-void count_bases(void) {
+static void count_bases(void) {
   for (uint64_t i = 0; i < seq_info.n; i++) {
     for (uint64_t j = 0; j < seq_sizes[i]; j++) {
       char_counts[seqs[i][j]]++;
@@ -1899,7 +1899,7 @@ void count_bases(void) {
   }
 }
 
-void count_bases_single(const unsigned char *seq, const uint64_t len) {
+static void count_bases_single(const unsigned char *seq, const uint64_t len) {
   for (uint64_t i = 0; i < len; i++) char_counts[seq[i]]++;
 }
 
@@ -1912,14 +1912,14 @@ static inline uint64_t standard_base_count(void) {
     char_counts['T'] + char_counts['t'];
 }
 
-double calc_gc(void) {
+static double calc_gc(void) {
   double gc = (double) (
     char_counts['G'] + char_counts['C'] + char_counts['g'] + char_counts['c']);
   gc /= standard_base_count();
   return gc;
 }
 
-void add_seq_name(char *name, kseq_t *kseq) {
+static void add_seq_name(char *name, kseq_t *kseq) {
   for (uint64_t i = 0; i < kseq->name.l; i++) {
     name[i] = kseq->name.s[i];
   }
@@ -1946,7 +1946,7 @@ void add_seq_name(char *name, kseq_t *kseq) {
   }
 }
 
-uint64_t peek_through_seqs(kseq_t *kseq) {
+static uint64_t peek_through_seqs(kseq_t *kseq) {
   uint64_t name_sizes = 0, max_kseq_mem = 0;
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
@@ -2044,7 +2044,7 @@ uint64_t peek_through_seqs(kseq_t *kseq) {
   return max_seq_size;
 }
 
-void load_seqs(kseq_t *kseq) {
+static void load_seqs(kseq_t *kseq) {
   uint64_t name_sizes = 0, total_kseq_mem = 0;
   int ret_val;
   while ((ret_val = kseq_read(kseq)) >= 0) {
@@ -2144,7 +2144,8 @@ void load_seqs(kseq_t *kseq) {
   }
 }
 
-int char_arrays_are_equal(const char *arr1, const char *arr2, const uint64_t len) {
+/*
+static int char_arrays_are_equal(const char *arr1, const char *arr2, const uint64_t len) {
   int are_equal = 1;
   for (uint64_t i = 0; i < len; i++) {
     if (arr1[i] == '\0' && arr2[i] == '\0') {
@@ -2157,13 +2158,14 @@ int char_arrays_are_equal(const char *arr1, const char *arr2, const uint64_t len
   }
   return are_equal;
 }
+*/
 
-void int_to_char_array(const uint64_t N, char *arr) {
+static void int_to_char_array(const uint64_t N, char *arr) {
   ERASE_ARRAY(arr, 128);
   sprintf(arr, "__N%llu", N);
 }
 
-int dedup_char_array(char *arr, const uint64_t arr_max_len, const uint64_t N) {
+static int dedup_char_array(char *arr, const uint64_t arr_max_len, const uint64_t N) {
   uint64_t arr_len = 0, dedup_len = 0, success = 0, j = 0;
   char dedup[128];
   ERASE_ARRAY(dedup, 128);
@@ -2190,7 +2192,7 @@ int dedup_char_array(char *arr, const uint64_t arr_max_len, const uint64_t N) {
   return success;
 }
 
-void find_motif_dupes(void) {
+static void find_motif_dupes(void) {
   if (motif_info.n == 1) return;
   uint64_t *is_dup = malloc(sizeof(uint64_t) * motif_info.n);
   if (is_dup == NULL) {
@@ -2249,7 +2251,7 @@ void find_motif_dupes(void) {
   free(is_dup);
 }
 
-void find_seq_dupes(void) {
+static void find_seq_dupes(void) {
   uint64_t *is_dup = malloc(sizeof(uint64_t) * seq_info.n);
   ERASE_ARRAY(is_dup, seq_info.n);
   khint64_t k;
@@ -2308,7 +2310,7 @@ void find_seq_dupes(void) {
   free(is_dup);
 }
 
-uint64_t count_fields(const char *line) {
+static uint64_t count_fields(const char *line) {
   int res = 1, i = 0;
   for (;;) {
     if (line[i] == '\0') break;
@@ -2318,7 +2320,7 @@ uint64_t count_fields(const char *line) {
   return res;
 }
 
-uint64_t count_field_size(const char *line, const uint64_t k) {
+static uint64_t count_field_size(const char *line, const uint64_t k) {
   int res = 0, i = 0, n = 0;
   for (;;) {
     if (line[i] == '\0') break;
@@ -2334,7 +2336,7 @@ uint64_t count_field_size(const char *line, const uint64_t k) {
   return res;
 }
 
-uint64_t field_start(const char *line, const uint64_t k) {
+static uint64_t field_start(const char *line, const uint64_t k) {
   int i = 0, n = 0;
   for (;;) {
     if (line[i] == '\0') break;
@@ -2348,7 +2350,7 @@ uint64_t field_start(const char *line, const uint64_t k) {
   return i;
 }
 
-uint64_t field_end(const char *line, const uint64_t k) {
+static uint64_t field_end(const char *line, const uint64_t k) {
   int i = 0, n = 0;
   for (;;) {
     if (line[i] == '\0') break;
@@ -2390,7 +2392,7 @@ static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char 
   return size_i;
 }
 
-void read_bed(void) {
+static void read_bed(void) {
   bed.seq_names = malloc(sizeof(*bed.seq_names) * ALLOC_CHUNK_SIZE);
   if (bed.seq_names == NULL) {
     badexit("Error: Failed to allocate memory for bed sequence names.");
@@ -2626,7 +2628,7 @@ void read_bed(void) {
   bed.n_empty = empty_lines;
 }
 
-void fill_bed_seq_indices(void) {
+static void fill_bed_seq_indices(void) {
   bed.seq_indices = malloc(sizeof(*bed.seq_indices) * bed.n_regions);
   if (bed.seq_indices == NULL) {
     badexit("Error: Failed to allocate memory for bed sequence indices.");
@@ -2644,7 +2646,7 @@ void fill_bed_seq_indices(void) {
   }
 }
 
-void check_bed_ranges(void) {
+static void check_bed_ranges(void) {
   for (uint64_t i = 0; i < bed.n_regions; i++) {
     if (bed.starts[i] + 1 > seq_sizes[bed.seq_indices[i]]) {
       fprintf(stderr, "Error: Range #%'llu in bed file is out of bounds on sequence %s.\n",
@@ -2664,7 +2666,7 @@ void check_bed_ranges(void) {
   }
 }
 
-void print_bed_stats(void) {
+static void print_bed_stats(void) {
   if (args.w) {
     fprintf(stderr, "%'llu line(s) total, with %'llu comment/header and %'llu empty line(s).\n",
       bed.n_lines, bed.n_comments, bed.n_empty);
@@ -2687,11 +2689,11 @@ void print_bed_stats(void) {
   free(covered_seqs);
 }
 
-void count_bases_single_in_bed(const unsigned char *seq, const uint64_t start, const uint64_t end) {
+static void count_bases_single_in_bed(const unsigned char *seq, const uint64_t start, const uint64_t end) {
   for (uint64_t i = start; i < end; i++) char_counts[seq[i]]++;
 }
 
-void print_seq_stats_single_in_bed(FILE *whereto, const uint64_t seq_i, const uint64_t seq_j) {
+static void print_seq_stats_single_in_bed(FILE *whereto, const uint64_t seq_i, const uint64_t seq_j) {
   for (uint64_t i = 0; i < bed.n_regions; i++) {
     if (bed.seq_indices[i] == seq_j) {
       ERASE_ARRAY(char_counts, 256);
@@ -2704,7 +2706,7 @@ void print_seq_stats_single_in_bed(FILE *whereto, const uint64_t seq_i, const ui
   }
 }
 
-void print_seq_stats_in_bed(FILE *whereto) {
+static void print_seq_stats_in_bed(FILE *whereto) {
   for (uint64_t i = 0; i < bed.n_regions; i++) {
     ERASE_ARRAY(char_counts, 256);
     count_bases_single_in_bed(seqs[bed.seq_indices[i]], bed.starts[i], bed.ends[i]);
@@ -2746,7 +2748,7 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
       BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, PVALUE8, SCORE9, \
       SCORE_PCT10, MATCH11_SIZE, MATCH11)
 
-void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64_t bed_i) {
+static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64_t bed_i) {
   const unsigned char *char2Xindex = args.mask ? char2maskindex : char2index;
   const unsigned char *seq = seqs[seq_loc];
   const char *seq_name = seq_names[bed.seq_indices[bed_i]];
@@ -2800,7 +2802,7 @@ void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64
       SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, SCORE_PCT8, \
       MATCH9_SIZE, MATCH9)
 
-void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_loc) {
+static void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_loc) {
   const unsigned char *char2Xindex = args.mask ? char2maskindex : char2index;
   const unsigned char *seq = seqs[seq_loc];
   const char *seq_name = seq_names[seq_i];
@@ -2832,7 +2834,7 @@ void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_lo
   }
 }
 
-void print_seq_stats_single(FILE *whereto, const uint64_t seq_i, const uint64_t seq_j) {
+static void print_seq_stats_single(FILE *whereto, const uint64_t seq_i, const uint64_t seq_j) {
   ERASE_ARRAY(char_counts, 256);
   count_bases_single(seqs[seq_i], seq_sizes[seq_j]);
   fprintf(whereto, "%llu\t%s\t", seq_j + 1, seq_names[seq_j]);
@@ -2845,7 +2847,7 @@ void print_seq_stats_single(FILE *whereto, const uint64_t seq_i, const uint64_t 
   fprintf(whereto, "%llu\n", seq_sizes[seq_j] - standard_base_count());
 }
 
-void print_seq_stats(FILE *whereto) {
+static void print_seq_stats(FILE *whereto) {
   for (uint64_t i = 0; i < seq_info.n; i++) {
     ERASE_ARRAY(char_counts, 256);
     count_bases_single(seqs[i], seq_sizes[i]);
@@ -2860,7 +2862,7 @@ void print_seq_stats(FILE *whereto) {
   }
 }
 
-void add_consensus_motif(const char *consensus) {
+static void add_consensus_motif(const char *consensus) {
   if (add_motif()) badexit("");
   ERASE_ARRAY(motifs[0]->name, MAX_NAME_SIZE);
   uint64_t i = 0;
@@ -2897,7 +2899,7 @@ void add_consensus_motif(const char *consensus) {
   complete_motifs();
 }
 
-void print_pb(const double prog) {
+static void print_pb(const double prog) {
   const int left = prog * PROGRESS_BAR_WIDTH;
   const int right = PROGRESS_BAR_WIDTH - left;
   fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
@@ -2905,7 +2907,7 @@ void print_pb(const double prog) {
   fflush(stderr);
 }
 
-void *scan_sub_process(void *thread_i) {
+static void *scan_sub_process(void *thread_i) {
   for (uint64_t i = 0; i < motif_info.n; i++) {
     motif_t *motif = motifs[i];
     if (*((int *) thread_i) == motif->thread) {

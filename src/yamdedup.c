@@ -65,12 +65,12 @@ KHASH_MAP_INIT_STR(str_h, uint64_t)
   } while (0)
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
-long peak_mem(void) {
+static long peak_mem(void) {
   return 0;
 }
 #else
 #include <sys/resource.h>
-long peak_mem(void) {
+static long peak_mem(void) {
   struct rusage r_mem;
   getrusage(RUSAGE_SELF, &r_mem);
 #ifdef __linux__
@@ -82,11 +82,11 @@ long peak_mem(void) {
 #endif
 
 #ifdef DEBUG
-uint64_t malloc_count = 0;
-uint64_t malloc_fun_counts = 0;
-uint64_t realloc_count = 0;
-uint64_t realloc_fun_counts = 0;
-void print_mem_alloc_counts(int malloc, int realloc) {
+static uint64_t malloc_count = 0;
+static uint64_t malloc_fun_counts = 0;
+static uint64_t realloc_count = 0;
+static uint64_t realloc_fun_counts = 0;
+static void print_mem_alloc_counts(int malloc, int realloc) {
   malloc_count += malloc;
   realloc_count += realloc;
   if (malloc) malloc_fun_counts += 1;
@@ -96,7 +96,7 @@ void print_mem_alloc_counts(int malloc, int realloc) {
 }
 #endif
 
-void print_peak_mb(void) {
+static void print_peak_mb(void) {
   long bytes = peak_mem();
   if (bytes > (1 << 30)) {
     fprintf(stderr, "Approx. peak memory usage: %'.2f GB.\n",
@@ -112,7 +112,7 @@ void print_peak_mb(void) {
 
 /* TODO: Give the option to specify what constitutes an overlap. */
 
-void usage(void) {
+static void usage(void) {
   printf(
     "yamdedup v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay               \n"
     "                                                                              \n"
@@ -157,7 +157,7 @@ void usage(void) {
   );
 }
 
-khash_t(str_h) *hash_tab;
+static khash_t(str_h) *hash_tab;
 
 typedef struct feat_tab_t {
   char    ***lines;
@@ -173,12 +173,12 @@ typedef struct feat_tab_t {
   uint64_t   n_total_alloc;
 } feat_tab_t;
 
-feat_tab_t feat_tab = {
+static feat_tab_t feat_tab = {
   .n_total = 0,
   .n_total_alloc = 0
 };
 
-void free_feat_tab(void) {
+static void free_feat_tab(void) {
   if (feat_tab.n_total_alloc) {
     for (uint64_t i = 0; i < feat_tab.n_total; i++) {
       if (feat_tab.n_alloc[i]) {
@@ -296,7 +296,7 @@ typedef struct args_t {
   int w : 1;
 } args_t;
 
-args_t args = {
+static args_t args = {
   .ignore_strand       = 0,
   .ignore_motif        = 0,
   .ignore_score        = 0,
@@ -315,12 +315,12 @@ typedef struct files_t {
   FILE   *o;
 } files_t;
 
-files_t files = {
+static files_t files = {
   .i_open = 0,
   .o_open = 0
 };
 
-void close_files(void) {
+static void close_files(void) {
   if (files.i_open) gzclose(files.i);
   if (files.o_open) fclose(files.o);
 }
@@ -331,11 +331,11 @@ typedef struct score2index_t {
   int      active;
 } score2index_t;
 
-score2index_t *score2index;
-uint64_t score2index_n = 0;
-uint64_t score2index_n_alloc = 0;
+static score2index_t *score2index;
+/* static uint64_t score2index_n = 0; */
+static uint64_t score2index_n_alloc = 0;
 
-void badexit(const char *msg) {
+static void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamdedup -h to see usage.\n", msg);
   close_files();
   free(score2index);
@@ -376,7 +376,7 @@ static inline uint64_t count_fields(const char *line) {
   return res;
 }
 
-int compare_scores(const void *a, const void *b) {
+static int compare_scores(const void *a, const void *b) {
   const score2index_t *a_s = (const score2index_t *) a;
   const score2index_t *b_s = (const score2index_t *) b;
   if (a_s->score < b_s->score) {
@@ -581,7 +581,7 @@ static inline int safe_strtoull(char *str, uint64_t *res) {
   }
 }
 
-void run_minidedup(void) {
+static void run_minidedup(void) {
   int ret_val;
   int is_yamscan = args.override_is_yamscan;
   int is_bed = args.override_is_bed;
@@ -796,7 +796,7 @@ error_blank:
   badexit("");
 }
 
-void print_time(const uint64_t s, const char *what) {
+static void print_time(const uint64_t s, const char *what) {
   if (s > 7200) {
     fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
   } else if (s > 120) {
