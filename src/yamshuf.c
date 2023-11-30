@@ -72,10 +72,13 @@
 
 KSEQ_INIT(gzFile, gzread)
 
-#define YAMSHUF_VERSION             "1.2"
+#define YAMSHUF_VERSION             "1.3"
 #define YAMSHUF_YEAR                 2023
 
 /* ChangeLog
+ *
+ * v1.3 (20 Nov 2023)
+ * - Reduce branching for Euler/Markov shuffling, slight speed ups
  *
  * v1.2 (18 Aug 2023)
  * - Use xoroshiro128++ intead of xoroshiro128+
@@ -384,29 +387,21 @@ static inline void count_kmers(const unsigned char *seq, const uint64_t size, ui
 }
 
 static inline uint64_t cumsum_and_pick_next_letter(const uint64_t *kmers) {
-  const uint64_t k0 =      kmers[0];
-  const uint64_t k1 = k0 + kmers[1];
-  const uint64_t k2 = k1 + kmers[2];
-  const uint64_t k3 = k2 + kmers[3];
-  const uint64_t k4 = k3 + kmers[4];
+  const uint64_t k0 = kmers[0];
+  const uint64_t k1 = kmers[0] + kmers[1];
+  const uint64_t k2 = kmers[0] + kmers[1] + kmers[2];
+  const uint64_t k3 = kmers[0] + kmers[1] + kmers[2] + kmers[3];
+  const uint64_t k4 = kmers[0] + kmers[1] + kmers[2] + kmers[3] + kmers[4];
   const uint64_t r = xrand_r(&xrng) % k4; 
-       if (r < k0) return 0;
-  else if (r < k1) return 1;
-  else if (r < k2) return 2;
-  else if (r < k3) return 3;
-  else             return 4;
+  return 4 - ((r < k0) + (r < k1) + (r < k2) + (r < k3));
 }
 
 static inline uint64_t pick_next_letter(const uint64_t *kmers) {
-  if (UNLIKELY(!kmers[4])) {
+  if (UNLIKELY(!kmers[4])) { // Can't think of how to remove this branch
     return (uint64_t) xrand_r(&xrng) % 4;
   } else {
     const uint64_t r = xrand_r(&xrng) % kmers[4]; 
-         if (r < kmers[0]) return 0;
-    else if (r < kmers[1]) return 1;
-    else if (r < kmers[2]) return 2;
-    else if (r < kmers[3]) return 3;
-    else                   return 4;
+    return 4 - ((r < kmers[0]) + (r < kmers[1]) + (r < kmers[2]) + (r < kmers[3]));
   }
 }
 

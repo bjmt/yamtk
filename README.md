@@ -381,7 +381,7 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamshuf v1.2  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
+yamshuf v1.3  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
 
 Usage:  yamshuf [options] -i sequences.fa
 
@@ -454,15 +454,15 @@ fasta-shuffle-letters -k $K 100Mbp.fa shuffled.fa
 
 |                 |   `yamshuf`    |  `yamshuf -m`  |  `yamshuf -l`  |`fasta-shuffle-letters`|
 |:---------------:|:--------------:|:--------------:|:--------------:|:---------------------:|
-| 10x10Mbp, k = 1 | 0.75s, 19.46MB |      (n/a)     |      (n/a)     |     0.66s,  52.82MB   |
-| 10x10Mbp, k = 2 | 2.10s, 19.49MB | 1.77s, 19.49MB | 0.43s, 19.52MB |     2.62s, 416.46MB   |
-| 10x10Mbp, k = 3 | 2.11s, 19.42MB | 1.87s, 19.42MB | 0.38s, 19.42MB |     3.40s, 416.50MB   |
-| 10x10Mbp, k = 4 | 2.19s, 19.49MB | 1.88s, 19.42MB | 0.33s, 19.42MB |     4.36s, 416.50MB   |
-| 10x10Mbp, k = 5 | 2.24s, 19.46MB | 2.17s, 19.47MB | 0.32s, 19.42MB |     6.86s, 425.68MB   |
-| 10x10Mbp, k = 6 | 2.33s, 19.66MB | 2.04s, 19.55MB | 0.33s, 19.42MB |    13.42s, 416.98MB   |
-| 10x10Mbp, k = 7 | 2.84s, 20.35MB | 2.51s, 20.05MB | 0.32s, 19.42MB |    33.55s, 418.54MB   |
-| 10x10Mbp, k = 8 | 3.07s, 23.87MB | 2.72s, 22.54MB | 0.32s, 19.46MB |       (not run)       |
-| 10x10Mbp, k = 9 | 5.51s, 41.26MB | 4.76s, 34.72MB | 0.30s, 19.42MB |       (not run)       |
+| 10x10Mbp, k = 1 | 0.40s, 19.46MB |      (n/a)     |      (n/a)     |     0.63s,  52.82MB   |
+| 10x10Mbp, k = 2 | 1.80s, 19.49MB | 1.66s, 19.49MB | 0.36s, 19.52MB |     2.62s, 416.46MB   |
+| 10x10Mbp, k = 3 | 1.89s, 19.42MB | 1.70s, 19.42MB | 0.32s, 19.42MB |     3.40s, 416.50MB   |
+| 10x10Mbp, k = 4 | 1.93s, 19.49MB | 1.71s, 19.42MB | 0.30s, 19.42MB |     4.36s, 416.50MB   |
+| 10x10Mbp, k = 5 | 2.01s, 19.46MB | 1.87s, 19.47MB | 0.29s, 19.42MB |     6.86s, 425.68MB   |
+| 10x10Mbp, k = 6 | 2.06s, 19.66MB | 1.77s, 19.55MB | 0.34s, 19.42MB |    13.42s, 416.98MB   |
+| 10x10Mbp, k = 7 | 2.53s, 20.35MB | 2.25s, 20.05MB | 0.30s, 19.42MB |    33.55s, 418.54MB   |
+| 10x10Mbp, k = 8 | 2.63s, 23.87MB | 2.32s, 22.54MB | 0.28s, 19.46MB |       (not run)       |
+| 10x10Mbp, k = 9 | 5.51s, 41.26MB | 4.56s, 34.72MB | 0.30s, 19.42MB |       (not run)       |
 
 For some reason the `fasta-shuffle-letters` program is very memory hungry, much
 more so than the original uShuffle program. However the standalone uShuffle
