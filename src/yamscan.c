@@ -36,10 +36,13 @@ KSEQ_INIT(gzFile, gzread)
 KHASH_MAP_INIT_STR(seq_str_h, uint64_t);
 KHASH_SET_INIT_STR(motif_str_h);
 
-#define YAMSCAN_VERSION                    "1.7"
-#define YAMSCAN_YEAR                        2023
+#define YAMSCAN_VERSION                    "1.8"
+#define YAMSCAN_YEAR                        2025
 
 /* ChangeLog
+ * 
+ * v1.8 (February 2025)
+ * - Make the BED reader more tolerant of incorrect whitespace characters.
  *
  * v1.7 (September 2023)
  * - Add option to mask lower case letters and skip scanning via -M
@@ -2377,7 +2380,7 @@ void print_bed(void) {
 }
 */
 
-static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char *field) {
+static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char *field, const int no_spaces) {
   uint64_t start_i = field_start(line, k);
   uint64_t end_i = field_end(line, k);
   uint64_t size_i = count_field_size(line, k);
@@ -2385,8 +2388,12 @@ static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char 
   ERASE_ARRAY(field, MOTIF_VALUE_MAX_CHAR);
   if (size_i > 0) {
     for (uint64_t i = start_i; i <= end_i; i++) {
-      field[field_it] = line[i];
-      field_it++;
+      if (no_spaces && isspace(line[i])) {
+        size_i--;
+      } else {
+        field[field_it] = line[i];
+        field_it++;
+      }
     }
   }
   return size_i;
@@ -2497,14 +2504,14 @@ static void read_bed(void) {
       badexit("Error: Encountered line in bed with fewer than 3 tab-separated fields.");
     }
     if (n_fields >= 6) {
-      if ((field_size = parse_bed_field(line.s, 6, tmp_field)) != 1) {
+      if ((field_size = parse_bed_field(line.s, 6, tmp_field, 1)) != 1) {
         ks_destroy(kbed);
-        fprintf(stderr, "Error: Line %'llu in bed does not have a single character in the strand field (found %llu).",
-          line_num, field_size);
+        fprintf(stderr, "Error: Line %'llu in bed does not have a single character in the strand field (found %llu: '%s').",
+          line_num, field_size, tmp_field);
         badexit("");
       } else if (tmp_field[0] != '+' && tmp_field[0] != '-' && tmp_field[0] != '.') {
         ks_destroy(kbed);
-        fprintf(stderr, "Error: Line %'llu in bed has an incorrect strand character (found %s, need +/-/.).",
+        fprintf(stderr, "Error: Line %'llu in bed has an incorrect strand character (found '%s', need +/-/.).",
           line_num, tmp_field);
         badexit("");
       }
@@ -2512,7 +2519,7 @@ static void read_bed(void) {
     } else {
       bed.strands[bed.n_regions] = '.';
     }
-    if (parse_bed_field(line.s, 2, tmp_field) == 0) {
+    if (parse_bed_field(line.s, 2, tmp_field, 1) == 0) {
       ks_destroy(kbed);
       fprintf(stderr, "Error: Line %'llu in bed has an empty start field.", line_num);
       badexit("");
@@ -2520,11 +2527,11 @@ static void read_bed(void) {
     if (str_to_uint64_t(tmp_field, &tmp_value)) {
       ks_destroy(kbed);
       fprintf(stderr, "Error: Failed to parse bed start value on line %'llu.\n", line_num);
-      fprintf(stderr, "  Line: %s\n  Bad value: %s", line.s, tmp_field);
+      fprintf(stderr, "  Line: %s\n  Bad value: '%s'", line.s, tmp_field);
       badexit("");
     }
     bed.starts[bed.n_regions] = tmp_value;
-    if (parse_bed_field(line.s, 3, tmp_field) == 0) {
+    if (parse_bed_field(line.s, 3, tmp_field, 1) == 0) {
       ks_destroy(kbed);
       fprintf(stderr, "Error: Line %'llu in bed has an empty end field.", line_num);
       badexit("");
@@ -2532,7 +2539,7 @@ static void read_bed(void) {
     if (str_to_uint64_t(tmp_field, &tmp_value)) {
       ks_destroy(kbed);
       fprintf(stderr, "Error: Failed to parse bed end value on line %'llu.\n", line_num);
-      fprintf(stderr, "  Line: %s\n  Bad value: %s", line.s, tmp_field);
+      fprintf(stderr, "  Line: %s\n  Bad value: '%s'", line.s, tmp_field);
       badexit("");
     }
     bed.ends[bed.n_regions] = tmp_value;
@@ -2542,7 +2549,7 @@ static void read_bed(void) {
       badexit("");
     }
     if (n_fields >= 4) {
-      if ((field_size = parse_bed_field(line.s, 4, tmp_field)) == 0) {
+      if ((field_size = parse_bed_field(line.s, 4, tmp_field, 0)) == 0) {
         ks_destroy(kbed);
         fprintf(stderr, "Error: Line %'llu in bed has an empty range name.", line_num);
         badexit("");
@@ -2580,7 +2587,7 @@ static void read_bed(void) {
       bed.range_names[bed.n_regions][0] = '.';
       bed.range_names[bed.n_regions][1] = '\0';
     }
-    if ((field_size = parse_bed_field(line.s, 1, tmp_field)) == 0) {
+    if ((field_size = parse_bed_field(line.s, 1, tmp_field, 0)) == 0) {
       ks_destroy(kbed);
       free(bed.range_names[bed.n_regions]);
       fprintf(stderr, "Error: Line %'llu in bed has an empty sequence name.", line_num);
