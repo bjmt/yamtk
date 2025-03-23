@@ -285,15 +285,15 @@ static inline int alloc_more_to_feat_tab(void) {
 }
 
 typedef struct args_t {
-  int ignore_strand : 1;
-  int ignore_motif : 1;
-  int ignore_score : 1;
-  int reverse_sort : 1;
-  int sort_sizes : 1;
-  int override_is_yamscan : 1;
-  int override_is_bed : 1;
-  int v : 1;
-  int w : 1;
+  int ignore_strand;
+  int ignore_motif;
+  int ignore_score;
+  int reverse_sort;
+  int sort_sizes;
+  int override_is_yamscan;
+  int override_is_bed;
+  int v;
+  int w;
 } args_t;
 
 static args_t args = {
@@ -309,8 +309,8 @@ static args_t args = {
 };
 
 typedef struct files_t {
-  int     i_open : 1;
-  int     o_open : 1;
+  int     i_open;
+  int     o_open;
   gzFile  i;
   FILE   *o;
 } files_t;

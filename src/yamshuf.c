@@ -230,14 +230,14 @@ static void usage(void) {
 typedef struct args_t {
   int      k;
   int      seed;
-  int      reset_seed : 1;
-  int      use_markov : 1;
-  int      use_linear : 1;
-  /* int      leave_gaps : 1; */
-  int      rna_out : 1;
-  int      v : 1;
-  int      w : 1;
-  int      print_kmers : 1;
+  int      reset_seed;
+  int      use_markov;
+  int      use_linear;
+  /* int      leave_gaps; */
+  int      rna_out;
+  int      v;
+  int      w;
+  int      print_kmers;
   int      shuf_repeats;
   uint64_t window_step;
   uint64_t window_overlap;
@@ -260,8 +260,8 @@ static args_t args = {
 };
 
 typedef struct files_t {
-  int    s_open : 1;
-  int    o_open : 1;
+  int    s_open;
+  int    o_open;
   gzFile s;
   FILE  *o;
 } files_t;

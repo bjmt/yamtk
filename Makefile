@@ -11,15 +11,16 @@ release: yamdedup yamscan yamshuf
 debug: CFLAGS+=-g -Og -Wall -Wextra -Wdouble-promotion -Wno-sign-compare -fsanitize=address,undefined -fno-omit-frame-pointer -DDEBUG -Wcast-qual
 debug: yamdedup yamscan yamshuf
 
+clean:
+	-rm -f ./src/*.o
+	-rm -f ./yamdedup ./yamscan ./yamshuf
+
 yamdedup: src/yamdedup.c
-	mkdir -p bin ;\
-	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o $@
 
 yamscan: src/yamscan.c
-	mkdir -p bin ;\
-	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o $@
 
 yamshuf: src/yamshuf.c
-	mkdir -p bin ;\
-	$(CC) $(CFLAGS) $(LDLIBS) $^ -o bin/$@
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o $@
 
