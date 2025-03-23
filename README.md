@@ -15,7 +15,7 @@ cd yam-toolkit
 make
 ```
 
-This will create the final binaries in `bin/` within the project folder.
+This will create the final binaries within the project folder.
 
 ## Motivation
 
@@ -126,7 +126,7 @@ One can also use yamscan to get basic information about motifs and sequences.
 By only using yamscan with one of these at a time, the following is output:
 
 ```sh
-$ bin/yamscan -m test/motif.jaspar
+$ yamscan -m test/motif.jaspar
 ----------------------------------------
 Motif: 1-motifA (N1 L1)
 MaxScore=6.64	Threshold=[exceeds max]
@@ -144,13 +144,13 @@ Score=3.32	-->     p=0.022
 Score=6.64	-->     p=0.00098
 ----------------------------------------
 
-$ bin/yamscan -s test/dna.fa
+$ yamscan -s test/dna.fa
 ##seq_num	seq_name	size	gc_pct	n_count
 1	1	55	49.09	0
 2	2	70	45.71	0
 3	3	33	39.39	0
 
-$ bin/yamscan -s test/dna.fa -x test/dna.bed
+$ yamscan -s test/dna.fa -x test/dna.bed
 ##bed_range	bed_name	seq_num	seq_name	size	gc_pct	n_count
 1:1-35(+)	A	1	1	35	51.43	0
 2:11-48(-)	B	2	2	38	50.00	0
@@ -198,7 +198,7 @@ motif		3	28	32	+	3.69903	0.0195		GTCTA
 
 yamscan (also manually setting the nsites value found in the motif file):
 ```sh
-$ bin/yamscan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
+$ yamscan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
 ##yamscan v1.5 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
@@ -325,7 +325,7 @@ Usage:  yamdedup [options] -i [ results.txt | ranges.bed ]
 Let us consider the following basic scenario:
 
 ```sh
-$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
+$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
 ##yamscan v1.5 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
@@ -338,7 +338,7 @@ In this example we can see that all three hits overlap, but the middle hit has
 a much worse score. yamdedup will recognize this and simply remove only that hit:
 
 ```sh
-$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | bin/yamdedup -i-
+$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | yamdedup -i-
 ##yamscan v1.5 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
@@ -349,7 +349,7 @@ $ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | bin/yamded
 Again, yamdedup won't mind if the input is a properly formatted BED file:
 
 ```sh
-$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | bin/yamdedup -i-
+$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | yamdedup -i-
 1	2	7	1-motifA	12	+	1.459	22.0	0.060546875	.
 1	10	15	1-motifA	11	+	1.236	18.6	0.0654296875	.
 ```
@@ -359,7 +359,7 @@ For example, the default behaviour for BED files is to prioritize keeping
 higher scores, but this can be reversed using `-r`:
 
 ```sh
-$ bin/yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | bin/yamdedup -i- -r
+$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | yamdedup -i- -r
 1	6	11	1-motifA	7	+	-1.165	-17.6	0.1640625	.
 ```
 
@@ -547,7 +547,7 @@ coordinate sorted with `sort_coord.sh`, and finally converted to BED with
 `to_bed.sh`:
 
 ```sh
-bin/yamscan -t 0.05 -m test/motif.homer -s test/dna.fa \
+yamscan -t 0.05 -m test/motif.homer -s test/dna.fa \
   | scripts/flip_rc.sh \
   | scripts/add_qvals.sh \
   | scripts/dedup_hits.sh \
