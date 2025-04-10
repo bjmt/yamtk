@@ -1,4 +1,4 @@
-# yam-toolkit: Yet Another Motif toolkit
+# yamtk: Yet Another Motif ToolKit
 
 * Motif scanning: [yamscan](#yamscan)
 * Deduplicate overlapping motif hits: [yamdedup](#yamdedup)
@@ -10,8 +10,8 @@
 Requires a C compiler (tested with gcc/clang), GNU Make, and [Zlib](https://zlib.net).
 
 ```sh
-git clone https://github.com/bjmt/yam-toolkit  # Or download a recent release
-cd yam-toolkit
+git clone https://github.com/bjmt/yamtk  # Or download a recent release
+cd yamtk
 make
 ```
 
