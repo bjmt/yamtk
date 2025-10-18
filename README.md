@@ -15,7 +15,8 @@ cd yamtk
 make
 ```
 
-This will create the final binaries within the project folder.
+This will create the final binary within the project folder. Use `make install`
+to move it to `/usr/local/bin`.
 
 ## Motivation
 
