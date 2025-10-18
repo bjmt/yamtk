@@ -1,8 +1,8 @@
 # yamtk: Yet Another Motif ToolKit
 
-* Motif scanning: [yamscan](#yamscan)
-* Deduplicate overlapping motif hits: [yamdedup](#yamdedup)
-* Higher-order sequence shuffling: [yamshuf](#yamshuf)
+* Motif scanning: [yamtk scan](#yamscan)
+* Deduplicate overlapping motif hits: [yamtk dedup](#yamdedup)
+* Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
 ## Installation
@@ -39,9 +39,8 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamscan v1.7  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
-
-Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
+yamtk v2.0.0  Copyright (C) 2025  Benjamin Jean-Marie Tremblay
+Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
  -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,
             JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-50 bases wide.
@@ -110,7 +109,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##yamscan v1.5 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.0.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -126,7 +125,7 @@ One can also use yamscan to get basic information about motifs and sequences.
 By only using yamscan with one of these at a time, the following is output:
 
 ```sh
-$ yamscan -m test/motif.jaspar
+$ yamtk scan -m test/motif.jaspar
 ----------------------------------------
 Motif: 1-motifA (N1 L1)
 MaxScore=6.64	Threshold=[exceeds max]
@@ -144,13 +143,13 @@ Score=3.32	-->     p=0.022
 Score=6.64	-->     p=0.00098
 ----------------------------------------
 
-$ yamscan -s test/dna.fa
+$ yamtk scan -s test/dna.fa
 ##seq_num	seq_name	size	gc_pct	n_count
 1	1	55	49.09	0
 2	2	70	45.71	0
 3	3	33	39.39	0
 
-$ yamscan -s test/dna.fa -x test/dna.bed
+$ yamtk scan -s test/dna.fa -x test/dna.bed
 ##bed_range	bed_name	seq_num	seq_name	size	gc_pct	n_count
 1:1-35(+)	A	1	1	35	51.43	0
 2:11-48(-)	B	2	2	38	50.00	0
@@ -168,7 +167,7 @@ speed-ups to the runtime proportional to the fraction of the input sequences
 being scanned. Example output:
 
 ```
-##yamscan v1.5 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
+##yamscan v2.0.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
 ##MotifCount=1 MotifSize=5 BedCount=2 BedSize=73 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##bed_range	bed_name	seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1:1-35(+)	A	1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -198,8 +197,8 @@ motif		3	28	32	+	3.69903	0.0195		GTCTA
 
 yamscan (also manually setting the nsites value found in the motif file):
 ```sh
-$ yamscan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
-##yamscan v1.5 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+$ yamtk scan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
+##yamscan v2.0.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
@@ -222,11 +221,11 @@ record time elapsed and peak memory usage. fimo is from MEME v5.4.1.
 
 Default yamscan settings (low-mem mode active):
 ```sh
-yamscan -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+yamtk scan -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 ```
-yamscan with multi-threading (and low-mem mode implicitly disabled):
+yamtk scan with multi-threading (and low-mem mode implicitly disabled):
 ```sh
-yamscan -j4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
+yamtk scan -j4 -v -t 0.0001 -m motifs.txt -s seqs.fa > res.txt
 ```
 fimo with Q-values disabled and immediate printing of results:
 ```sh
@@ -290,9 +289,8 @@ memory at a time.
 ### Usage
 
 ```sh
-yamdedup v1.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay               
-                                                                              
-Usage:  yamdedup [options] -i [ results.txt | ranges.bed ]                    
+yamtk v2.0.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay               
+Usage:  yamtk dedup [options] -i [ results.txt | ranges.bed ]                    
                                                                               
  -i <str>   Filename of yamscan results file or a tab-delimited BED file      
             with at least six columns: (1) sequence name, (2) 0-based start,  
@@ -325,8 +323,8 @@ Usage:  yamdedup [options] -i [ results.txt | ranges.bed ]
 Let us consider the following basic scenario:
 
 ```sh
-$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
-##yamscan v1.5 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+$ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
+##yamscan v2.0.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
@@ -338,8 +336,8 @@ In this example we can see that all three hits overlap, but the middle hit has
 a much worse score. yamdedup will recognize this and simply remove only that hit:
 
 ```sh
-$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | yamdedup -i-
-##yamscan v1.5 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+$ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | yamtk dedup -i-
+##yamscan v2.0.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
@@ -349,7 +347,7 @@ $ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | yamdedup -i-
 Again, yamdedup won't mind if the input is a properly formatted BED file:
 
 ```sh
-$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | yamdedup -i-
+$ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | yamtk dedup -i-
 1	2	7	1-motifA	12	+	1.459	22.0	0.060546875	.
 1	10	15	1-motifA	11	+	1.236	18.6	0.0654296875	.
 ```
@@ -359,7 +357,7 @@ For example, the default behaviour for BED files is to prioritize keeping
 higher scores, but this can be reversed using `-r`:
 
 ```sh
-$ yamscan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | yamdedup -i- -r
+$ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | scripts/to_bed.sh | yamtk dedup -i- -r
 1	6	11	1-motifA	7	+	-1.165	-17.6	0.1640625	.
 ```
 
@@ -381,9 +379,8 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamshuf v1.3  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
-
-Usage:  yamshuf [options] -i sequences.fa
+yamtk v2.0.0  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
+Usage:  yamtk shuf [options] -i sequences.fa
 
  -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences
             to scan. Can be gzipped. Use '-' for stdin.  Non-standard
@@ -437,15 +434,15 @@ record time elapsed and peak memory usage. A fasta file containing 10 sequences
 
 Default yamshuf settings (Euler shuffling, or regular Fisher-Yates for k = 1):
 ```sh
-yamshuf -k $K -i 100Mbp.fa > shuffled.fa
+yamtk shuf -k $K -i 100Mbp.fa > shuffled.fa
 ```
-yamshuf with Markov shuffling:
+yamtk shuf with Markov shuffling:
 ```sh
-yamshuf -m -k $K -i 100Mbp.fa > shuffled.fa
+yamtk shuf -m -k $K -i 100Mbp.fa > shuffled.fa
 ```
-yamshuf with linear shuffling:
+yamtk shuf with linear shuffling:
 ```sh
-yamshuf -l -k $K -i 100Mbp.fa > shuffled.fa
+yamtk shuf -l -k $K -i 100Mbp.fa > shuffled.fa
 ```
 MEME v5.4.1 `fasta-shuffle-letters` tool (using the uShuffle library):
 ```sh
@@ -530,7 +527,7 @@ $ SORT_ARGS="--buffer-size=1G" scripts/add_qvals.sh < results.txt
   can be useful if you wish to see matches from the strand the motif was
   matched from, as the default is to always return the sequence from the forward
   strand.
-- `std_kmers.sh`: Filter the output of `yamshuf -p` to only include k-mers
+- `std_kmers.sh`: Filter the output of `yamtk shuf -p` to only include k-mers
   containing standard letters (ACGT or ACGU).
 - `to_bed.sh`: Convert the results to a BED6+4 format.
 - `to_gff3.sh`: Convert the results to GFF3.

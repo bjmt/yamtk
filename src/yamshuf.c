@@ -69,6 +69,7 @@
 #include <stdint.h>
 #include <zlib.h>
 #include "kseq.h"
+#include "version.h"
 
 KSEQ_INIT(gzFile, gzread)
 
@@ -188,9 +189,8 @@ static void print_time(const uint64_t s, const char *what) {
 
 static void usage(void) {
   printf(
-    "yamshuf v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay                \n"
-    "                                                                              \n"
-    "Usage:  yamshuf [options] -i sequences.fa                                     \n"
+    "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay             \n"
+    "Usage:  yamtk shuf [options] -i sequences.fa                                  \n"
     "                                                                              \n"
     " -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences \n"
     "            to scan. Can be gzipped. Use '-' for stdin.  Non-standard         \n"
@@ -223,7 +223,7 @@ static void usage(void) {
     " -v         Verbose mode.                                                     \n"
     " -w         Very verbose mode.                                                \n"
     " -h         Print this help message.                                          \n"
-    , YAMSHUF_VERSION, YAMSHUF_YEAR, DEFAULT_K, MAX_K, DEFAULT_SEED //, GAP_CHARS
+    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_K, MAX_K, DEFAULT_SEED //, GAP_CHARS
   );
 }
 
@@ -548,7 +548,7 @@ static void print_kmer_table_header(const uint64_t k, const int is_dna) {
   fputc('\n', files.o);
 }
 
-int main(int argc, char **argv) {
+int main_shuf(int argc, char **argv) {
 
   kseq_t *kseq;
   int opt;
@@ -895,6 +895,7 @@ error_shuffle:
   }
   kseq_destroy(kseq);
   badexit("");
+  return EXIT_FAILURE;
 
 }
 

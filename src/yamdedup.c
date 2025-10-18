@@ -28,12 +28,10 @@
 #include <zlib.h>
 #include "kseq.h"
 #include "khash.h"
+#include "version.h"
 
 KSEQ_INIT(gzFile, gzread)
 KHASH_MAP_INIT_STR(str_h, uint64_t)
-
-#define YAMDEDUP_VERSION            "1.0"
-#define YAMDEDUP_YEAR                2022
 
 /* Maximum number of characters allowed for motif names */
 #define MAX_NAME_SIZE           ((uint64_t) 256)
@@ -114,9 +112,8 @@ static void print_peak_mb(void) {
 
 static void usage(void) {
   printf(
-    "yamdedup v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay               \n"
-    "                                                                              \n"
-    "Usage:  yamdedup [options] -i [ results.txt | ranges.bed ]                    \n"
+    "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay            \n"
+    "Usage:  yamtk dedup [options] -i [ results.txt | ranges.bed ]                 \n"
     "                                                                              \n"
     " -i <str>   Filename of yamscan results file or a tab-delimited BED file      \n"
     "            with at least six columns: (1) sequence name, (2) 0-based start,  \n"
@@ -153,7 +150,7 @@ static void usage(void) {
     " -v         Verbose mode.                                                     \n"
     " -w         Very verbose mode.                                                \n"
     " -h         Print this help message.                                          \n"
-    , YAMDEDUP_VERSION, YAMDEDUP_YEAR
+    , YAMTK_VERSION, YAMTK_YEAR
   );
 }
 
@@ -806,7 +803,7 @@ static void print_time(const uint64_t s, const char *what) {
   }
 }
 
-int main(int argc, char **argv) {
+int main_dedup(int argc, char **argv) {
 
   int opt;
   int use_stdout = 1, has_input = 0;

@@ -31,13 +31,11 @@
 #include <zlib.h>
 #include "kseq.h"
 #include "khash.h"
+#include "version.h"
 
 KSEQ_INIT(gzFile, gzread)
 KHASH_MAP_INIT_STR(seq_str_h, uint64_t);
 KHASH_SET_INIT_STR(motif_str_h);
-
-#define YAMSCAN_VERSION                    "1.8"
-#define YAMSCAN_YEAR                        2025
 
 /* ChangeLog
  * 
@@ -258,12 +256,11 @@ static void print_time(const uint64_t s, const char *what) {
 
 static void usage(void) {
   printf(
-    "yamscan v%s  Copyright (C) %d  Benjamin Jean-Marie Tremblay                \n"
-    "                                                                              \n"
-    "Usage:  yamscan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa    \n"
+    "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay             \n"
+    "Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa \n"
     "                                                                              \n"
     " -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,\n"
-    "            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-%llu bases wide.          \n"
+    "            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-%llu bases wide.         \n"
     " -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters\n"
     "            are allowed. Must be 1-%llu bases wide. The -b, -t, -0, -p, and -n\n"
     "            flags are unused.                                                 \n"
@@ -315,7 +312,7 @@ static void usage(void) {
     " -v         Verbose mode.                                                     \n"
     " -w         Very verbose mode.                                                \n"
     " -h         Print this help message.                                          \n"
-    , YAMSCAN_VERSION, YAMSCAN_YEAR, MAX_MOTIF_SIZE / 5, MAX_MOTIF_SIZE / 5,
+    , YAMTK_VERSION, YAMTK_YEAR, MAX_MOTIF_SIZE / 5, MAX_MOTIF_SIZE / 5,
       DEFAULT_PVALUE, DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES
   );
 }
@@ -2165,7 +2162,7 @@ static int char_arrays_are_equal(const char *arr1, const char *arr2, const uint6
 
 static void int_to_char_array(const uint64_t N, char *arr) {
   ERASE_ARRAY(arr, 128);
-  sprintf(arr, "__N%llu", N);
+  snprintf(arr, 128, "__N%llu", N);
 }
 
 static int dedup_char_array(char *arr, const uint64_t arr_max_len, const uint64_t N) {
@@ -2944,7 +2941,7 @@ static void *scan_sub_process(void *thread_i) {
   return NULL;
 }
 
-int main(int argc, char **argv) {
+int main_scan(int argc, char **argv) {
 
   motifs = malloc(sizeof(*motifs) * ALLOC_CHUNK_SIZE);
   if (motifs == NULL) {
@@ -3278,7 +3275,7 @@ int main(int argc, char **argv) {
 
   if (has_seqs && has_motifs) {
 
-    fprintf(files.o, "##yamscan v%s [ ", YAMSCAN_VERSION);
+    fprintf(files.o, "##yamscan v%s [ ", YAMTK_VERSION);
     for (uint64_t i = 1; i < argc; i++) {
       fprintf(files.o, "%s ", argv[i]);
     }
