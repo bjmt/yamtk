@@ -9,7 +9,7 @@ jobs:
       - name: clone
         uses: actions/checkout@v4
       - name: build
-        run: make libz libBigWig && make release
+        run: make
       - name: test
         run: ./yamtk version
   ubuntu:
@@ -22,6 +22,6 @@ jobs:
       - name: clone
         uses: actions/checkout@v4
       - name: build
-        run: make libz libBigWig && make release
+        run: make
       - name: test
         run: ./yamtk version
