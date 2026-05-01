@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <time.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <math.h>
 #include <zlib.h>
 #include "kseq.h"
@@ -89,7 +90,7 @@ static void print_mem_alloc_counts(int malloc, int realloc) {
   realloc_count += realloc;
   if (malloc) malloc_fun_counts += 1;
   if (realloc) realloc_fun_counts += 1;
-  fprintf(stderr, "[DEBUG] malloc count: %'llu (%'llu)  realloc count: %'llu (%'llu)\n",
+  fprintf(stderr, "[DEBUG] malloc count: %'" PRIu64 " (%'" PRIu64 ")  realloc count: %'" PRIu64 " (%'" PRIu64 ")\n",
       malloc_fun_counts, malloc_count, realloc_fun_counts, realloc_count);
 }
 #endif
@@ -166,6 +167,7 @@ typedef struct feat_tab_t {
   double   **scores;
   uint64_t  *n;
   uint64_t  *n_alloc;
+  uint64_t  *max_end;
   uint64_t   n_total;
   uint64_t   n_total_alloc;
 } feat_tab_t;
@@ -201,10 +203,13 @@ static void free_feat_tab(void) {
   free(feat_tab.scores);
   free(feat_tab.n);
   free(feat_tab.n_alloc);
-  for (khint64_t k = 0; k < kh_end(hash_tab); k++) {
-    if (kh_exist(hash_tab, k)) free((char *) kh_key(hash_tab, k));
+  free(feat_tab.max_end);
+  if (hash_tab) {
+    for (khint64_t k = 0; k < kh_end(hash_tab); k++) {
+      if (kh_exist(hash_tab, k)) free((char *) kh_key(hash_tab, k));
+    }
+    kh_destroy(str_h, hash_tab);
   }
-  kh_destroy(str_h, hash_tab);
 }
 
 static inline int alloc_more_to_feat_one(const uint64_t i) {
@@ -250,6 +255,7 @@ static inline int alloc_more_to_feat_one(const uint64_t i) {
     }
     feat_tab.n[i] = 0;
     feat_tab.n_alloc[i] = 0;
+    feat_tab.max_end[i] = 0;
   }
   feat_tab.n_alloc[i] += ALLOC_CHUNK_SIZE;
   return 0;
@@ -266,6 +272,7 @@ static inline int alloc_more_to_feat_tab(void) {
     REALLOC_OR_RET1(feat_tab.scores, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, double *);
     REALLOC_OR_RET1(feat_tab.n, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t);
     REALLOC_OR_RET1(feat_tab.n_alloc, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t);
+    REALLOC_OR_RET1(feat_tab.max_end, ALLOC_CHUNK_SIZE + feat_tab.n_total_alloc, uint64_t);
   } else {
     MALLOC_OR_RET1(feat_tab.lines, sizeof(char **) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.seq_name, sizeof(char *) * ALLOC_CHUNK_SIZE);
@@ -276,6 +283,7 @@ static inline int alloc_more_to_feat_tab(void) {
     MALLOC_OR_RET1(feat_tab.scores, sizeof(double *) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.n, sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
     MALLOC_OR_RET1(feat_tab.n_alloc, sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
+    MALLOC_OR_RET1(feat_tab.max_end, sizeof(uint64_t) * ALLOC_CHUNK_SIZE);
   }
   feat_tab.n_total_alloc += ALLOC_CHUNK_SIZE;
   return 0;
@@ -342,7 +350,7 @@ static void badexit(const char *msg) {
 
 static inline void print_progress(const uint64_t n_ranges, const uint64_t n_discarded) {
   if (n_ranges % PROGRESS_TRIGGER == 0) {
-    fprintf(stderr, "Processed %'llu ranges (%'llu discarded) ...\n",
+    fprintf(stderr, "Processed %'" PRIu64 " ranges (%'" PRIu64 " discarded) ...\n",
         n_ranges, n_discarded);
   }
 }
@@ -379,6 +387,10 @@ static int compare_scores(const void *a, const void *b) {
   if (a_s->score < b_s->score) {
     return 1;
   } else if (a_s->score > b_s->score) {
+    return -1;
+  } else if (a_s->index > b_s->index) {
+    return 1;
+  } else if (a_s->index < b_s->index) {
     return -1;
   } else {
     return 0;
@@ -443,6 +455,7 @@ static inline uint64_t dedup_and_purge_feat(const uint64_t i) {
     }
   }
   feat_tab.n[i] = 0;
+  feat_tab.max_end[i] = 0;
   return n_discarded;
 }
 
@@ -474,7 +487,7 @@ static inline uint64_t find_matching_feat(const char *seq, const char *motif, co
   }
   if (args.w) {
     fprintf(stderr,
-      "Found new seq/strand/motif combination (#%'llu):\n    %s(%c): %s\n",
+      "Found new seq/strand/motif combination (#%'" PRIu64 "):\n    %s(%c): %s\n",
       feat_tab.n_total + 1, seq, strand, motif);
   }
   if (feat_tab.n_total + 1 > feat_tab.n_total_alloc && alloc_more_to_feat_tab()) {
@@ -506,6 +519,7 @@ static inline int push_feat_tab(const uint64_t i, char *line, const uint64_t sta
   feat_tab.ends[i][feat_tab.n[i]] = end;
   feat_tab.lines[i][feat_tab.n[i]] = line;
   feat_tab.n[i] += 1;
+  if (end > feat_tab.max_end[i]) feat_tab.max_end[i] = end;
   return 0;
 }
 
@@ -533,10 +547,10 @@ static inline uint64_t extract_field(const char *line, const uint64_t k, char *f
 
 static inline int check_field_size(const uint64_t size, const uint64_t line_num) {
   if (!size) {
-    fprintf(stderr, "Error: Found empty field on line #%'llu.", line_num);
+    fprintf(stderr, "Error: Found empty field on line #%'" PRIu64 ".", line_num);
     return 1;
-  } else if (size > FIELD_MAX_CHAR) {
-    fprintf(stderr, "Error: Field on line #%'llu exceeds max allowed size (%'llu>%'llu).",
+  } else if (size >= FIELD_MAX_CHAR) {
+    fprintf(stderr, "Error: Field on line #%'" PRIu64 " exceeds max allowed size (%'" PRIu64 ">=%'" PRIu64 ").",
       line_num, size, FIELD_MAX_CHAR);
     return 1;
   }
@@ -601,7 +615,7 @@ static void run_minidedup(void) {
   while ((ret_val = ks_getuntil(kinput, '\n', &line, 0)) >= 0) {
     n_lines += 1;
     if (line.l > LINE_MAX_CHAR) {
-      fprintf(stderr, "Error: Line #%'llu exceeded max allowed line length (%'zu>%'llu).\n",
+      fprintf(stderr, "Error: Line #%'" PRIu64 " exceeded max allowed line length (%'zu>%'" PRIu64 ").\n",
         n_lines, line.l, LINE_MAX_CHAR);
       goto error_blank;
     }
@@ -637,11 +651,11 @@ static void run_minidedup(void) {
     }
     n_fields = count_fields(line.s);
     if (is_yamscan && n_fields < 9) {
-      fprintf(stderr, "Error: Found too few fields at line %'llu; expect 9-12 for yamscan output.",
+      fprintf(stderr, "Error: Found too few fields at line %'" PRIu64 "; expect 9-12 for yamscan output.",
         n_lines);
       goto error_blank;
     } else if (n_fields < 4) {
-      fprintf(stderr, "Error: Found too few fields at line %'llu; expect at least 4 for BED or 9 for yamscan output.",
+      fprintf(stderr, "Error: Found too few fields at line %'" PRIu64 "; expect at least 4 for BED or 9 for yamscan output.",
         n_lines);
       goto error_blank;
     }
@@ -654,7 +668,7 @@ static void run_minidedup(void) {
     if (is_yamscan) {
       if (n_fields == 9 || n_fields == 10) {
         if (is_yamscan_bed) {
-          fprintf(stderr, "Error: Found 9-10 fields on line %'llu, but previous lines had 11-12.",
+          fprintf(stderr, "Error: Found 9-10 fields on line %'" PRIu64 ", but previous lines had 11-12.",
             n_lines);
           goto error_blank;
         }
@@ -662,13 +676,13 @@ static void run_minidedup(void) {
       } else if (n_fields == 11 || n_fields == 12) {
         if (!feat_tab.n_total) is_yamscan_bed = 1;
         if (!is_yamscan_bed && n_ranges) {
-          fprintf(stderr, "Error: Found 11-12 fields on line %'llu, but previous lines had 9-10.",
+          fprintf(stderr, "Error: Found 11-12 fields on line %'" PRIu64 ", but previous lines had 9-10.",
             n_lines);
           goto error_blank;
         }
         seq_loc = 3; start_loc = 4; end_loc = 5; strand_loc = 6; motif_loc = 7; score_loc = 8;
       } else {
-        fprintf(stderr, "Error: Found %'llu fields on line %'llu; expect 9-12 for yamscan output.",
+        fprintf(stderr, "Error: Found %'" PRIu64 " fields on line %'" PRIu64 "; expect 9-12 for yamscan output.",
           n_fields, n_lines);
         goto error_blank;
       }
@@ -694,32 +708,37 @@ static void run_minidedup(void) {
       goto error_blank;
     }
     if (safe_strtoull(str_start, &start)) {
-      fprintf(stderr, "Error: Failed to parse number in start column on line %'llu; found: %s",
+      fprintf(stderr, "Error: Failed to parse number in start column on line %'" PRIu64 "; found: %s",
         n_lines, str_start);
       goto error_blank;
     }
     if (safe_strtoull(str_end, &end)) {
-      fprintf(stderr, "Error: Failed to parse number in end column on line %'llu; found: %s",
+      fprintf(stderr, "Error: Failed to parse number in end column on line %'" PRIu64 "; found: %s",
         n_lines, str_end);
       goto error_blank;
     }
     if (safe_strtod(str_score, &score)) {
-      fprintf(stderr, "Error: Failed to parse number in scores column on line %'llu; found: %s",
+      fprintf(stderr, "Error: Failed to parse number in scores column on line %'" PRIu64 "; found: %s",
         n_lines, str_score);
       goto error_blank;
     }
     if (is_yamscan) {
+      if (score <= 0.0) {
+        fprintf(stderr, "Error: Invalid p-value on line %'" PRIu64 ": %g (must be > 0).\n",
+          n_lines, score);
+        goto error_blank;
+      }
       score = -log(score);
     } else {
       start += 1;
     }
     if (start > end) {
-      fprintf(stderr, "Error: Incorrect start/end values on line %'llu (start: %'llu, end: %'llu)",
+      fprintf(stderr, "Error: Incorrect start/end values on line %'" PRIu64 " (start: %'" PRIu64 ", end: %'" PRIu64 ")",
         n_lines, start, end);
       goto error_blank;
     }
     if (check_strand(strand)) {
-      fprintf(stderr, "Error: Incorrect strand column on line %'llu; expect +/-/., found: %s",
+      fprintf(stderr, "Error: Incorrect strand column on line %'" PRIu64 "; expect +/-/., found: %s",
         n_lines, strand);
       goto error_blank;
     }
@@ -734,21 +753,21 @@ static void run_minidedup(void) {
       goto error_mem;
     }
 #ifdef DEBUG
-    fprintf(stderr, "L:%llu\tI:%llu\tN:%llu\n", n_lines, feature_index, feat_tab.n[feature_index]);
+    fprintf(stderr, "L:%" PRIu64 "\tI:%" PRIu64 "\tN:%" PRIu64 "\n", n_lines, feature_index, feat_tab.n[feature_index]);
 #endif
     if (feat_tab.n[feature_index] > 0 &&
-      start > feat_tab.ends[feature_index][feat_tab.n[feature_index] - 1]) {
+      start > feat_tab.max_end[feature_index]) {
       if (feat_tab.n[feature_index] > score2index_n_alloc) {
-        score2index_t *tmp = realloc(score2index,
-          sizeof(score2index) * (score2index_n_alloc + ALLOC_CHUNK_SIZE));
-        if (score2index == NULL) goto error_mem;
+        uint64_t new_alloc = MAX(feat_tab.n[feature_index], score2index_n_alloc + ALLOC_CHUNK_SIZE);
+        score2index_t *tmp = realloc(score2index, sizeof(*score2index) * new_alloc);
+        if (tmp == NULL) goto error_mem;
         score2index = tmp;
-        score2index_n_alloc += ALLOC_CHUNK_SIZE;
+        score2index_n_alloc = new_alloc;
       }
       n_discarded += dedup_and_purge_feat(feature_index);
     } else if (feat_tab.n[feature_index] &&
         start < feat_tab.starts[feature_index][feat_tab.n[feature_index] - 1]) {
-      fprintf(stderr, "Error: Input isn't properly sorted (line %'llu).\n", n_lines);
+      fprintf(stderr, "Error: Input isn't properly sorted (line %'" PRIu64 ").\n", n_lines);
       fprintf(stderr, "Found the following order of ranges:\n%s\n%s",
         feat_tab.lines[feature_index][feat_tab.n[feature_index] - 1], line.s);
       goto error_blank;
@@ -762,17 +781,17 @@ static void run_minidedup(void) {
   }
   for (uint64_t i = 0; i < feat_tab.n_total; i++) {
     if (feat_tab.n[i] > score2index_n_alloc) {
-      score2index_t *tmp = realloc(score2index,
-        sizeof(score2index) * (score2index_n_alloc + ALLOC_CHUNK_SIZE));
-      if (score2index == NULL) goto error_mem;
+      uint64_t new_alloc = MAX(feat_tab.n[i], score2index_n_alloc + ALLOC_CHUNK_SIZE);
+      score2index_t *tmp = realloc(score2index, sizeof(*score2index) * new_alloc);
+      if (tmp == NULL) goto error_mem;
       score2index = tmp;
-      score2index_n_alloc += ALLOC_CHUNK_SIZE;
+      score2index_n_alloc = new_alloc;
     }
   }
   n_discarded += purge_remaining_feat_tab();
   if (args.v) {
     fprintf(stderr,
-      "Done. Total ranges: %'llu\nRemaining ranges: %'llu (%'.2f%%)\nDiscarded ranges: %'llu (%'.2f%%)\n",
+      "Done. Total ranges: %'" PRIu64 "\nRemaining ranges: %'" PRIu64 " (%'.2f%%)\nDiscarded ranges: %'" PRIu64 " (%'.2f%%)\n",
       n_ranges, n_ranges - n_discarded,
       100.0 * ((double) (n_ranges - n_discarded) / (double) n_ranges),
       n_discarded,
@@ -799,7 +818,7 @@ static void print_time(const uint64_t s, const char *what) {
   } else if (s > 120) {
     fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
   } else if (s > 1) {
-    fprintf(stderr, "Needed %'llu seconds to %s.\n", s, what);
+    fprintf(stderr, "Needed %'" PRIu64 " seconds to %s.\n", s, what);
   }
 }
 
@@ -811,6 +830,7 @@ int main_dedup(int argc, char **argv) {
   while ((opt = getopt(argc, argv, "i:o:smwvybr0Sh")) != -1) {
     switch (opt) {
       case 'i':
+        if (files.i_open) badexit("Error: -i specified more than once.");
         has_input = 1;
         if (optarg[0] == '-' && optarg[1] == '\0') {
           files.i = gzdopen(fileno(stdin), "r");
@@ -825,6 +845,7 @@ int main_dedup(int argc, char **argv) {
         files.i_open = 1;
         break;
       case 'o':
+        if (files.o_open) badexit("Error: -o specified more than once.");
         use_stdout = 0;
         files.o = fopen(optarg, "w");
         if (files.o == NULL) {

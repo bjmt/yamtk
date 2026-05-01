@@ -67,6 +67,7 @@
 #include <limits.h>
 #include <time.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <zlib.h>
 #include "kseq.h"
 #include "version.h"
@@ -183,7 +184,7 @@ static void print_time(const uint64_t s, const char *what) {
   } else if (s > 120) {
     fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
   } else if (s > 1) {
-    fprintf(stderr, "Needed %'llu seconds to %s.\n", s, what);
+    fprintf(stderr, "Needed %'" PRIu64 " seconds to %s.\n", s, what);
   }
 }
 
@@ -365,9 +366,10 @@ static inline void swap_k(unsigned char *seq, const uint64_t i, const uint64_t j
 }
 
 static int shuffle_linear(unsigned char *seq, const uint64_t size, const uint64_t k) {
-  for (uint64_t r, i = 0; i < size - 2 * k + 1; i += k) {
-    r = xrand_r(&xrng) % (size - 2 * k + 1 - i);
-    swap_k(seq, i, i + k + r - r % k, k);
+  const uint64_t n_blocks = size / k;
+  for (uint64_t r, i = 0; i + 1 < n_blocks; i++) {
+    r = i + 1 + xrand_r(&xrng) % (n_blocks - i - 1);
+    swap_k(seq, i * k, r * k, k);
   }
   return 0;
 }
@@ -451,7 +453,8 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
 
   // Reserve the final vertex.
 
-  invalid_vertex[chars2kmer(seq, k - 1, size - k + 1)] = 1;
+  const uint64_t final_vertex = chars2kmer(seq, k - 1, size - k + 1);
+  invalid_vertex[final_vertex] = 1;
 
   // For k > 2, prefill an array containing the indices to the next vertex from an edge.
   // (For k = 2, it is just 0 as the edge is already the correct index.)
@@ -481,6 +484,7 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
   // Remove reserved edges from pool.
 
   for (uint64_t i = 0, edge; i < pow5[k - 1]; i++) {
+    if (i == final_vertex) continue;
     edge = i * 5 + euler_path[i];
     if (edge != last_edge && kmer_tab[edge]) kmer_tab[edge]--;
   }
@@ -507,11 +511,11 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
 
 static void write_seq(const unsigned char *seq, const uint64_t size, const char *name, const char *comment, const uint64_t comment_l, const uint64_t n) {
   if (comment_l && n) {
-    fprintf(files.o, ">%s %s-%llu\n", name, comment, n);
+    fprintf(files.o, ">%s %s-%" PRIu64 "\n", name, comment, n);
   } else if (comment_l) {
     fprintf(files.o, ">%s %s\n", name, comment);
   } else if (n) {
-    fprintf(files.o, ">%s-%llu\n", name, n);
+    fprintf(files.o, ">%s-%" PRIu64 "\n", name, n);
   } else {
     fprintf(files.o, ">%s\n", name);
   }
@@ -557,6 +561,7 @@ int main_shuf(int argc, char **argv) {
   while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rnpvwh")) != -1) {
     switch (opt) {
       case 'i':
+        if (files.s_open) badexit("Error: -i specified more than once.");
         if (optarg[0] == '-' && optarg[1] == '\0') {
           files.s = gzdopen(fileno(stdin), "r");
         } else {
@@ -570,6 +575,7 @@ int main_shuf(int argc, char **argv) {
         files.s_open = 1;
         break;
       case 'o':
+        if (files.o_open) badexit("Error: -o specified more than once.");
         use_stdout = 0;
         files.o = fopen(optarg, "w");
         if (files.o == NULL) {
@@ -583,7 +589,7 @@ int main_shuf(int argc, char **argv) {
         if (str_to_int(optarg, &args.k)) {
           badexit("Error: Failed to parse -k value.");
         }
-        if (!args.k) {
+        if (args.k <= 0) {
           badexit("Error: -k must be a positive integer.");
         }
         break;
@@ -597,7 +603,7 @@ int main_shuf(int argc, char **argv) {
         if (str_to_int(optarg, &args.seed)) {
           badexit("Error: Failed to parse -s value.");
         }
-        if (!args.seed) {
+        if (args.seed <= 0) {
           badexit("Error: -s must be a positive integer.");
         }
         break;
@@ -605,8 +611,8 @@ int main_shuf(int argc, char **argv) {
         if (str_to_int(optarg, &args.shuf_repeats)) {
           badexit("Error: Failed to parse -r value.");
         }
-        if (!args.shuf_repeats) {
-          badexit("Error: -r must be a positive integer.");
+        if (args.shuf_repeats <= 0 || args.shuf_repeats == INT_MAX) {
+          badexit("Error: -r must be a positive integer less than INT_MAX.");
         }
         break;
       /* case 'W': */
@@ -749,9 +755,9 @@ int main_shuf(int argc, char **argv) {
 
     if (args.v) {
       if (seq_comment_l) {
-        fprintf(stderr, "Shuffling sequence #%'llu: %s %s\n", n_seqs, seq_name, seq_comment);
+        fprintf(stderr, "Shuffling sequence #%'" PRIu64 ": %s %s\n", n_seqs, seq_name, seq_comment);
       } else {
-        fprintf(stderr, "Shuffling sequence #%'llu: %s\n", n_seqs, seq_name);
+        fprintf(stderr, "Shuffling sequence #%'" PRIu64 ": %s\n", n_seqs, seq_name);
       }
     }
     if (args.w || args.print_kmers) {
@@ -771,7 +777,7 @@ int main_shuf(int argc, char **argv) {
       gc_pct *= 100.0;
     }
     if (args.w) {
-      fprintf(stderr, "  Sequence size: %'llu (%.2f%% non-standard)\n", size,
+      fprintf(stderr, "  Sequence size: %'" PRIu64 " (%.2f%% non-standard)\n", size,
         100.0 * (double) unknowns / (double) size);
       fprintf(stderr, "  GC content: %.2f%%\n", gc_pct); 
     }
@@ -790,7 +796,7 @@ int main_shuf(int argc, char **argv) {
         fprintf(files.o, " %s", seq_comment);
       }
       if (k == 1) {
-        fprintf(files.o, "\t%llu\t%llu\t%llu\t%llu\t%llu",
+        fprintf(files.o, "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "",
           char_counts['a'] + char_counts['A'],
           char_counts['c'] + char_counts['C'],
           char_counts['g'] + char_counts['G'],
@@ -800,7 +806,7 @@ int main_shuf(int argc, char **argv) {
         ERASE_ARRAY(kmer_tab, pow5[k]);
         count_kmers(seq, size, kmer_tab, k);
         for (uint64_t i = 0; i < pow5[k]; i++) {
-          fprintf(files.o, "\t%llu", kmer_tab[i]);
+          fprintf(files.o, "\t%" PRIu64 "", kmer_tab[i]);
         }
       } else {
         for (uint64_t i = 0; i < pow5[k]; i++) {
@@ -810,7 +816,7 @@ int main_shuf(int argc, char **argv) {
       fputc('\n', files.o);
     } else if (size < k * 2) {
       if (args.v) {
-        fprintf(stderr, "! Warning: Sequence too short to shuffle (size = %'llu, k = %llu)\n",
+        fprintf(stderr, "! Warning: Sequence too short to shuffle (size = %'" PRIu64 ", k = %" PRIu64 ")\n",
           size, k);
       }
     } else if (args.k == 1) {

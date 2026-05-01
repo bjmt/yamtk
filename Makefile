@@ -49,3 +49,13 @@ install: yamtk
 uninstall:
 	-rm -f $(PREFIX)/$(BINDIR)/yamtk
 
+check: yamtk
+	@bash test/run_tests.sh
+
+check-debug:
+	$(MAKE) clean
+	$(MAKE) debug
+	@bash test/run_tests.sh
+
+.PHONY: check check-debug
+

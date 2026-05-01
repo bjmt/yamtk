@@ -28,6 +28,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <zlib.h>
 #include "kseq.h"
 #include "khash.h"
@@ -250,7 +251,7 @@ static void print_time(const uint64_t s, const char *what) {
   } else if (s > 120) {
     fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
   } else if (s > 1) {
-    fprintf(stderr, "Needed %'llu seconds to %s.\n", s, what);
+    fprintf(stderr, "Needed %'" PRIu64 " seconds to %s.\n", s, what);
   }
 }
 
@@ -260,9 +261,9 @@ static void usage(void) {
     "Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa \n"
     "                                                                              \n"
     " -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,\n"
-    "            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-%llu bases wide.         \n"
+    "            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-%" PRIu64 " bases wide.         \n"
     " -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters\n"
-    "            are allowed. Must be 1-%llu bases wide. The -b, -t, -0, -p, and -n\n"
+    "            are allowed. Must be 1-%" PRIu64 " bases wide. The -b, -t, -0, -p, and -n\n"
     "            flags are unused.                                                 \n"
     " -s <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences \n"
     "            to scan. Can be gzipped. Use '-' for stdin. Omitting -s will cause\n"
@@ -548,12 +549,12 @@ static int alloc_cdf(void) {
   for (uint64_t i = 0; i < args.nthreads; i++) {
     cdf[i] = malloc(sizeof(double));
     if (cdf[i] == NULL) {
-      fprintf(stderr, "Error: Failed to allocate memory for CDF (#%llu).", i);
+      fprintf(stderr, "Error: Failed to allocate memory for CDF (#%" PRIu64 ").", i);
       return 1;
     }
     tmp_pdf[i] = malloc(sizeof(double));
     if (tmp_pdf[i] == NULL) {
-      fprintf(stderr, "Error: Failed to allocate memory for temporary PDF (#%llu).", i);
+      fprintf(stderr, "Error: Failed to allocate memory for temporary PDF (#%" PRIu64 ").", i);
       return 1;
     }
   }
@@ -748,16 +749,16 @@ static void fill_cdf(motif_t *motif) {
   uint64_t max_step, s; //s0, s1, s2, s3;
   double pdf_sum = 0.0;
   if (args.w && args.nthreads == 1 && !args.progress) {
-    fprintf(stderr, "        Generating CDF for [%s] (n=%'llu) ... ",
+    fprintf(stderr, "        Generating CDF for [%s] (n=%'" PRIu64 ") ... ",
       motif->name, motif->cdf_size);
   } else if (args.w && !args.progress) {
-    fprintf(stderr, "        Generating CDF for [%s] (n=%'llu)\n",
+    fprintf(stderr, "        Generating CDF for [%s] (n=%'" PRIu64 ")\n",
       motif->name, motif->cdf_size);
   }
   if (motif->cdf_size > MAX_CDF_SIZE) {
     if (args.w&& args.nthreads == 1 && !args.progress) fprintf(stderr, "\n");
     fprintf(stderr,
-        "Internal error: Requested CDF size for [%s] is too large (%'llu>%'llu).\n",
+        "Internal error: Requested CDF size for [%s] is too large (%'" PRIu64 ">%'" PRIu64 ").\n",
         motif->name, motif->cdf_size, MAX_CDF_SIZE);
     fprintf(stderr, "    Make sure no background values are below %f.",
         MIN_BKG_VALUE);
@@ -774,7 +775,7 @@ static void fill_cdf(motif_t *motif) {
     }
     cdf[motif->thread] = cdf_rl;
     double *tmp_pdf_rl = realloc(tmp_pdf[motif->thread], motif->cdf_size * sizeof(double));
-    if (cdf_rl == NULL) {
+    if (tmp_pdf_rl == NULL) {
       badexit("Error: Memory re-allocation for temporary motif PDF failed.");
     }
     tmp_pdf[motif->thread] = tmp_pdf_rl;
@@ -1081,7 +1082,7 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
         if (which_i > n - 1) {
           if (args.w) fprintf(stderr, "\n");
           fprintf(stderr,
-            "Error: Motif [%s] has too many columns (need %llu).",
+            "Error: Motif [%s] has too many columns (need %" PRIu64 ").",
             motif->name, n); return 1;
         }
         if (str_to_double(pos_i, &probs[which_i])) {
@@ -1104,7 +1105,7 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
     if (which_i > n - 1) {
       if (args.w) fprintf(stderr, "\n");
       fprintf(stderr,
-        "Error: Motif [%s] has too many columns (need %llu).",
+        "Error: Motif [%s] has too many columns (need %" PRIu64 ").",
         motif->name, n); return 1;
     }
     if (str_to_double(pos_i, &probs[which_i])) {
@@ -1124,7 +1125,7 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
 
   if (which_i < n - 1) {
     if (args.w) fprintf(stderr, "\n");
-    fprintf(stderr, "Error: Motif [%s] has too few columns (need %llu).",
+    fprintf(stderr, "Error: Motif [%s] has too few columns (need %" PRIu64 ").",
       motif->name, n); return 1;
   }
 
@@ -1144,7 +1145,7 @@ static int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t
 
 static int check_meme_alph(const char *line, const uint64_t line_num) {
   if (check_line_contains(line, "ALPHABET= ACDEFGHIKLMNPQRSTVWY\0")) {
-    fprintf(stderr, "Error: Detected protein alphabet (L%llu).", line_num);
+    fprintf(stderr, "Error: Detected protein alphabet (L%" PRIu64 ").", line_num);
     return 1;
   }
   return 0;
@@ -1159,18 +1160,18 @@ static int check_meme_strand(const char *line, const uint64_t line_num) {
     i++;
   }
   if (((scan_fwd > 1 || scan_rev > 1) || (!scan_fwd && !scan_rev)) && args.v) {
-    fprintf(stderr, "Warning: Possible malformed strand field (L%llu).\n", line_num);
+    fprintf(stderr, "Warning: Possible malformed strand field (L%" PRIu64 ").\n", line_num);
   }
   if (args.scan_rc && scan_fwd && !scan_rev && args.v) {
-    fprintf(stderr, "Warning: MEME motifs are only for the forward strand (L%llu).\n",
+    fprintf(stderr, "Warning: MEME motifs are only for the forward strand (L%" PRIu64 ").\n",
       line_num);
   }
   if (!scan_fwd && scan_rev && args.v) {
-    fprintf(stderr, "Warning: MEME motifs are only for the reverse strand (L%llu).\n",
+    fprintf(stderr, "Warning: MEME motifs are only for the reverse strand (L%" PRIu64 ").\n",
       line_num);
   }
   if (!args.scan_rc && scan_fwd && scan_rev && args.v) {
-    fprintf(stderr, "Warning: MEME motifs are for both strands (L%llu).\n",
+    fprintf(stderr, "Warning: MEME motifs are for both strands (L%" PRIu64 ").\n",
       line_num);
   }
   return 0;
@@ -1183,23 +1184,23 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
   char bkg_char[MEME_BKG_MAX_SIZE];
   ERASE_ARRAY(bkg_char, MEME_BKG_MAX_SIZE);
   if (line[0] != 'A') {
-    fprintf(stderr, "Error: Expected first character of background line to be 'A' (L%llu).",
+    fprintf(stderr, "Error: Expected first character of background line to be 'A' (L%" PRIu64 ").",
       line_num); return 1;
   }
   while (line[i] != '\0' && line[i] != '\n' && line[i] != '\r') {
     if (let_i > 3) {
-      fprintf(stderr, "Error: Parsed too many background values in MEME file (L%llu).",
+      fprintf(stderr, "Error: Parsed too many background values in MEME file (L%" PRIu64 ").",
         line_num); return 1;
     }
     if (line[i] != ' ' && line[i] != '\t') {
       if (line[i] == 'C') {
         if (!empty) {
-          fprintf(stderr, "Error: Expected whitespace before 'C' character (L%llu).",
+          fprintf(stderr, "Error: Expected whitespace before 'C' character (L%" PRIu64 ").",
             line_num); return 1;
         }
         if (let_i != 0) {
           fprintf(stderr,
-            "Error: Expected 'C' to be second letter in MEME background (L%llu).",
+            "Error: Expected 'C' to be second letter in MEME background (L%" PRIu64 ").",
             line_num); return 1;
         }
         if (str_to_double(bkg_char, &bkg_probs[let_i])) {
@@ -1211,12 +1212,12 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
         let_i = 1; j = 0;
       } else if (line[i] == 'G') {
         if (!empty) {
-          fprintf(stderr, "Error: Expected whitespace before 'C' character (L%llu).",
+          fprintf(stderr, "Error: Expected whitespace before 'G' character (L%" PRIu64 ").",
             line_num); return 1;
         }
         if (let_i != 1) {
           fprintf(stderr,
-            "Error: Expected 'G' to be third letter in MEME background (L%llu).",
+            "Error: Expected 'G' to be third letter in MEME background (L%" PRIu64 ").",
             line_num); return 1;
         }
         if (str_to_double(bkg_char, &bkg_probs[let_i])) {
@@ -1228,12 +1229,12 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
         let_i = 2; j = 0;
       } else if (line[i] == 'T' || line[i] == 'U') {
         if (!empty) {
-          fprintf(stderr, "Error: Expected whitespace before 'C' character (L%llu).",
+          fprintf(stderr, "Error: Expected whitespace before 'T/U' character (L%" PRIu64 ").",
             line_num); return 1;
         }
         if (let_i != 2) {
           fprintf(stderr,
-            "Error: Expected 'T/U' to be fourth letter in MEME background (L%llu).",
+            "Error: Expected 'T/U' to be fourth letter in MEME background (L%" PRIu64 ").",
             line_num); return 1;
         }
         if (str_to_double(bkg_char, &bkg_probs[let_i])) {
@@ -1248,7 +1249,7 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
         j++;
       } else {
         fprintf(stderr,
-          "Error: Encountered unexpected character (%c) in MEME background (L%llu).",
+          "Error: Encountered unexpected character (%c) in MEME background (L%" PRIu64 ").",
           line[i], line_num); return 1;
       }
       empty = 0;
@@ -1277,7 +1278,7 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
 
 static void parse_meme_name(const char *line, const uint64_t motif_i) {
   uint64_t i = 5, j = 0, name_read = 0;
-  while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
+  while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n' && j < MAX_NAME_SIZE - 1) {
     if (line[i] == ' ' && name_read) break;
     else if (line[i] == ' ') {
       i++;
@@ -1304,12 +1305,12 @@ static void read_meme(void) {
       if (bkg_let_freqs_L) {
         free(line);
         fprintf(stderr,
-          "Error: Detected multiple background definition lines in MEME file (L%llu).",
+          "Error: Detected multiple background definition lines in MEME file (L%" PRIu64 ").",
           line_num);
       } else {
         if (motif_i < -1) {
           free(line);
-          fprintf(stderr, "Error: Found background definition line after motifs (L%llu).",
+          fprintf(stderr, "Error: Found background definition line after motifs (L%" PRIu64 ").",
             line_num);
           badexit("");
         }
@@ -1324,13 +1325,13 @@ static void read_meme(void) {
       if (alph_detected) {
         free(line);
         fprintf(stderr,
-          "Error: Detected multiple alphabet definition lines in MEME file (L%llu).",
+          "Error: Detected multiple alphabet definition lines in MEME file (L%" PRIu64 ").",
           line_num);
         badexit("");
       }
       if (motif_i < -1) {
         free(line);
-        fprintf(stderr, "Error: Found alphabet definition line after motifs (L%llu).",
+        fprintf(stderr, "Error: Found alphabet definition line after motifs (L%" PRIu64 ").",
           line_num);
         badexit("");
       }
@@ -1343,13 +1344,13 @@ static void read_meme(void) {
       if (strand_detected) {
         free(line);
         fprintf(stderr,
-          "Error: Detected multiple strand information lines in MEME file (L%llu).",
+          "Error: Detected multiple strand information lines in MEME file (L%" PRIu64 ").",
           line_num);
         badexit("");
       }
       if (motif_i < -1) {
         free(line);
-        fprintf(stderr, "Error: Found strand information line after motifs (L%llu).",
+        fprintf(stderr, "Error: Found strand information line after motifs (L%" PRIu64 ").",
           line_num);
         badexit("");
       }
@@ -1360,7 +1361,7 @@ static void read_meme(void) {
       strand_detected = 1;
     } else if (check_line_contains(line, "MOTIF\0")) {
       if (motif_i < -1 && args.w) {
-        fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+        fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
       }
       motif_i++;
       if (add_motif()) {
@@ -1373,7 +1374,7 @@ static void read_meme(void) {
     } else if (check_line_contains(line, "letter-probability matrix\0")) {
       if (pos_i != 0) {
         free(line);
-        fprintf(stderr, "Error: Possible malformed MEME motif (L%llu).",
+        fprintf(stderr, "Error: Possible malformed MEME motif (L%" PRIu64 ").",
           line_num);
         badexit("");
       }
@@ -1388,7 +1389,7 @@ static void read_meme(void) {
 
         if (pos_i >= MAX_MOTIF_SIZE / 5 && pos_i < -1) {
           free(line);
-          fprintf(stderr, "Error: Motif [%s] is too large (max=%llu)",
+          fprintf(stderr, "Error: Motif [%s] is too large (max=%" PRIu64 ")",
             motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
           badexit("");
         }
@@ -1407,11 +1408,11 @@ static void read_meme(void) {
   }
   free(line);
   if (motif_i < -1 && args.w) {
-    fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+    fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
   }
   if (!motif_info.n) badexit("Error: Failed to detect any motifs in MEME file.");
   if (args.v) {
-    fprintf(stderr, "Found %'llu MEME motif(s).\n", motif_info.n);
+    fprintf(stderr, "Found %'" PRIu64 " MEME motif(s).\n", motif_info.n);
   }
 }
 
@@ -1432,16 +1433,16 @@ static void parse_homer_name(const char *line, const uint64_t motif_i) {
   }
   if (!name_start) {
     if (args.w) {
-      fprintf(stderr, "Warning: Failed to parse motif name [#%'llu].\n", motif_i + 1);
+      fprintf(stderr, "Warning: Failed to parse motif name [#%'" PRIu64 "].\n", motif_i + 1);
     }
   } else if (!name_end) {
     if (args.w) {
-      fprintf(stderr, "Warning: HOMER motif is missing logodds score [#%'llu].\n", 
+      fprintf(stderr, "Warning: HOMER motif is missing logodds score [#%'" PRIu64 "].\n", 
         motif_i + 1);
     }
     name_end = i;
   }
-  for (uint64_t k = name_start; k < name_end; k++) {
+  for (uint64_t k = name_start; k < name_end && j < MAX_NAME_SIZE - 1; k++) {
     motifs[motif_i]->name[j] = line[k];
     j++;
   }
@@ -1461,7 +1462,7 @@ static void read_homer(void) {
     if (line[0] == '>') {
       ready_to_start = 1;
       if (motif_i < -1 && args.w) {
-        fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+        fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
       }
       motif_i++;
       if (add_motif()) {
@@ -1473,8 +1474,10 @@ static void read_homer(void) {
       pos_i = 0;
     } else if (count_nonempty_chars(line) && ready_to_start) {
       if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
-        fprintf(stderr, "Error: Motif [%s] is too large (max=%'llu).\n",
+        free(line);
+        fprintf(stderr, "Error: Motif [%s] is too large (max=%'" PRIu64 ").\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
+        badexit("");
       }
       if (add_motif_ppm_column(motifs[motif_i], line, pos_i)) {
         free(line);
@@ -1486,10 +1489,10 @@ static void read_homer(void) {
   }
   free(line);
   if (motif_i < -1 && args.w) {
-    fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+    fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
   }
   if (args.v) {
-    fprintf(stderr, "Found %'llu HOMER motif(s).\n", motif_info.n);
+    fprintf(stderr, "Found %'" PRIu64 " HOMER motif(s).\n", motif_info.n);
   }
 }
 
@@ -1546,7 +1549,7 @@ static void complete_motifs(void) {
 }
 
 static void print_motif(motif_t *motif, const uint64_t n) {
-  fprintf(files.o, "Motif: %s (N%llu L%llu)\n", motif->name, n, motif->file_line_num);
+  fprintf(files.o, "Motif: %s (N%" PRIu64 " L%" PRIu64 ")\n", motif->name, n, motif->file_line_num);
   if (motif->threshold == INT_MAX) {
     fprintf(files.o, "MaxScore=%.2f\tThreshold=%s\n",
       motif->max_score / PWM_INT_MULTIPLIER, "[exceeds max]");
@@ -1556,7 +1559,7 @@ static void print_motif(motif_t *motif, const uint64_t n) {
   }
   fprintf(files.o, "Motif PWM:\n\tA\tC\tG\tT\n");
   for (uint64_t i = 0; i < motif->size; i++) {
-    fprintf(files.o, "%llu:\t%.2f\t%.2f\t%.2f\t%.2f\n", i + 1,
+    fprintf(files.o, "%" PRIu64 ":\t%.2f\t%.2f\t%.2f\t%.2f\n", i + 1,
       get_score(motif, 'A', i, char2index) / PWM_INT_MULTIPLIER,
       get_score(motif, 'C', i, char2index) / PWM_INT_MULTIPLIER,
       get_score(motif, 'G', i, char2index) / PWM_INT_MULTIPLIER,
@@ -1580,7 +1583,7 @@ static void print_motif(motif_t *motif, const uint64_t n) {
 static void parse_jaspar_name(const char *line, const uint64_t motif_i) {
   uint64_t i = 0, j = 1;
   for (;;) {
-    if (line[j] == '\r' || line[j] == '\n' || line[j] == '\0') break;
+    if (line[j] == '\r' || line[j] == '\n' || line[j] == '\0' || i >= MAX_NAME_SIZE - 1) break;
     motifs[motif_i]->name[i] = line[j];
     i++; j++;
   }
@@ -1633,7 +1636,7 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
     return 1;
   }
   if (left_bracket == -1 || right_bracket == -1) {
-    fprintf(stderr, "Error: Couldn't find '[]' in motif [%s] row (%llu).",
+    fprintf(stderr, "Error: Couldn't find '[]' in motif [%s] row (%" PRIu64 ").",
         motif->name, row_i + 1);
     return 1;
   }
@@ -1653,9 +1656,9 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
     } else {
       if (!prev_line_was_space) {
         pos_i++;
-        if (pos_i + 1 > MAX_MOTIF_SIZE && pos_i < -1) {
-          fprintf(stderr, "Error: Motif [%s] has too many columns (need %llu).",
-            motif->name, MAX_MOTIF_SIZE); return 1;
+        if (pos_i + 1 > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
+          fprintf(stderr, "Error: Motif [%s] has too many columns (max %" PRIu64 ").",
+            motif->name, MAX_MOTIF_SIZE / 5); return 1;
         }
         if (str_to_int(prob_c, &tmp_value)) {
           if (args.w) fprintf(stderr, "\n");
@@ -1673,9 +1676,9 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
   }
   if (!prev_line_was_space) {
     pos_i++;
-    if (pos_i > MAX_NAME_SIZE && pos_i < -1) {
-      fprintf(stderr, "Error: Motif [%s] has too many columns (need %llu).",
-        motif->name, MAX_MOTIF_SIZE); return 1;
+    if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
+      fprintf(stderr, "Error: Motif [%s] has too many columns (max %" PRIu64 ").",
+        motif->name, MAX_MOTIF_SIZE / 5); return 1;
     }
     if (str_to_int(prob_c, &tmp_value)) {
       if (args.w) fprintf(stderr, "\n");
@@ -1742,7 +1745,7 @@ static void read_jaspar(void) {
     if (line[0] == '>') {
       ready_to_start = 1;
       if (motif_i < -1 && args.w) {
-        fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+        fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
       }
       if (motif_i < -1 && row_i != 4) {
         if (row_i < 4) {
@@ -1781,12 +1784,12 @@ static void read_jaspar(void) {
     }
     badexit("");
   }
-  if (motif_i < -1 && args.w) fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+  if (motif_i < -1 && args.w) fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
   for (uint64_t i = 0; i < motif_info.n; i++) {
     pcm_to_pwm(motifs[i]);
   }
   if (args.v) {
-    fprintf(stderr, "Found %'llu JASPAR motif(s).\n", motif_info.n);
+    fprintf(stderr, "Found %'" PRIu64 " JASPAR motif(s).\n", motif_info.n);
   }
 }
 
@@ -1818,7 +1821,7 @@ static void read_hocomoco(void) {
     if (line[0] == '>') {
       ready_to_start = 1;
       if (motif_i < -1 && args.w) {
-        fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+        fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
       }
       motif_i++;
       if (add_motif()) {
@@ -1833,13 +1836,19 @@ static void read_hocomoco(void) {
         }
         motifs[motif_i]->name[j] = line[i];
         j++;
+        if (j == MAX_NAME_SIZE - 1) {
+          motifs[motif_i]->name[j] = '\0';
+          break;
+        }
       }
       if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
       pos_i = 0;
     } else if (count_nonempty_chars(line) && ready_to_start) {
       if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
-        fprintf(stderr, "Error: Motif [%s] is too large (max=%'llu).\n",
+        free(line);
+        fprintf(stderr, "Error: Motif [%s] is too large (max=%'" PRIu64 ").\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
+        badexit("");
       }
       if (add_motif_pcm_column(motifs[motif_i], line, pos_i)) {
         free(line);
@@ -1851,10 +1860,10 @@ static void read_hocomoco(void) {
   }
   free(line);
   if (motif_i < -1 && args.w) {
-    fprintf(stderr, "%llu)\n", motifs[motif_i]->size);
+    fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
   }
   if (args.v) {
-    fprintf(stderr, "Found %'llu HOCOMOCO motif(s).\n", motif_info.n);
+    fprintf(stderr, "Found %'" PRIu64 " HOCOMOCO motif(s).\n", motif_info.n);
   }
 }
 
@@ -1887,7 +1896,7 @@ static void load_motifs(void) {
   if (empty_motifs == motif_info.n) {
     badexit("Error: All parsed motifs are empty.");
   } else if (empty_motifs) {
-    fprintf(stderr, "Warning: Found %'llu empty motifs.\n", empty_motifs);
+    fprintf(stderr, "Warning: Found %'" PRIu64 " empty motifs.\n", empty_motifs);
   }
 }
 
@@ -1920,29 +1929,34 @@ static double calc_gc(void) {
 }
 
 static void add_seq_name(char *name, kseq_t *kseq) {
-  for (uint64_t i = 0; i < kseq->name.l; i++) {
-    name[i] = kseq->name.s[i];
-  }
-  if (args.trim_names || !kseq->comment.l) {
-    if (kseq->name.l > SEQ_NAME_MAX_CHAR) {
+  const size_t name_l = kseq->name.l;
+  const size_t comment_l = kseq->comment.l;
+  if (args.trim_names || !comment_l) {
+    if (name_l > SEQ_NAME_MAX_CHAR) {
       kseq_destroy(kseq);
-      fprintf(stderr, "Error: Sequence name is too large (%zu>%llu).",
-        kseq->name.l, SEQ_NAME_MAX_CHAR);
+      fprintf(stderr, "Error: Sequence name is too large (%zu>%" PRIu64 ").",
+        name_l, SEQ_NAME_MAX_CHAR);
       badexit("");
     }
-    name[kseq->name.l] = '\0';
-  } else if (kseq->comment.l) {
-    if (kseq->name.l + kseq->comment.l + 1 > SEQ_NAME_MAX_CHAR) {
+    for (uint64_t i = 0; i < name_l; i++) {
+      name[i] = kseq->name.s[i];
+    }
+    name[name_l] = '\0';
+  } else if (comment_l) {
+    if (name_l + comment_l + 1 > SEQ_NAME_MAX_CHAR) {
       kseq_destroy(kseq);
-      fprintf(stderr, "Error: Sequence name is too large (%zu>%llu).",
-        kseq->name.l + kseq->comment.l + 1, SEQ_NAME_MAX_CHAR);
+      fprintf(stderr, "Error: Sequence name is too large (%zu>%" PRIu64 ").",
+        name_l + comment_l + 1, SEQ_NAME_MAX_CHAR);
       badexit("");
     }
-    name[kseq->name.l] = ' ';
-    for (uint64_t j = 0, i = kseq->name.l + 1; i < kseq->name.l + kseq->comment.l + 1; i++, j++) {
+    for (uint64_t i = 0; i < name_l; i++) {
+      name[i] = kseq->name.s[i];
+    }
+    name[name_l] = ' ';
+    for (uint64_t j = 0, i = name_l + 1; i < name_l + comment_l + 1; i++, j++) {
       name[i] = kseq->comment.s[j];
     }
-    name[kseq->name.l + kseq->comment.l + 1] = '\0';
+    name[name_l + comment_l + 1] = '\0';
   }
 }
 
@@ -2020,7 +2034,7 @@ static uint64_t peek_through_seqs(kseq_t *kseq) {
   }
   if (char_counts[32] && args.v) {
     fprintf(stderr,
-      "Warning: Found spaces (%'llu) in sequences, these will be treated as gaps.\n",
+      "Warning: Found spaces (%'" PRIu64 ") in sequences, these will be treated as gaps.\n",
       char_counts[32]);
   }
   uint64_t max_seq_size = 0;
@@ -2028,10 +2042,10 @@ static uint64_t peek_through_seqs(kseq_t *kseq) {
     max_seq_size = MAX(max_seq_size, seq_sizes[i]);
   }
   if (args.v) {
-    fprintf(stderr, "Found %'llu base(s) across %'llu sequence(s) (GC=%.2f%%).\n",
+    fprintf(stderr, "Found %'" PRIu64 " base(s) across %'" PRIu64 " sequence(s) (GC=%.2f%%).\n",
       seq_len_total, seq_info.n, seq_info.gc_pct);
     if (seq_info.unknowns) {
-      fprintf(stderr, "Found %'llu (%.2f%%) non-standard bases.\n",
+      fprintf(stderr, "Found %'" PRIu64 " (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
     }
     print_seq_mem(
@@ -2125,14 +2139,14 @@ static void load_seqs(kseq_t *kseq) {
   }
   if (char_counts[32] && args.v) {
     fprintf(stderr,
-      "Warning: Found spaces (%'llu) in sequences, these will be treated as gaps.\n",
+      "Warning: Found spaces (%'" PRIu64 ") in sequences, these will be treated as gaps.\n",
       char_counts[32]);
   }
   if (args.v) {
-    fprintf(stderr, "Loaded %'llu base(s) across %'llu sequence(s) (GC=%.2f%%).\n",
+    fprintf(stderr, "Loaded %'" PRIu64 " base(s) across %'" PRIu64 " sequence(s) (GC=%.2f%%).\n",
       seq_len_total, seq_info.n, seq_info.gc_pct);
     if (seq_info.unknowns) {
-      fprintf(stderr, "Found %'llu (%.2f%%) non-standard bases.\n",
+      fprintf(stderr, "Found %'" PRIu64 " (%.2f%%) non-standard bases.\n",
         seq_info.unknowns, unknowns_pct);
     }
     print_seq_mem(
@@ -2162,7 +2176,7 @@ static int char_arrays_are_equal(const char *arr1, const char *arr2, const uint6
 
 static void int_to_char_array(const uint64_t N, char *arr) {
   ERASE_ARRAY(arr, 128);
-  snprintf(arr, 128, "__N%llu", N);
+  snprintf(arr, 128, "__N%" PRIu64 "", N);
 }
 
 static int dedup_char_array(char *arr, const uint64_t arr_max_len, const uint64_t N) {
@@ -2221,7 +2235,7 @@ static void find_motif_dupes(void) {
           int success = dedup_char_array(motifs[i]->name, MAX_NAME_SIZE, i + 1);
           if (!success) {
             fprintf(stderr,
-              "Error: Failed to deduplicate motif #%llu, name is too large.", i + 1);
+              "Error: Failed to deduplicate motif #%" PRIu64 ", name is too large.", i + 1);
             free(is_dup);
             badexit("");
           }
@@ -2234,7 +2248,7 @@ static void find_motif_dupes(void) {
       if (to_print > dup_count) to_print = dup_count;
       for (uint64_t i = 0; i < motif_info.n; i++) {
         if (is_dup[i]) {
-          fprintf(stderr, "\n    L%llu #%llu: %s", motifs[i]->file_line_num, i + 1,
+          fprintf(stderr, "\n    L%" PRIu64 " #%" PRIu64 ": %s", motifs[i]->file_line_num, i + 1,
             motifs[i]->name);
           to_print--;
           if (!to_print) break;
@@ -2242,7 +2256,7 @@ static void find_motif_dupes(void) {
       }
       if (dup_count > 5) {
         fprintf(stderr, "\n    ...");
-        fprintf(stderr, "\n    Found %'llu total non-unique names.", dup_count);
+        fprintf(stderr, "\n    Found %'" PRIu64 " total non-unique names.", dup_count);
       }
       free(is_dup);
       badexit("");
@@ -2276,7 +2290,7 @@ static void find_seq_dupes(void) {
           int success = dedup_char_array(seq_names[i], SEQ_NAME_MAX_CHAR, i + 1);
           if (!success) {
             fprintf(stderr,
-              "Error: Failed to deduplicate sequence #%llu, name is too large.", i + 1);
+              "Error: Failed to deduplicate sequence #%" PRIu64 ", name is too large.", i + 1);
             free(is_dup);
             badexit("");
           }
@@ -2294,14 +2308,14 @@ static void find_seq_dupes(void) {
       if (to_print > dup_count) to_print = dup_count;
       for (uint64_t i = 0; i < seq_info.n; i++) {
         if (is_dup[i]) {
-          fprintf(stderr, "\n    #%llu: %s", i + 1, seq_names[i]);
+          fprintf(stderr, "\n    #%" PRIu64 ": %s", i + 1, seq_names[i]);
           to_print--;
           if (!to_print) break;
         }
       }
       if (dup_count > 5) {
         fprintf(stderr, "\n    ...");
-        fprintf(stderr, "\n    Found %'llu total non-unique names.", dup_count);
+        fprintf(stderr, "\n    Found %'" PRIu64 " total non-unique names.", dup_count);
       }
       free(is_dup);
       badexit("");
@@ -2370,7 +2384,7 @@ static uint64_t field_end(const char *line, const uint64_t k) {
 void print_bed(void) {
   if (bed.n_regions) {
     for (uint64_t i = 0; i < bed.n_regions; i++) {
-      fprintf(files.o, "%s\t%llu\t%llu\t%s\t.\t%c\n",
+      fprintf(files.o, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
         bed.seq_names[i], bed.starts[i], bed.ends[i], bed.range_names[i], bed.strands[i]);
     }
   }
@@ -2383,7 +2397,7 @@ static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char 
   uint64_t size_i = count_field_size(line, k);
   uint64_t field_it = 0;
   ERASE_ARRAY(field, MOTIF_VALUE_MAX_CHAR);
-  if (size_i > 0) {
+  if (size_i > 0 && size_i < MOTIF_VALUE_MAX_CHAR) {
     for (uint64_t i = start_i; i <= end_i; i++) {
       if (no_spaces && isspace(line[i])) {
         size_i--;
@@ -2496,19 +2510,19 @@ static void read_bed(void) {
       continue;
     } else if (n_fields < 3) {
       ks_destroy(kbed);
-      fprintf(stderr, "Line %'llu has %'llu fields and %'llu non-whitespace characters.\n",
+      fprintf(stderr, "Line %'" PRIu64 " has %'" PRIu64 " fields and %'" PRIu64 " non-whitespace characters.\n",
           line_num, count_fields(line.s), count_nonempty_chars(line.s));
       badexit("Error: Encountered line in bed with fewer than 3 tab-separated fields.");
     }
     if (n_fields >= 6) {
       if ((field_size = parse_bed_field(line.s, 6, tmp_field, 1)) != 1) {
         ks_destroy(kbed);
-        fprintf(stderr, "Error: Line %'llu in bed does not have a single character in the strand field (found %llu: '%s').",
+        fprintf(stderr, "Error: Line %'" PRIu64 " in bed does not have a single character in the strand field (found %" PRIu64 ": '%s').",
           line_num, field_size, tmp_field);
         badexit("");
       } else if (tmp_field[0] != '+' && tmp_field[0] != '-' && tmp_field[0] != '.') {
         ks_destroy(kbed);
-        fprintf(stderr, "Error: Line %'llu in bed has an incorrect strand character (found '%s', need +/-/.).",
+        fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an incorrect strand character (found '%s', need +/-/.).",
           line_num, tmp_field);
         badexit("");
       }
@@ -2518,43 +2532,44 @@ static void read_bed(void) {
     }
     if (parse_bed_field(line.s, 2, tmp_field, 1) == 0) {
       ks_destroy(kbed);
-      fprintf(stderr, "Error: Line %'llu in bed has an empty start field.", line_num);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty start field.", line_num);
       badexit("");
     }
     if (str_to_uint64_t(tmp_field, &tmp_value)) {
       ks_destroy(kbed);
-      fprintf(stderr, "Error: Failed to parse bed start value on line %'llu.\n", line_num);
+      fprintf(stderr, "Error: Failed to parse bed start value on line %'" PRIu64 ".\n", line_num);
       fprintf(stderr, "  Line: %s\n  Bad value: '%s'", line.s, tmp_field);
       badexit("");
     }
     bed.starts[bed.n_regions] = tmp_value;
     if (parse_bed_field(line.s, 3, tmp_field, 1) == 0) {
       ks_destroy(kbed);
-      fprintf(stderr, "Error: Line %'llu in bed has an empty end field.", line_num);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty end field.", line_num);
       badexit("");
     }
     if (str_to_uint64_t(tmp_field, &tmp_value)) {
       ks_destroy(kbed);
-      fprintf(stderr, "Error: Failed to parse bed end value on line %'llu.\n", line_num);
+      fprintf(stderr, "Error: Failed to parse bed end value on line %'" PRIu64 ".\n", line_num);
       fprintf(stderr, "  Line: %s\n  Bad value: '%s'", line.s, tmp_field);
       badexit("");
     }
     bed.ends[bed.n_regions] = tmp_value;
     if (bed.starts[bed.n_regions] >= bed.ends[bed.n_regions]) {
       ks_destroy(kbed);
-      fprintf(stderr, "Error: Line %'llu in bed has a start >= end value.", line_num);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has a start >= end value.", line_num);
       badexit("");
     }
     if (n_fields >= 4) {
       if ((field_size = parse_bed_field(line.s, 4, tmp_field, 0)) == 0) {
         ks_destroy(kbed);
-        fprintf(stderr, "Error: Line %'llu in bed has an empty range name.", line_num);
+        fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty range name.", line_num);
         badexit("");
       }
-      if (field_size > SEQ_NAME_MAX_CHAR) {
+      if (field_size >= MOTIF_VALUE_MAX_CHAR) {
         ks_destroy(kbed);
-        fprintf(stderr, "Error: Range name in bed on line  %'llu is too large (%llu>%llu).",
-          line_num, field_size, SEQ_NAME_MAX_CHAR);
+        fprintf(stderr, "Error: Range name in bed on line  %'" PRIu64 " is too large (%" PRIu64 ">%" PRIu64 ").",
+          line_num, field_size, MOTIF_VALUE_MAX_CHAR - 1);
+        badexit("");
       }
       bed.range_names[bed.n_regions] = malloc(sizeof(char) * (field_size + 1));
       if (bed.range_names[bed.n_regions] == NULL) {
@@ -2587,14 +2602,15 @@ static void read_bed(void) {
     if ((field_size = parse_bed_field(line.s, 1, tmp_field, 0)) == 0) {
       ks_destroy(kbed);
       free(bed.range_names[bed.n_regions]);
-      fprintf(stderr, "Error: Line %'llu in bed has an empty sequence name.", line_num);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty sequence name.", line_num);
       badexit("");
     }
-    if (field_size > SEQ_NAME_MAX_CHAR) {
+    if (field_size >= MOTIF_VALUE_MAX_CHAR) {
       ks_destroy(kbed);
       free(bed.range_names[bed.n_regions]);
-      fprintf(stderr, "Error: Sequence name in bed on line  %'llu is too large (%llu>%llu).",
-        line_num, field_size, SEQ_NAME_MAX_CHAR);
+      fprintf(stderr, "Error: Sequence name in bed on line  %'" PRIu64 " is too large (%" PRIu64 ">%" PRIu64 ").",
+        line_num, field_size, MOTIF_VALUE_MAX_CHAR - 1);
+      badexit("");
     }
     bed.seq_names[bed.n_regions] = malloc(sizeof(char) * (field_size + 1));
     if (bed.seq_names[bed.n_regions] == NULL) {
@@ -2642,7 +2658,7 @@ static void fill_bed_seq_indices(void) {
   for (uint64_t i = 0; i < bed.n_regions; i++) {
     k = kh_get(seq_str_h, seq_hash_tab, bed.seq_names[i]);
     if (k == kh_end(seq_hash_tab)) {
-      fprintf(stderr, "Error: Range #%'llu in bed file has a sequence name not in input sequences (%s).",
+      fprintf(stderr, "Error: Range #%'" PRIu64 " in bed file has a sequence name not in input sequences (%s).",
         i + 1, bed.seq_names[i]);
       badexit("");
     }
@@ -2653,17 +2669,17 @@ static void fill_bed_seq_indices(void) {
 static void check_bed_ranges(void) {
   for (uint64_t i = 0; i < bed.n_regions; i++) {
     if (bed.starts[i] + 1 > seq_sizes[bed.seq_indices[i]]) {
-      fprintf(stderr, "Error: Range #%'llu in bed file is out of bounds on sequence %s.\n",
+      fprintf(stderr, "Error: Range #%'" PRIu64 " in bed file is out of bounds on sequence %s.\n",
         i + 1, seq_names[bed.seq_indices[i]]);
-      fprintf(stderr, "    Bed range = %'llu-%'llu\n", bed.starts[i] + 1, bed.ends[i]);
-      fprintf(stderr, "    Sequence size = %'llu", seq_sizes[bed.seq_indices[i]]);
+      fprintf(stderr, "    Bed range = %'" PRIu64 "-%'" PRIu64 "\n", bed.starts[i] + 1, bed.ends[i]);
+      fprintf(stderr, "    Sequence size = %'" PRIu64 "", seq_sizes[bed.seq_indices[i]]);
       badexit("");
     } else if (bed.ends[i] > seq_sizes[bed.seq_indices[i]]) {
       if (args.v) {
-        fprintf(stderr, "Warning: Trimming range #%'llu in bed file on sequence %s.\n",
+        fprintf(stderr, "Warning: Trimming range #%'" PRIu64 " in bed file on sequence %s.\n",
           i + 1, seq_names[bed.seq_indices[i]]);
-        fprintf(stderr, "    Bed range = %'llu-%'llu\n", bed.starts[i] + 1, bed.ends[i]);
-        fprintf(stderr, "    Sequence size = %'llu\n", seq_sizes[bed.seq_indices[i]]);
+        fprintf(stderr, "    Bed range = %'" PRIu64 "-%'" PRIu64 "\n", bed.starts[i] + 1, bed.ends[i]);
+        fprintf(stderr, "    Sequence size = %'" PRIu64 "\n", seq_sizes[bed.seq_indices[i]]);
       }
       bed.ends[i] = seq_sizes[bed.seq_indices[i]];
     }
@@ -2672,7 +2688,7 @@ static void check_bed_ranges(void) {
 
 static void print_bed_stats(void) {
   if (args.w) {
-    fprintf(stderr, "%'llu line(s) total, with %'llu comment/header and %'llu empty line(s).\n",
+    fprintf(stderr, "%'" PRIu64 " line(s) total, with %'" PRIu64 " comment/header and %'" PRIu64 " empty line(s).\n",
       bed.n_lines, bed.n_comments, bed.n_empty);
   }
   uint64_t n_seqs = 0, n_bases = 0;
@@ -2688,7 +2704,7 @@ static void print_bed_stats(void) {
   for (uint64_t i = 0; i < seq_info.n; i++) {
     n_seqs += covered_seqs[i];
   }
-  fprintf(stderr, "Found %'llu range(s) covering %'llu base(s) across %'llu sequence(s).\n",
+  fprintf(stderr, "Found %'" PRIu64 " range(s) covering %'" PRIu64 " base(s) across %'" PRIu64 " sequence(s).\n",
     bed.n_regions, n_bases, n_seqs);
   free(covered_seqs);
 }
@@ -2702,7 +2718,7 @@ static void print_seq_stats_single_in_bed(FILE *whereto, const uint64_t seq_i, c
     if (bed.seq_indices[i] == seq_j) {
       ERASE_ARRAY(char_counts, 256);
       count_bases_single_in_bed(seqs[seq_i], bed.starts[i], bed.ends[i]);
-      fprintf(whereto, "%s:%llu-%llu(%c)\t%s\t%llu\t%s\t%llu\t%.2f\t%llu\n",
+      fprintf(whereto, "%s:%" PRIu64 "-%" PRIu64 "(%c)\t%s\t%" PRIu64 "\t%s\t%" PRIu64 "\t%.2f\t%" PRIu64 "\n",
         seq_names[bed.seq_indices[i]], bed.starts[i] + 1, bed.ends[i], bed.strands[i],
         bed.range_names[i], seq_j + 1, seq_names[seq_j], bed.ends[i] - bed.starts[i],
         calc_gc() * 100.0, (bed.ends[i] - bed.starts[i]) - standard_base_count());
@@ -2714,7 +2730,7 @@ static void print_seq_stats_in_bed(FILE *whereto) {
   for (uint64_t i = 0; i < bed.n_regions; i++) {
     ERASE_ARRAY(char_counts, 256);
     count_bases_single_in_bed(seqs[bed.seq_indices[i]], bed.starts[i], bed.ends[i]);
-    fprintf(whereto, "%s:%llu-%llu(%c)\t%s\t%llu\t%s\t%llu\t%.2f\t%llu\n",
+    fprintf(whereto, "%s:%" PRIu64 "-%" PRIu64 "(%c)\t%s\t%" PRIu64 "\t%s\t%" PRIu64 "\t%.2f\t%" PRIu64 "\n",
       seq_names[bed.seq_indices[i]], bed.starts[i] + 1, bed.ends[i], bed.strands[i],
       bed.range_names[i], bed.seq_indices[i] + 1, seq_names[bed.seq_indices[i]],
       bed.ends[i] - bed.starts[i], calc_gc() * 100.0,
@@ -2747,7 +2763,7 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
 #define PRINT_RES_BED(BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, \
   BED_RANGE1_STRAND, BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, \
   PVALUE8, SCORE9, SCORE_PCT10, MATCH11_SIZE, MATCH11) \
-    fprintf(files.o, "%s:%llu-%llu(%c)\t%s\t%s\t%llu\t%llu\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
+    fprintf(files.o, "%s:%" PRIu64 "-%" PRIu64 "(%c)\t%s\t%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
       BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, BED_RANGE1_STRAND, \
       BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, PVALUE8, SCORE9, \
       SCORE_PCT10, MATCH11_SIZE, MATCH11)
@@ -2766,7 +2782,7 @@ static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const
   const int threshold = motif->threshold - 1;
   int score = INT_MIN, score_rc = INT_MIN;
   if (bed_strand_i == '.') {
-    for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
+    for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size + 1; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
@@ -2780,7 +2796,7 @@ static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const
       }
     }
   } else if (bed_strand_i == '+') {
-    for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
+    for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size + 1; i++) {
       score_subseq(motif, seq, i, &score, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
@@ -2789,7 +2805,7 @@ static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const
       }
     }
   } else if (bed_strand_i == '-') {
-    for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size; i++) {
+    for (uint64_t i = bed_start_i - 1; i < bed_end_i - mot_size + 1; i++) {
       score_subseq_rev(motif, seq, i, &score, char2Xindex);
       if (UNLIKELY(score > threshold)) {
         PRINT_RES_BED(seq_name, bed_start_i, bed_end_i, bed_strand_i, bed_name, seq_name,
@@ -2802,7 +2818,7 @@ static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const
 
 #define PRINT_RES(SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, \
   SCORE_PCT8, MATCH9_SIZE, MATCH9) \
-    fprintf(files.o, "%s\t%llu\t%llu\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
+    fprintf(files.o, "%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
       SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, SCORE_PCT8, \
       MATCH9_SIZE, MATCH9)
 
@@ -2841,28 +2857,28 @@ static void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t
 static void print_seq_stats_single(FILE *whereto, const uint64_t seq_i, const uint64_t seq_j) {
   ERASE_ARRAY(char_counts, 256);
   count_bases_single(seqs[seq_i], seq_sizes[seq_j]);
-  fprintf(whereto, "%llu\t%s\t", seq_j + 1, seq_names[seq_j]);
-  fprintf(whereto, "%llu\t", seq_sizes[seq_j]);
+  fprintf(whereto, "%" PRIu64 "\t%s\t", seq_j + 1, seq_names[seq_j]);
+  fprintf(whereto, "%" PRIu64 "\t", seq_sizes[seq_j]);
   if (!seq_sizes[seq_j]) {
     fprintf(whereto, "nan\t");
   } else {
     fprintf(whereto, "%.2f\t", calc_gc() * 100.0);
   }
-  fprintf(whereto, "%llu\n", seq_sizes[seq_j] - standard_base_count());
+  fprintf(whereto, "%" PRIu64 "\n", seq_sizes[seq_j] - standard_base_count());
 }
 
 static void print_seq_stats(FILE *whereto) {
   for (uint64_t i = 0; i < seq_info.n; i++) {
     ERASE_ARRAY(char_counts, 256);
     count_bases_single(seqs[i], seq_sizes[i]);
-    fprintf(whereto, "%llu\t%s\t", i + 1, seq_names[i]);
-    fprintf(whereto, "%llu\t", seq_sizes[i]);
+    fprintf(whereto, "%" PRIu64 "\t%s\t", i + 1, seq_names[i]);
+    fprintf(whereto, "%" PRIu64 "\t", seq_sizes[i]);
     if (!seq_sizes[i]) {
       fprintf(whereto, "nan\t");
     } else {
       fprintf(whereto, "%.2f\t", calc_gc() * 100.0);
     }
-    fprintf(whereto, "%llu\n", seq_sizes[i] - standard_base_count());
+    fprintf(whereto, "%" PRIu64 "\n", seq_sizes[i] - standard_base_count());
   }
 }
 
@@ -2880,8 +2896,9 @@ static void add_consensus_motif(const char *consensus) {
   }
   motifs[0]->name[i] = '\0';
   if (motifs[0]->size > MAX_MOTIF_SIZE / 5) {
-    fprintf(stderr, "Error: Consensus sequence is too large (%llu>max=%llu).",
+    fprintf(stderr, "Error: Consensus sequence is too large (%" PRIu64 ">max=%" PRIu64 ").",
       motifs[0]->size, MAX_MOTIF_SIZE / 5);
+    badexit("");
   }
   uint64_t let_i;
   for (uint64_t pos = 0; pos < motifs[0]->size; pos++) {
@@ -3006,6 +3023,7 @@ int main_scan(int argc, char **argv) {
         files.b_open = 1;
         break;
       case 's':
+        if (files.s_open) badexit("Error: -s specified more than once.");
         has_seqs = 1;
         if (optarg[0] == '-' && optarg[1] == '\0') {
           files.s = gzdopen(fileno(stdin), "r");
@@ -3020,6 +3038,7 @@ int main_scan(int argc, char **argv) {
         files.s_open = 1;
         break;
       case 'o':
+        if (files.o_open) badexit("Error: -o specified more than once.");
         use_stdout = 0;
         files.o = fopen(optarg, "w");
         if (files.o == NULL) {
@@ -3064,7 +3083,7 @@ int main_scan(int argc, char **argv) {
         if (str_to_int(optarg, &args.nthreads)) {
           badexit("Error: Failed to parse -j value.");
         }
-        if (!args.nthreads) {
+        if (args.nthreads <= 0) {
           badexit("Error: -j must be a positive integer.");
         }
         break;
@@ -3284,7 +3303,8 @@ int main_scan(int argc, char **argv) {
     uint64_t max_possible_hits = 0;
     for (uint64_t i = 0; i < motif_info.n; i++) {
       for (uint64_t j = 0; j < seq_info.n; j++) {
-        max_possible_hits += MAX(0, 1 + seq_sizes[j] - motifs[i]->size);
+        if (seq_sizes[j] >= motifs[i]->size)
+          max_possible_hits += 1 + seq_sizes[j] - motifs[i]->size;
       }
     }
     if (args.scan_rc) max_possible_hits *= 2;
@@ -3297,14 +3317,14 @@ int main_scan(int argc, char **argv) {
         bed_sum += bed.ends[k] - bed.starts[k];
       }
       fprintf(files.o,
-        "##MotifCount=%llu MotifSize=%llu BedCount=%llu BedSize=%llu SeqCount=%llu SeqSize=%llu GC=%.2f%% Ns=%llu\n",
+        "##MotifCount=%" PRIu64 " MotifSize=%" PRIu64 " BedCount=%" PRIu64 " BedSize=%" PRIu64 " SeqCount=%" PRIu64 " SeqSize=%" PRIu64 " GC=%.2f%% Ns=%" PRIu64 "\n",
         motif_info.n, motif_size, bed.n_regions, bed_sum, seq_info.n,
         seq_info.total_bases, seq_info.gc_pct, seq_info.unknowns);
       fprintf(files.o, 
         "##bed_range\tbed_name\tseq_name\tstart\tend\tstrand\tmotif\tpvalue\tscore\tscore_pct\tmatch\n");
     } else {
       fprintf(files.o,
-        "##MotifCount=%llu MotifSize=%llu SeqCount=%llu SeqSize=%llu GC=%.2f%% Ns=%llu MaxPossibleHits=%llu\n",
+        "##MotifCount=%" PRIu64 " MotifSize=%" PRIu64 " SeqCount=%" PRIu64 " SeqSize=%" PRIu64 " GC=%.2f%% Ns=%" PRIu64 " MaxPossibleHits=%" PRIu64 "\n",
         motif_info.n, motif_size, seq_info.n, seq_info.total_bases, seq_info.gc_pct,
         seq_info.unknowns, max_possible_hits);
       fprintf(files.o, 
@@ -3337,8 +3357,8 @@ int main_scan(int argc, char **argv) {
             for (uint64_t k = 0; k < bed.n_regions; k++) {
               if (bed.seq_indices[k] == j) {
                 if (args.w && !args.progress) {
-                  fprintf(stderr, "          Scanning range: %llu-%llu\n",
-                      bed.starts[i] + 1, bed.ends[i]);
+                  fprintf(stderr, "          Scanning range: %" PRIu64 "-%" PRIu64 "\n",
+                      bed.starts[k] + 1, bed.ends[k]);
                 }
                 score_seq_in_bed(motifs[i], 0, k);
               }
@@ -3349,12 +3369,12 @@ int main_scan(int argc, char **argv) {
         kseq_rewind(kseq);
         if (args.progress) print_pb((i + 1.0) / motif_info.n);
       }
-      free(seqs[0]);
       if (args.progress) fprintf(stderr, "\n");
+      kseq_destroy(kseq);
     } else {
       if (args.progress) print_pb(0.0);
       for (uint64_t t = 0; t < args.nthreads; t++) {
-        uint64_t *thread_i = malloc(sizeof(uint64_t *));
+        uint64_t *thread_i = malloc(sizeof(*thread_i));
         if (thread_i == NULL) {
           badexit("Error: Failed to allocate memory for thread index.");
         }

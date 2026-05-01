@@ -1,0 +1,7 @@
+##yamscan v2.0.0 [ synthetic ]
+##MotifCount=1 MotifSize=5 SeqCount=1 SeqSize=100 GC=50% Ns=0 MaxPossibleHits=96
+##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+s1	1	5	+	m1	0.05	3.0	50.0	ACGTA
+s1	2	6	+	m1	0.05	3.0	50.0	CGTAA
+s1	10	14	+	m1	0.05	3.0	50.0	GTAAC
+s1	11	15	+	m1	0.05	3.0	50.0	TAACC
