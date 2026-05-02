@@ -1,0 +1,183 @@
+CHANGES IN VERSION 2.0.1 (2026-05-02)
+--------------------------------------
+
+* Fixed 21 bugs identified by a systematic audit of all three tools.
+  Highlights:
+
+  yamscan:
+  - Fixed verbose BED scan log printing garbage coordinates due to using
+    the motif loop index instead of the BED region index for bed.starts[]
+    and bed.ends[].
+  - Fixed add_seq_name checking the name length after writing into the
+    destination buffer (guard was dead code); also fixed a pre-existing
+    use-after-free reading kseq fields after kseq_destroy.
+  - Fixed kseq_t being leaked in the low-mem scanning path (also removed
+    an erroneous free of kseq-owned memory) and in the threaded path.
+  - Fixed malloc(sizeof(uint64_t *)) that should be sizeof(uint64_t) for
+    thread index allocation (harmless on 64-bit, UB on 32-bit ports).
+  - Fixed get_meme_bkg error messages that named 'C' when the parser had
+    encountered a misplaced G or T/U character.
+  - Duplicate -s and -o flags now exit with a clear error instead of
+    silently reopening the file and leaking the first handle.
+
+  yamdedup:
+  - Fixed check_field_size accepting fields of exactly FIELD_MAX_CHAR
+    (512) bytes, which extract_field had already dropped to empty; such
+    fields now produce a clear error.
+  - Duplicate -i and -o flags now exit with a clear error.
+  - Fixed a crash in cleanup when badexit was called before the hash
+    table was initialised.
+
+  All tools:
+  - Replaced all %llu / %'llu printf format specifiers with PRIu64 /
+    %'" PRIu64 " from <inttypes.h> for C99 portability.
+
+* Added an automated test suite (make check / make check-debug). Tests
+  cover smoke tests, happy-path functional behaviour for all three
+  subcommands, and regression cases for all 21 fixed bugs. The debug
+  target rebuilds with AddressSanitizer and UndefinedBehaviorSanitizer
+  before running the suite. CI now runs both targets on every push.
+
+
+CHANGES IN VERSION 2.0.0 (2025-10-18)
+--------------------------------------
+
+* Merged yamscan, yamshuf, and yamdedup into a single binary: yamtk.
+  Subcommands are invoked as yamtk scan, yamtk shuf, and yamtk dedup.
+  The individual tools are no longer distributed separately.
+
+* Fixed several bugs identified since yamscan 1.7 / yamshuf 1.2:
+  - Fixed 12 critical and important bugs in yamscan (motif parser
+    overflows, realloc NULL checks, BED off-by-ones, uint64 underflow,
+    score sorting non-determinism, negative argument acceptance).
+  - Fixed 4 critical bugs in yamdedup (realloc sizeof, early eviction
+    trigger, tiebreak non-determinism, p-value validation).
+  - Fixed 2 bugs in yamshuf (shuffle_linear tail skip and bias,
+    shuffle_euler terminal vertex edge corruption).
+
+* Improved tolerance of the BED reader to leading/trailing whitespace
+  characters on a field boundary (yamscan, 2025-02-13).
+
+* Minor Makefile and compilation warning cleanups.
+
+
+CHANGES IN YAMSHUF 1.3 (2023-11-30)
+-------------------------------------
+
+* Small performance improvement to sequence shuffling throughput.
+
+
+CHANGES IN YAMSCAN 1.7 / YAMSHUF 1.2 (2023-09-11)
+----------------------------------------------------
+
+* Added sequence masking to yamscan (-g / --mask). Masked (lower-case)
+  bases are skipped during scanning; hits overlapping masked positions
+  are suppressed.
+
+* Updated the random number generator in yamshuf from xoroshiro128+ to
+  xoroshiro128++ 1.0 for improved statistical quality.
+
+
+CHANGES IN YAMSHUF 1.1 (2023-08-15)
+-------------------------------------
+
+* Added -p flag to print k-mer counts alongside shuffled sequences.
+
+* Disallowed tab characters in -p output columns.
+
+
+CHANGES IN YAMSCAN 1.6 / YAMSHUF 1.0 (2023-08-14)
+----------------------------------------------------
+
+* Added yamshuf: a fast k-mer-preserving sequence shuffler. Supports
+  four shuffling methods:
+  - Fisher-Yates (k=1, default)
+  - Eulerian path shuffle (k>1, exact k-mer composition preservation)
+  - Markov chain shuffle (-m)
+  - Linear k-mer shuffle (-l)
+  Accepts gzipped FASTA/FASTQ input; uses xoroshiro128+ for random
+  number generation; memory scales exponentially with k (max k=9).
+
+* Added utility script std_kmers.sh for k-mer frequency analysis.
+
+* Fixed a BED scanning loop bug in yamscan where the final valid window
+  in a BED interval was skipped due to an off-by-one (< instead of <=
+  in the loop bound).
+
+
+CHANGES IN YAMSCAN 1.5 / YAMDEDUP 1.0 (2022-12-02)
+-----------------------------------------------------
+
+Note: minimotif was renamed yamscan at this release; a companion
+deduplication tool yamdedup was added at the same time.
+
+* Added yamdedup: deduplicates overlapping hits from yamscan output,
+  keeping the highest-scoring hit per (sequence, motif, strand)
+  combination. Accepts yamscan TSV output or generic BED input.
+  Low peak memory via chunk-based streaming. Uses khash for
+  sequence/motif/strand bucketing.
+
+* Switched yamscan internal data structures to khash for sequence and
+  motif name lookups; safer string-to-number conversion throughout.
+
+* Post-release bugfixes:
+  - Fixed type widths (uint64_t/size_t) throughout yamscan and yamdedup.
+  - Fixed a BED scanning loop that skipped hits in the final window of
+    each interval (partially; full fix in yamscan 1.6).
+
+* Added utility scripts: flip_rc.sh, to_gtf.sh, to_gff3.sh.
+
+
+CHANGES IN MINIMOTIF 1.3 (2022-11-04)
+---------------------------------------
+
+* Cleaned up and prettified output formatting.
+
+* Removed the -L flag.
+
+
+CHANGES IN MINIMOTIF 1.2 (2022-10-25)
+---------------------------------------
+
+* Added BED-restricted scanning (-x). Sequences are only scored within
+  the intervals specified by the BED file; all output coordinates refer
+  to positions within the BED ranges.
+
+* Added to_bed.sh utility script for converting output to BED format.
+
+* Added progress reporting to the companion deduplication workflow.
+
+
+CHANGES IN MINIMOTIF 1.1 (2022-09-10)
+---------------------------------------
+
+Note: the tool was distributed as minimotif at this time and later
+renamed yamscan / yamtk.
+
+* Added utility post-processing scripts.
+
+* Various documentation improvements.
+
+
+CHANGES IN MINIMOTIF 1.0 (2022-01-21)
+---------------------------------------
+
+Note: initial public release under the name minimotif.
+
+* Fast multi-threaded motif scanner for DNA/RNA sequences. Accepts
+  FASTA/FASTQ input (plain or gzipped). Scores every position using a
+  P-value CDF lookup table built from the PWM and a background model.
+
+* Supports MEME, JASPAR, HOMER, HOCOMOCO, and consensus motif formats.
+
+* Low-memory mode (-l) processes sequences one at a time instead of
+  loading all sequences into memory.
+
+* Prints sequence composition statistics when no motifs are provided.
+
+* Added JASPAR pseudocounts for columns summing to zero.
+
+* Linux compatibility; replaced ad-hoc sequence reading with kseq.h.
+
+* Performance improvements: memory allocation in chunks, reduced realloc
+  calls, slight CDF fill speedup.
