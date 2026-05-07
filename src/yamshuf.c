@@ -194,41 +194,25 @@ static void print_time(const uint64_t s, const char *what) {
 
 static void usage(void) {
   printf(
-    "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay             \n"
-    "Usage:  yamtk shuf [options] -i sequences.fa                                  \n"
-    "                                                                              \n"
-    " -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences \n"
-    "            to scan. Can be gzipped. Use '-' for stdin.  Non-standard         \n"
-    "            characters (i.e. other than ACGTU) will be read but are treated as\n"
-    "            the letter N during shuffling (exceptions: when -l is used or when\n"
-    "            -k is set to 1). Fastq files will be output as fasta.             \n"
-    " -k <int>   Size of shuffled k-mers. Default: %d. When k = 1 a Fisher-Yates    \n"
-    "            shuffle is performed. Max k for Euler/Markov methods: %d.        \n"
-    " -o <str>   Filename to output results. By default output goes to stdout.     \n"
-    " -s <int>   Seed to initialize random number generator. Default: %d.           \n"
-    " -m         Use Markov shuffling instead of performing a random Eulerian walk.\n"
-    "            Essentially generates random sequences with similar k-mer         \n"
-    "            compositions. Generally requires large sequences to be effective. \n"
-    " -l         Split up the sequences linearly into k-mers and do a Fisher-Yates \n"
-    "            shuffle instead of performing a random Eulerian walk. Very fast.  \n"
-    " -r <int>   Repeat shuffling for each sequence any number of times. The repeat\n"
-    "            number will be appended to the sequence name. Default: 0.         \n"
-    /* " -W <int>   Instead of shuffling the entire sequence, progressively move      \n" */
-    /* "            through the sequence and shuffle in windows of any size.          \n" */
-    /* " -S <int>   Window step size when -w is set. Default: window size.            \n" */
-    " -R         Reset the random number generator every time a new sequence is    \n"
-    "            shuffled using the set seed instead of only setting it once.      \n"
-    /* " -g         Gap characters [%s] will be left in-place, and not shuffled.      \n" */
-    " -n         Output sequence as RNA. By default the sequence is output as DNA, \n"
-    "            even if the input is RNA. This flag only applies when k > 1 and -l\n"
-    "            is not used, since in such cases the existing sequence letters are\n"
-    "            simply being rearranged.                                          \n"
-    " -p         Activate an alternate mode which prints k-mer counts instead of   \n"
-    "            shuffling. All options excepting -i, -k and -o are ignored.       \n"
-    " -v         Verbose mode.                                                     \n"
-    " -w         Very verbose mode.                                                \n"
-    " -h         Print this help message.                                          \n"
-    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_K, MAX_K, DEFAULT_SEED //, GAP_CHARS
+    "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
+    "Usage:  yamtk shuf [options] -i sequences.fa\n"
+    "\n"
+    " -i <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.\n"
+    "            Non-ACGTU characters are treated as N (except with -l or -k 1).\n"
+    " -k <int>   k-mer size for shuffling. Default: %d. k=1 uses Fisher-Yates;\n"
+    "            max k for Euler/Markov: %d.\n"
+    " -o <str>   Output file. Default: stdout.\n"
+    " -s <int>   RNG seed. Default: %d.\n"
+    " -m         Markov shuffling: generates sequences with similar k-mer\n"
+    "            frequencies. Best for large sequences.\n"
+    " -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).\n"
+    " -r <int>   Repeat shuffle N times per sequence; index appended to name.\n"
+    " -R         Reset RNG to seed before each sequence instead of just once.\n"
+    " -n         Output RNA instead of DNA. Only applies when k > 1 and -l\n"
+    "            is not used.\n"
+    " -p         Print k-mer counts instead of shuffling (-i, -k, -o only).\n"
+    " -v / -w / -h   Verbose / very-verbose / help.\n"
+    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_K, MAX_K, DEFAULT_SEED
   );
 }
 
