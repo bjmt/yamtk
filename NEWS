@@ -1,6 +1,9 @@
 CHANGES IN VERSION 2.1.0 (2026-05-07)
 --------------------------------------
 
+* Condensed -h output for all subcommands (scan, shuf, enr) to fit on one
+  screen; wording and formatting now consistent across all three.
+
 * New subcommand: yamtk enr — motif enrichment scoring.
   Compares a positive FASTA against a negative FASTA (or an in-process
   shuffled-positive null) for each motif in a MEME/JASPAR/HOMER/HOCOMOCO
