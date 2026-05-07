@@ -41,63 +41,35 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.0.0  Copyright (C) 2025  Benjamin Jean-Marie Tremblay
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
 
- -m <str>   Filename of text file containing motifs. Acceptable formats: MEME,
-            JASPAR, HOMER, HOCOMOCO (PCM). Must be 1-50 bases wide.
- -1 <str>   Instead of -m, scan a single consensus sequence. Ambiguity letters
-            are allowed. Must be 1-50 bases wide. The -b, -t, -0, -p, and -n
-            flags are unused.
- -s <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences
-            to scan. Can be gzipped. Use '-' for stdin. Omitting -s will cause
-            yamscan to print the parsed motifs instead of scanning.
-            Alternatively, solely providing -s and not -m/-1 will cause
-            yamscan to return sequence stats. Non-standard characters (i.e.
-            other than ACGTU) will be read but are treated as gaps during
-            scanning.
- -x <str>   Filename of a BED-formatted file containing ranges within
-            sequences which scanning will be restricted to. Must have at least
-            three tab-separated columns. If a fourth column is present it will
-            be used as the range name. If a sixth strand column is present
-            scanning will be restricted to the indicated strand. Note that -f
-            is disabled when -x is used. It is recommended the BED be sorted
-            for speed. Overlapping ranges are allowed, but be warned that they
-            will be individually scanned thus potentially introducing
-            duplicate hits. The file can be gzipped.
- -o <str>   Filename to output results. By default output goes to stdout.
- -b <dbl,   Comma-separated background probabilities for A,C,G,T|U. By default
-     dbl,   the background probability values from the motif file (MEME only)
-     dbl,   are used, or a uniform background is assumed. Used in PWM
-     dbl>   generation.
+ -m <str>   Motif file (MEME, JASPAR, HOMER, HOCOMOCO PCM). 1-50 bases wide.
+ -1 <str>   Scan a single consensus sequence (ambiguity letters allowed).
+            1-50 bases wide. Ignores -b, -t, -0, -p, -n.
+ -s <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.
+            Omit -s to print parsed motifs; omit -m/-1 to print sequence stats.
+            Non-ACGTU characters are treated as gaps during scanning.
+ -x <str>   BED file of ranges to restrict scanning to. Col 4 = range name,
+            col 6 = strand. Can be gzipped. Disables -f.
+ -o <str>   Output file. Default: stdout.
+ -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T. Default: from
+            motif file (MEME only) or uniform.
  -f         Only scan the forward strand.
- -t <dbl>   Threshold P-value. Default: 0.0001.
- -0         Instead of using a threshold, simply report all hits with a score
-            of zero or greater. Useful for manual filtering.
- -p <int>   Pseudocount for PWM generation. Default: 1. Must be a positive
-            integer.
- -n <int>   Number of motif sites used in PPM->PCM conversion. Default: 1000.
- -M         Mask lower case letters and do not scan.
- -d         Deduplicate motif/sequence names. Default: abort. Duplicates will
-            have the motif/sequence numbers appended. Incompatible with -x.
- -r         Don't trim motif (HOCOMOCO/JASPAR only, HOMER/MEME must already be
-            one word) and sequence names to the first word.
- -l         Deactivate low memory mode. Normally only a single sequence is
-            stored in memory at a time. Setting this flag allows the program
-            to instead store the entire input into memory, which can help with
-            performance in cases of slow disk access or gzipped files. Note
-            that this flag is automatically set when reading sequences from
-            stdin, and when multithreading is enabled.
- -j <int>   Number of threads yamscan can use to scan. Default: 1. Note that
-            increasing this number will also increase memory usage slightly.
-            The number of threads is limited by the number of motifs being
-            scanned.
- -g         Print a progress bar during scanning. This turns off some of the
-            messages printed by -w. Note that it's only useful if there is
-            more than one input motif.
- -v         Verbose mode.
- -w         Very verbose mode.
- -h         Print this help message.
+ -t <dbl>   P-value threshold. Default: 0.0001.
+ -0         Report all hits with score >= 0 (no p-value threshold).
+ -p <int>   Pseudocount for PWM generation. Default: 1.
+ -n <int>   Motif sites for PPM->PCM conversion. Default: 1000.
+ -M         Mask lower-case bases (skip scanning at those positions).
+ -d         Deduplicate motif/sequence names (default: abort on duplicates).
+            Incompatible with -x.
+ -r         Do not trim motif (HOCOMOCO/JASPAR) and sequence names to the
+            first word.
+ -l         Load all sequences into memory (default: one at a time). Auto-set
+            with stdin or -j > 1.
+ -j <int>   Threads. Default: 1. Capped at number of input motifs.
+ -g         Show progress bar (only useful with multiple motifs).
+ -v / -w / -h   Verbose / very-verbose / help.
 ```
 
 ### Output
