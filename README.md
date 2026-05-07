@@ -1,6 +1,7 @@
 # yamtk: Yet Another Motif ToolKit
 
 * Motif scanning: [yamtk scan](#yamscan)
+* Motif enrichment: [yamtk enr](#yamenr)
 * Deduplicate overlapping motif hits: [yamtk dedup](#yamdedup)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
@@ -448,36 +449,24 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.0.0  Copyright (C) 2023  Benjamin Jean-Marie Tremblay
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk shuf [options] -i sequences.fa
 
- -i <str>   Filename of fast(a|q)-formatted file containing DNA/RNA sequences
-            to scan. Can be gzipped. Use '-' for stdin.  Non-standard
-            characters (i.e. other than ACGTU) will be read but are treated as
-            the letter N during shuffling (exceptions: when -l is used or when
-            -k is set to 1). Fastq files will be output as fasta.
- -k <int>   Size of shuffled k-mers. Default: 3. When k = 1 a Fisher-Yates
-            shuffle is performed. Max k for Euler/Markov methods: 9.
- -o <str>   Filename to output results. By default output goes to stdout.
- -s <int>   Seed to initialize random number generator. Default: 4.
- -m         Use Markov shuffling instead of performing a random Eulerian walk.
-            Essentially generates random sequences with similar k-mer
-            compositions. Generally requires large sequences to be effective.
- -l         Split up the sequences linearly into k-mers and do a Fisher-Yates
-            shuffle instead of performing a random Eulerian walk. Very fast.
- -r <int>   Repeat shuffling for each sequence any number of times. The repeat
-            number will be appended to the sequence name. Default: 0.
- -R         Reset the random number generator every time a new sequence is
-            shuffled using the set seed instead of only setting it once.
- -n         Output sequence as RNA. By default the sequence is output as DNA,
-            even if the input is RNA. This flag only applies when k > 1 and -l
-            is not used, since in such cases the existing sequence letters are
-            simply being rearranged.
- -p         Activate an alternate mode which prints k-mer counts instead of
-            shuffling. All options excepting -i, -k and -o are ignored.
- -v         Verbose mode.
- -w         Very verbose mode.
- -h         Print this help message.
+ -i <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.
+            Non-ACGTU characters are treated as N (except with -l or -k 1).
+ -k <int>   k-mer size for shuffling. Default: 3. k=1 uses Fisher-Yates;
+            max k for Euler/Markov: 9.
+ -o <str>   Output file. Default: stdout.
+ -s <int>   RNG seed. Default: 4.
+ -m         Markov shuffling: generates sequences with similar k-mer
+            frequencies. Best for large sequences.
+ -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).
+ -r <int>   Repeat shuffle N times per sequence; index appended to name.
+ -R         Reset RNG to seed before each sequence instead of just once.
+ -n         Output RNA instead of DNA. Only applies when k > 1 and -l
+            is not used.
+ -p         Print k-mer counts instead of shuffling (-i, -k, -o only).
+ -v / -w / -h   Verbose / very-verbose / help.
 ```
 
 ### Overview of shuffling algorithms
