@@ -358,23 +358,27 @@ Benjamini-Hochberg FDR-corrected q-values.
 yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk enr [options] -i positives.fa -m motifs.txt
 
- -i <str>   Positives FASTA. Can be gzipped.
- -n <str>   Negatives FASTA. If omitted, positives are shuffled.
- -m <str>   Motif file (MEME, JASPAR, HOMER, or HOCOMOCO PCM).
+ -i <str>   Positives FASTA. Can be gzipped. Use '-' for stdin (requires -n).
+ -n <str>   Negatives FASTA. If omitted, positives are shuffled (see -k, -s).
+ -m <str>   Motif file (MEME, JASPAR, HOMER, HOCOMOCO PCM).
  -o <str>   Output TSV file. Default: stdout.
- -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T.
+ -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T. Default: from
+            motif file (MEME only) or uniform.
  -p <int>   Pseudocount for PWM generation. Default: 1.
- -N <int>   Number of motif sites for PPM->PCM conversion. Default: 1000.
+ -N <int>   Motif sites for PPM->PCM conversion. Default: 1000.
  -d         Deduplicate motif/sequence names (default: abort on duplicates).
  -r         Do not trim motif (HOCOMOCO/JASPAR) and sequence names to the
             first word.
  -t <dbl>   P-value threshold for a hit. Default: 0.0001.
  -T <str>   Test mode: 'seqs' (default), 'sites', or 'ranksum'.
+            seqs    = Fisher's exact on per-sequence hit presence.
+            sites   = Fisher's exact on per-position hit rate.
+            ranksum = Threshold-free Mann-Whitney U on max PWM score.
  -f         Only scan the forward strand.
- -k <int>   Shuffle k-mer order when -n is absent. Default: 2.
+ -k <int>   Shuffle k-mer size when -n is absent. Default: 2.
  -s <uint>  RNG seed for shuffling. Default: time-seeded.
  -q <dbl>   Only report rows with q-value <= this. Default: 1.0.
- -j <int>   Number of threads. Default: 1.
+ -j <int>   Threads. Default: 1.
  -v / -w / -h   Verbose / very-verbose / help.
 ```
 
