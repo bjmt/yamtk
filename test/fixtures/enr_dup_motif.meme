@@ -1,0 +1,26 @@
+MEME version 5
+
+ALPHABET= ACGT
+
+strands: + -
+
+Background letter frequencies
+A 0.25 C 0.25 G 0.25 T 0.25
+
+MOTIF ebox CACGTG
+letter-probability matrix: alength= 4 w= 6 nsites= 100 E= 0
+ 0.02  0.96  0.01  0.01
+ 0.96  0.01  0.01  0.02
+ 0.01  0.96  0.01  0.02
+ 0.01  0.01  0.96  0.02
+ 0.01  0.01  0.01  0.97
+ 0.01  0.01  0.97  0.01
+
+MOTIF ebox TATAAA
+letter-probability matrix: alength= 4 w= 6 nsites= 100 E= 0
+ 0.01  0.01  0.01  0.97
+ 0.97  0.01  0.01  0.01
+ 0.01  0.01  0.01  0.97
+ 0.97  0.01  0.01  0.01
+ 0.97  0.01  0.01  0.01
+ 0.97  0.01  0.01  0.01

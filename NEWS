@@ -1,3 +1,22 @@
+CHANGES IN VERSION 2.1.0 (2026-05-07)
+--------------------------------------
+
+* New subcommand: yamtk enr — motif enrichment scoring.
+  Compares a positive FASTA against a negative FASTA (or an in-process
+  shuffled-positive null) for each motif in a MEME/JASPAR/HOMER/HOCOMOCO
+  file. Three test modes via -T:
+    seqs    — one-tailed Fisher's exact test on per-sequence hit presence.
+    sites   — one-tailed Fisher's exact test on per-position hit rate.
+    ranksum — threshold-free Mann-Whitney U on per-sequence max PWM score
+              (AUC effect size; tie-corrected normal approximation).
+  All modes always report both per-sequence and per-site hit counts.
+  BH FDR correction applied across all motifs in the run (-q filter).
+  Supports gzipped input, multi-threading (-j), custom backgrounds (-b),
+  and all four motif formats supported by yamtk scan.
+  Full flag set matches yamtk scan: -p (pseudocount), -N (nsites, uppercase
+  to avoid conflict with -n for negatives FASTA), -d (deduplicate names),
+  -r (do not trim names to first word).
+
 CHANGES IN VERSION 2.0.1 (2026-05-02)
 --------------------------------------
 
