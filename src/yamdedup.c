@@ -80,6 +80,8 @@ static long peak_mem(void) {
 }
 #endif
 
+/* ---- Debug ---- */
+
 #ifdef DEBUG
 static uint64_t malloc_count = 0;
 static uint64_t malloc_fun_counts = 0;
@@ -108,6 +110,18 @@ static void print_peak_mb(void) {
       (double) bytes / 1024.0);
   }
 }
+
+static void print_time(const uint64_t s, const char *what) {
+  if (s > 7200) {
+    fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
+  } else if (s > 120) {
+    fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
+  } else if (s > 1) {
+    fprintf(stderr, "Needed %'" PRIu64 " seconds to %s.\n", s, what);
+  }
+}
+
+/* ---- Usage ---- */
 
 /* TODO: Give the option to specify what constitutes an overlap. */
 
@@ -154,6 +168,8 @@ static void usage(void) {
     , YAMTK_VERSION, YAMTK_YEAR
   );
 }
+
+/* ---- Data structures ---- */
 
 static khash_t(str_h) *hash_tab;
 
@@ -289,6 +305,8 @@ static inline int alloc_more_to_feat_tab(void) {
   return 0;
 }
 
+/* ---- Args ---- */
+
 typedef struct args_t {
   int ignore_strand;
   int ignore_motif;
@@ -313,6 +331,8 @@ static args_t args = {
   .w                   = 0
 };
 
+/* ---- Files ---- */
+
 typedef struct files_t {
   int     i_open;
   int     o_open;
@@ -329,6 +349,8 @@ static void close_files(void) {
   if (files.i_open) gzclose(files.i);
   if (files.o_open) fclose(files.o);
 }
+
+/* ---- Helpers ---- */
 
 typedef struct score2index_t {
   double   score;
@@ -408,6 +430,8 @@ static inline int ranges_are_overlapping(const uint64_t start1, const uint64_t e
     return 0;
   }
 }
+
+/* ---- Core logic ---- */
 
 static inline uint64_t dedup_and_purge_feat(const uint64_t i) {
 #ifdef DEBUG
@@ -591,6 +615,8 @@ static inline int safe_strtoull(char *str, uint64_t *res) {
     return 0;
   }
 }
+
+/* ---- Input parsing ---- */
 
 static void run_minidedup(void) {
   int ret_val;
@@ -812,15 +838,7 @@ error_blank:
   badexit("");
 }
 
-static void print_time(const uint64_t s, const char *what) {
-  if (s > 7200) {
-    fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
-  } else if (s > 120) {
-    fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
-  } else if (s > 1) {
-    fprintf(stderr, "Needed %'" PRIu64 " seconds to %s.\n", s, what);
-  }
-}
+/* ---- Main ---- */
 
 int main_dedup(int argc, char **argv) {
 

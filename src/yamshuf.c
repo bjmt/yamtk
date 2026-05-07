@@ -132,6 +132,8 @@ static long peak_mem(void) {
 }
 #endif
 
+/* ---- RNG ---- */
+
 // Modified krng.h code from Heng Li to use xoroshiro128++ 1.0 instead
 
 typedef struct {
@@ -188,6 +190,8 @@ static void print_time(const uint64_t s, const char *what) {
   }
 }
 
+/* ---- Usage ---- */
+
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay             \n"
@@ -228,6 +232,8 @@ static void usage(void) {
   );
 }
 
+/* ---- Args ---- */
+
 typedef struct args_t {
   int      k;
   int      seed;
@@ -260,6 +266,8 @@ static args_t args = {
   .window_overlap = 0
 };
 
+/* ---- Files ---- */
+
 typedef struct files_t {
   int    s_open;
   int    o_open;
@@ -276,6 +284,8 @@ void close_files(void) {
   if (files.s_open) gzclose(files.s);
   if (files.o_open) fclose(files.o);
 }
+
+/* ---- Lookup tables ---- */
 
 /* aA = 0, cC = 1, gG = 2, tTuU = 3 */
 static const unsigned char char2index[256] = { /* 16 x 16 */
@@ -314,6 +324,8 @@ static const uint64_t pow5[16] = {
 
 static xrng_t xrng;
 
+/* ---- Helpers ---- */
+
 static void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamshuf -h to see usage.\n", msg);
   close_files();
@@ -351,6 +363,8 @@ static inline void count_bases(const unsigned char *seq, const uint64_t size) {
 static inline void swap(unsigned char *seq, const uint64_t i, const uint64_t j) {
   const unsigned char tmp = seq[i]; seq[i] = seq[j]; seq[j] = tmp;
 }
+
+/* ---- Shuffle algorithms ---- */
 
 static int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {
   for (uint64_t i = 0, l = len - 1; i < l; i++) {
@@ -509,6 +523,8 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
 
 }
 
+/* ---- Output ---- */
+
 static void write_seq(const unsigned char *seq, const uint64_t size, const char *name, const char *comment, const uint64_t comment_l, const uint64_t n) {
   if (comment_l && n) {
     fprintf(files.o, ">%s %s-%" PRIu64 "\n", name, comment, n);
@@ -551,6 +567,8 @@ static void print_kmer_table_header(const uint64_t k, const int is_dna) {
   }
   fputc('\n', files.o);
 }
+
+/* ---- Main ---- */
 
 int main_shuf(int argc, char **argv) {
 

@@ -318,6 +318,8 @@ static void usage(void) {
   );
 }
 
+/* ---- Lookup tables ---- */
+
 static khash_t(seq_str_h) *seq_hash_tab;
 
 static const unsigned char char2maskindex[256] = {
@@ -405,6 +407,8 @@ enum MOTIF_FMT {
   FMT_UNKNOWN  = 5
 };
 
+/* ---- Args ---- */
+
 typedef struct args_t {
   double   bkg[4];
   double   pvalue;
@@ -442,6 +446,8 @@ static args_t args = {
   .v               = 0,
   .w               = 0
 };
+
+/* ---- BED data structure ---- */
 
 typedef struct bed_t {
   uint64_t  *seq_indices;
@@ -488,6 +494,8 @@ static void free_bed(void) {
   }
 }
 
+/* ---- Motif structs ---- */
+
 typedef struct motif_t {
   int         pwm[MAX_MOTIF_SIZE];         /* Slight perf boost by putting the pwms first */
   int         pwm_rc[MAX_MOTIF_SIZE];
@@ -522,6 +530,8 @@ static motif_info_t motif_info = {
   .n            = 0,
   .n_alloc      = 0
 };
+
+/* ---- CDF ---- */
 
 static uint64_t   *cdf_real_size;
 static double    **cdf;
@@ -560,6 +570,8 @@ static int alloc_cdf(void) {
   }
   return 0;
 }
+
+/* ---- Sequence data ---- */
 
 typedef struct seq_info_t {
   uint64_t     n_alloc;
@@ -608,9 +620,13 @@ static void free_cdf(void) {
   free(cdf_real_size);
 }
 
+/* ---- Threading ---- */
+
 static pthread_t         *threads;
 static pthread_mutex_t    pb_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t           pb_counter = 0;
+
+/* ---- Files ---- */
 
 typedef struct files_t {
   int       m_open;
@@ -636,6 +652,8 @@ static void close_files(void) {
   if (files.o_open) fclose(files.o);
   if (files.b_open) gzclose(files.b);
 }
+
+/* ---- Motif PWM helpers ---- */
 
 static void init_motif(motif_t *motif) {
   ERASE_ARRAY(motif->name, MAX_NAME_SIZE);
@@ -686,6 +704,8 @@ static inline int get_score_rc(const motif_t *motif, const unsigned char let, co
 static inline int get_score_i(const motif_t *motif, const int i, const uint64_t pos) {
   return motif->pwm[i + pos * 5];
 }
+
+/* ---- Helpers ---- */
 
 static void free_ht(void) {
   /* khash.h doesn't own the memory, it's (de)allocated in seq_names
@@ -741,6 +761,8 @@ static inline int str_to_uint64_t(char *str, uint64_t *res) {
     return 0;
   }
 }
+
+/* ---- CDF computation ---- */
 
 /* For the motif half of yamscan, this function is (by far) where it spends
  * most of its time.
@@ -860,6 +882,8 @@ static void set_threshold(motif_t *motif) {
   }
 }
 
+/* ---- Background ---- */
+
 static int check_and_load_bkg(double *bkg) {
   if (bkg[0] == -1.0 || bkg[1] == -1.0 || bkg[2] == -1.0 || bkg[3] == -1.0) {
     fprintf(stderr, "Error: Too few background values found (need 4)."); return 1;
@@ -957,6 +981,8 @@ static int check_char_is_one_of(const char c, const char *list) {
   }
   return 0;
 }
+
+/* ---- Motif format detection ---- */
 
 static int detect_motif_fmt(void) {
   int jaspar_or_hocomoco = 0, file_fmt = 0, has_tabs = 0;
@@ -1142,6 +1168,8 @@ static int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t
   set_score(motif, 'T', pos, calc_score(probs[3], args.bkg[3]));
   return 0;
 }
+
+/* ---- MEME reader ---- */
 
 static int check_meme_alph(const char *line, const uint64_t line_num) {
   if (check_line_contains(line, "ALPHABET= ACDEFGHIKLMNPQRSTVWY\0")) {
@@ -1416,6 +1444,8 @@ static void read_meme(void) {
   }
 }
 
+/* ---- HOMER reader ---- */
+
 static void parse_homer_name(const char *line, const uint64_t motif_i) {
   uint64_t name_start = 0, name_end = 0, i = 1, in_between = 0, j = 0;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
@@ -1495,6 +1525,8 @@ static void read_homer(void) {
     fprintf(stderr, "Found %'" PRIu64 " HOMER motif(s).\n", motif_info.n);
   }
 }
+
+/* ---- Post-parse motif processing ---- */
 
 static int get_pwm_max(const motif_t *motif) {
   int max = 0, val;
@@ -1579,6 +1611,8 @@ static void print_motif(motif_t *motif, const uint64_t n) {
       motif->max_score / PWM_INT_MULTIPLIER,
       score2pval(motif, motif->max_score));
 }
+
+/* ---- JASPAR reader ---- */
 
 static void parse_jaspar_name(const char *line, const uint64_t motif_i) {
   uint64_t i = 0, j = 1;
@@ -1793,6 +1827,8 @@ static void read_jaspar(void) {
   }
 }
 
+/* ---- HOCOMOCO reader ---- */
+
 static int add_motif_pcm_column(motif_t *motif, const char *line, const uint64_t pos) {
   double probs[4] = {-1.0, -1.0, -1.0, -1.0};
   if (get_line_probs(motif, line, probs, 4)) return 1;
@@ -1867,6 +1903,8 @@ static void read_hocomoco(void) {
   }
 }
 
+/* ---- Motif loading ---- */
+
 static void load_motifs(void) {
   switch (detect_motif_fmt()) {
     case FMT_MEME:     read_meme();     break;
@@ -1900,6 +1938,8 @@ static void load_motifs(void) {
   }
 }
 
+/* ---- Sequence stats ---- */
+
 static void count_bases(void) {
   for (uint64_t i = 0; i < seq_info.n; i++) {
     for (uint64_t j = 0; j < seq_sizes[i]; j++) {
@@ -1927,6 +1967,8 @@ static double calc_gc(void) {
   gc /= standard_base_count();
   return gc;
 }
+
+/* ---- Sequence loading ---- */
 
 static void add_seq_name(char *name, kseq_t *kseq) {
   const size_t name_l = kseq->name.l;
@@ -2174,6 +2216,8 @@ static int char_arrays_are_equal(const char *arr1, const char *arr2, const uint6
 }
 */
 
+/* ---- Name deduplication ---- */
+
 static void int_to_char_array(const uint64_t N, char *arr) {
   ERASE_ARRAY(arr, 128);
   snprintf(arr, 128, "__N%" PRIu64 "", N);
@@ -2323,6 +2367,8 @@ static void find_seq_dupes(void) {
   }
   free(is_dup);
 }
+
+/* ---- BED reader ---- */
 
 static uint64_t count_fields(const char *line) {
   int res = 1, i = 0;
@@ -2738,6 +2784,8 @@ static void print_seq_stats_in_bed(FILE *whereto) {
   }
 }
 
+/* ---- Scanning ---- */
+
 static inline void score_subseq(const motif_t *motif, const unsigned char *seq, const uint64_t offset, int *score, const unsigned char *char2Xindex) {
   *score = 0;
   for (uint64_t i = 0; i < motif->size; i++) {
@@ -2882,6 +2930,8 @@ static void print_seq_stats(FILE *whereto) {
   }
 }
 
+/* ---- Consensus motif ---- */
+
 static void add_consensus_motif(const char *consensus) {
   if (add_motif()) badexit("");
   ERASE_ARRAY(motifs[0]->name, MAX_NAME_SIZE);
@@ -2920,6 +2970,8 @@ static void add_consensus_motif(const char *consensus) {
   complete_motifs();
 }
 
+/* ---- Scan dispatch ---- */
+
 static void print_pb(const double prog) {
   const int left = prog * PROGRESS_BAR_WIDTH;
   const int right = PROGRESS_BAR_WIDTH - left;
@@ -2957,6 +3009,8 @@ static void *scan_sub_process(void *thread_i) {
   free(thread_i);
   return NULL;
 }
+
+/* ---- Main ---- */
 
 int main_scan(int argc, char **argv) {
 
