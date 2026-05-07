@@ -1,8 +1,8 @@
 # yamtk: Yet Another Motif ToolKit
 
 * Motif scanning: [yamtk scan](#yamscan)
-* Motif enrichment: [yamtk enr](#yamenr)
 * Deduplicate overlapping motif hits: [yamtk dedup](#yamdedup)
+* Motif enrichment: [yamtk enr](#yamenr)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
