@@ -295,17 +295,6 @@ static pthread_t *threads = NULL;
 
 static uint64_t char_counts[256];
 
-static const unsigned char char2maskindex[256] = {
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-  4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
-  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
-};
-
 static const unsigned char char2index[256] = {
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
@@ -1429,63 +1418,10 @@ static void find_motif_dupes(void) {
   free(is_dup);
 }
 
-/* Checks one seq_set_t for duplicate names; uses the global seq_hash_tab. */
-static void find_seq_dupes(const seq_set_t *set) {
-  if (!set->n || !set->names) return;
-  uint64_t *is_dup = malloc(sizeof(uint64_t) * set->n);
-  if (!is_dup) badexit("Error: Failed to allocate memory for sequence name duplication check.");
-  ERASE_ARRAY(is_dup, set->n);
-  khint_t k;
-  int absent;
-  for (uint64_t i = 0; i < set->n; i++) {
-    k = kh_put(seq_str_h, seq_hash_tab, set->names[i], &absent);
-    if (absent == 0) {
-      is_dup[i] = 1;
-    } else if (absent == -1) {
-      free(is_dup); badexit("Error: Failed to hash sequence names.");
-    } else {
-      kh_val(seq_hash_tab, k) = i;
-    }
-  }
-  uint64_t dup_count = 0;
-  for (uint64_t i = 0; i < set->n; i++) dup_count += is_dup[i];
-  if (dup_count) {
-    if (args.dedup) {
-      for (uint64_t i = 0; i < set->n; i++) {
-        if (is_dup[i]) {
-          if (!dedup_char_array(set->names[i], SEQ_NAME_MAX_CHAR, i + 1)) {
-            fprintf(stderr,
-              "Error: Failed to deduplicate sequence #%" PRIu64 ", name is too large.", i + 1);
-            free(is_dup); badexit("");
-          }
-        }
-      }
-    } else {
-      fprintf(stderr, "Error: Encountered duplicate sequence name (use -d to deduplicate).");
-      uint64_t to_print = (dup_count < 5) ? dup_count : 5;
-      for (uint64_t i = 0; i < set->n; i++) {
-        if (is_dup[i]) {
-          fprintf(stderr, "\n    #%" PRIu64 ": %s", i + 1, set->names[i]);
-          if (!--to_print) break;
-        }
-      }
-      if (dup_count > 5) {
-        fprintf(stderr, "\n    ...");
-        fprintf(stderr, "\n    Found %'" PRIu64 " total non-unique names.", dup_count);
-      }
-      free(is_dup); badexit("");
-    }
-  }
-  free(is_dup);
-}
-
 /* ---- Scoring scan ---- */
 
 static inline void score_subseq(const motif_t *m, const unsigned char *seq, const uint64_t off, int *s, const unsigned char *tbl) {
   *s=0; for (uint64_t i=0;i<m->size;i++) *s+=get_score(m,seq[i+off],i,tbl);
-}
-static inline void score_subseq_rev(const motif_t *m, const unsigned char *seq, const uint64_t off, int *s, const unsigned char *tbl) {
-  *s=0; for (uint64_t i=0;i<m->size;i++) *s+=get_score_rc(m,seq[i+off],i,tbl);
 }
 static inline void score_subseq_rc(const motif_t *m, const unsigned char *seq, const uint64_t off, int *s, int *src, const unsigned char *tbl) {
   *s=0; *src=0;
@@ -1572,7 +1508,7 @@ static void usage(void) {
     "            motif file (MEME only) or uniform.\n"
     " -p <int>   Pseudocount for PWM generation. Default: %d.\n"
     " -N <int>   Motif sites for PPM->PCM conversion. Default: %d.\n"
-    " -d         Deduplicate motif/sequence names (default: abort on duplicates).\n"
+    " -d         Deduplicate motif names (default: abort on duplicates).\n"
     " -r         Do not trim motif (HOCOMOCO/JASPAR) and sequence names to the\n"
     "            first word.\n"
     " -t <dbl>   P-value threshold for a hit. Default: %g.\n"
@@ -1656,7 +1592,7 @@ int main_enr(int argc, char **argv) {
           badexit("");
         }
         files.n_open=1;
-        snprintf(neg_source_str, sizeof(neg_source_str), "%s", optarg);
+        snprintf(neg_source_str, sizeof(neg_source_str), "%s", "fasta");
         break;
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1801,7 +1737,6 @@ int main_enr(int argc, char **argv) {
   pos_set.sizes = malloc(sizeof(*pos_set.sizes)*ALLOC_CHUNK_SIZE);
   if (!pos_set.names||!pos_set.seqs||!pos_set.sizes) badexit("Error: alloc pos_set failed.");
   load_seq_set(kseq_pos, &pos_set, "positive");
-  find_seq_dupes(&pos_set);
   if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "load positives");
 
   /* Load or shuffle negatives */
@@ -1815,7 +1750,6 @@ int main_enr(int argc, char **argv) {
     neg_set.sizes = malloc(sizeof(*neg_set.sizes)*ALLOC_CHUNK_SIZE);
     if (!neg_set.names||!neg_set.seqs||!neg_set.sizes) badexit("Error: alloc neg_set failed.");
     load_seq_set(kseq_neg, &neg_set, "negative");
-    find_seq_dupes(&neg_set);
     if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "load negatives");
     /* Warn if length distributions differ greatly */
     if (args.v) {
@@ -1877,7 +1811,6 @@ int main_enr(int argc, char **argv) {
   free_cdf();
   if (args.v) {
     print_time((uint64_t)difftime(time(NULL),t0), "scan");
-    print_peak_mb();
   }
 
   /* Compute statistics */
