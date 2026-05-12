@@ -1,7 +1,21 @@
 UNRELEASED
 ----------
 
-* Small tweaks to yamenr
+* yamshuf: added -x <BED> to restrict shuffling to BED-defined ranges.
+  Bases inside ranges are shuffled in place; bases outside pass through
+  unchanged. Sequences with no overlapping ranges are emitted unchanged.
+  All four shuffle modes supported (Fisher-Yates, Euler, Markov, Linear);
+  k-mer statistics are trained per range. Fully streaming — no
+  whole-input buffering. Not compatible with -p.
+
+* yamtk enr: removed sequence name duplicate checking; -d now only
+  deduplicates motif names (duplicate sequence names are silently
+  permitted). find_seq_dupes() and the associated char2maskindex /
+  score_subseq_rev dead code have been removed.
+
+* yamtk enr: NegSource field in the ##MotifCount header now reports
+  "fasta" when a negative FASTA is supplied via -n, instead of leaking
+  the input file path. Peak memory is no longer printed under -v.
 
 CHANGES IN VERSION 2.1.0 (2026-05-07)
 --------------------------------------
