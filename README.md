@@ -425,7 +425,7 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk shuf [options] -i sequences.fa
 
  -i <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.
@@ -439,6 +439,9 @@ Usage:  yamtk shuf [options] -i sequences.fa
  -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).
  -r <int>   Repeat shuffle N times per sequence; index appended to name.
  -R         Reset RNG to seed before each sequence instead of just once.
+ -x <str>   BED file of ranges to restrict shuffling to. Bases inside
+            ranges are shuffled in place; bases outside pass through
+            unchanged. Incompatible with -p.
  -n         Output RNA instead of DNA. Only applies when k > 1 and -l
             is not used.
  -p         Print k-mer counts instead of shuffling (-i, -k, -o only).

@@ -70,9 +70,11 @@
 #include <inttypes.h>
 #include <zlib.h>
 #include "kseq.h"
+#include "khash.h"
 #include "version.h"
 
 KSEQ_INIT(gzFile, gzread)
+KHASH_MAP_INIT_STR(seq_str_h, uint64_t)
 
 #define YAMSHUF_VERSION             "1.3"
 #define YAMSHUF_YEAR                 2023
@@ -208,6 +210,9 @@ static void usage(void) {
     " -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).\n"
     " -r <int>   Repeat shuffle N times per sequence; index appended to name.\n"
     " -R         Reset RNG to seed before each sequence instead of just once.\n"
+    " -x <str>   BED file of ranges to restrict shuffling to. Bases inside\n"
+    "            ranges are shuffled in place; bases outside pass through\n"
+    "            unchanged. Incompatible with -p.\n"
     " -n         Output RNA instead of DNA. Only applies when k > 1 and -l\n"
     "            is not used.\n"
     " -p         Print k-mer counts instead of shuffling (-i, -k, -o only).\n"
@@ -230,6 +235,7 @@ typedef struct args_t {
   int      w;
   int      print_kmers;
   int      shuf_repeats;
+  int      use_bed;
   uint64_t window_step;
   uint64_t window_overlap;
 } args_t;
@@ -246,6 +252,7 @@ static args_t args = {
   .w              = 0,
   .print_kmers    = 0,
   .shuf_repeats   = 0,
+  .use_bed        = 0,
   .window_step    = 0,
   .window_overlap = 0
 };
@@ -255,18 +262,22 @@ static args_t args = {
 typedef struct files_t {
   int    s_open;
   int    o_open;
+  int    b_open;
   gzFile s;
   FILE  *o;
+  gzFile b;
 } files_t;
 
 static files_t files = {
   .s_open = 0,
-  .o_open = 0
+  .o_open = 0,
+  .b_open = 0
 };
 
 void close_files(void) {
   if (files.s_open) gzclose(files.s);
   if (files.o_open) fclose(files.o);
+  if (files.b_open) gzclose(files.b);
 }
 
 /* ---- Lookup tables ---- */
@@ -310,8 +321,15 @@ static xrng_t xrng;
 
 /* ---- Helpers ---- */
 
+static khash_t(seq_str_h) *bed_name_hash;
+static uint64_t            *bed_next;
+static void free_bed(void);
+
 static void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamshuf -h to see usage.\n", msg);
+  if (bed_name_hash) { kh_destroy(seq_str_h, bed_name_hash); bed_name_hash = NULL; }
+  free(bed_next); bed_next = NULL;
+  free_bed();
   close_files();
   exit(EXIT_FAILURE);
 }
@@ -383,6 +401,413 @@ static inline uint64_t chars2kmer(const unsigned char *seq, const uint64_t k, co
 static inline void count_kmers(const unsigned char *seq, const uint64_t size, uint64_t *kmer_tab, const uint64_t k) {
   for (uint64_t i = 0; i < size - k + 1; i++) {
     kmer_tab[chars2kmer(seq, k, i)]++;
+  }
+}
+
+/* ---- BED ---- */
+
+#define BED_FIELD_MAX_CHAR    ((uint64_t) 256)
+#define BED_NAME_MAX_CHAR     ((uint64_t) 512)
+#define BED_ALLOC_CHUNK_SIZE  ((uint64_t) 256)
+
+typedef struct bed_t {
+  uint64_t  *seq_indices;
+  uint64_t  *starts;
+  uint64_t  *ends;
+  char      *strands;
+  char     **seq_names;
+  char     **range_names;
+  uint64_t   n_regions;
+  uint64_t   n_comments;
+  uint64_t   n_lines;
+  uint64_t   n_empty;
+  uint64_t   n_seqs;
+  uint64_t   n_alloc;
+  uint64_t   indices_are_filled;
+} bed_t;
+
+static bed_t bed = {
+  .n_regions          = 0,
+  .n_comments         = 0,
+  .n_lines            = 0,
+  .n_empty            = 0,
+  .n_seqs             = 0,
+  .n_alloc            = 0,
+  .indices_are_filled = 0
+};
+
+static void free_bed(void) {
+  if (bed.n_alloc) {
+    if (bed.n_regions) {
+      for (uint64_t i = 0; i < bed.n_regions; i++) {
+        free(bed.seq_names[i]);
+        free(bed.range_names[i]);
+      }
+    }
+    free(bed.seq_names);
+    free(bed.range_names);
+    free(bed.starts);
+    free(bed.ends);
+    free(bed.strands);
+    if (bed.indices_are_filled) {
+      free(bed.seq_indices);
+    }
+    bed.n_alloc = 0;
+  }
+}
+
+static uint64_t count_nonempty_chars(const char *line) {
+  uint64_t total_chars = 0, i = 0;
+  for (;;) {
+    switch (line[i]) {
+      case ' ':
+      case '\t':
+      case '\r':
+      case '\v':
+      case '\f':
+      case '\n': break;
+      case '\0': return total_chars;
+      default: total_chars++;
+    }
+    i++;
+  }
+  return total_chars;
+}
+
+static inline int str_to_uint64_t(char *str, uint64_t *res) {
+  char *tmp; errno = 0;
+  *res = (uint64_t) strtoull(str, &tmp, 10);
+  if (str == tmp || errno != 0 || *tmp != '\0') {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
+static uint64_t count_fields(const char *line) {
+  int res = 1, i = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    if (line[i] == '\t') res += 1;
+    i++;
+  }
+  return res;
+}
+
+static uint64_t count_field_size(const char *line, const uint64_t k) {
+  int res = 0, i = 0, n = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    if (line[i] == '\t') {
+      n++;
+    } else if (n + 1 == (int) k) {
+      res++;
+    } else if (n + 1 > (int) k) {
+      break;
+    }
+    i++;
+  }
+  return res;
+}
+
+static uint64_t field_start(const char *line, const uint64_t k) {
+  int i = 0, n = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    if (line[i] == '\t') {
+      n++;
+    } else if (n + 1 == (int) k) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+
+static uint64_t field_end(const char *line, const uint64_t k) {
+  int i = 0, n = 0;
+  for (;;) {
+    if (line[i] == '\0') break;
+    if (line[i] == '\t') {
+      n++;
+    }
+    if (n == (int) k) {
+      i--;
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+
+static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char *field, const int no_spaces) {
+  uint64_t start_i = field_start(line, k);
+  uint64_t end_i = field_end(line, k);
+  uint64_t size_i = count_field_size(line, k);
+  uint64_t field_it = 0;
+  ERASE_ARRAY(field, BED_FIELD_MAX_CHAR);
+  if (size_i > 0 && size_i < BED_FIELD_MAX_CHAR) {
+    for (uint64_t i = start_i; i <= end_i; i++) {
+      if (no_spaces && isspace(line[i])) {
+        size_i--;
+      } else {
+        field[field_it] = line[i];
+        field_it++;
+      }
+    }
+  }
+  return size_i;
+}
+
+static void read_bed(void) {
+  bed.seq_names = malloc(sizeof(*bed.seq_names) * BED_ALLOC_CHUNK_SIZE);
+  if (bed.seq_names == NULL) {
+    badexit("Error: Failed to allocate memory for bed sequence names.");
+  }
+  bed.range_names = malloc(sizeof(*bed.range_names) * BED_ALLOC_CHUNK_SIZE);
+  if (bed.range_names == NULL) {
+    free(bed.seq_names);
+    badexit("Error: Failed to allocate memory for bed range names.");
+  }
+  bed.strands = malloc(sizeof(*bed.strands) * BED_ALLOC_CHUNK_SIZE);
+  if (bed.strands == NULL) {
+    free(bed.range_names);
+    free(bed.seq_names);
+    badexit("Error: Failed to allocate memory for bed strand.");
+  }
+  bed.starts = malloc(sizeof(*bed.starts) * BED_ALLOC_CHUNK_SIZE);
+  if (bed.starts == NULL) {
+    free(bed.range_names);
+    free(bed.strands);
+    free(bed.seq_names);
+    badexit("Error: Failed to allocate memory for bed starts.");
+  }
+  bed.ends = malloc(sizeof(*bed.ends) * BED_ALLOC_CHUNK_SIZE);
+  if (bed.ends == NULL) {
+    free(bed.range_names);
+    free(bed.strands);
+    free(bed.seq_names);
+    free(bed.starts);
+    badexit("Error: Failed to allocate memory for bed ends.");
+  }
+  bed.n_alloc = BED_ALLOC_CHUNK_SIZE;
+  int ret_val;
+  uint64_t line_num = 0, empty_lines = 0, comment_lines = 0;
+  uint64_t n_fields = 0, field_size = 0, tmp_value = 0;
+  char tmp_field[BED_FIELD_MAX_CHAR];
+  kstream_t *kbed = ks_init(files.b);
+  kstring_t line = { 0, 0, 0 };
+  while ((ret_val = ks_getuntil(kbed, '\n', &line, 0)) >= 0) {
+    line_num += 1;
+    if (bed.n_regions + 1 > bed.n_alloc) {
+      char **tmp_ptr1 = realloc(bed.seq_names,
+        sizeof(*bed.seq_names) * bed.n_alloc + sizeof(*bed.seq_names) * BED_ALLOC_CHUNK_SIZE);
+      if (tmp_ptr1 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed sequence names.");
+      } else {
+        bed.seq_names = tmp_ptr1;
+      }
+      uint64_t *tmp_ptr2 = realloc(bed.starts,
+        sizeof(*bed.starts) * bed.n_alloc + sizeof(*bed.starts) * BED_ALLOC_CHUNK_SIZE);
+      if (tmp_ptr2 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed starts.");
+      } else {
+        bed.starts = tmp_ptr2;
+      }
+      uint64_t *tmp_ptr3 = realloc(bed.ends,
+        sizeof(*bed.ends) * bed.n_alloc + sizeof(*bed.ends) * BED_ALLOC_CHUNK_SIZE);
+      if (tmp_ptr3 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed ends.");
+      } else {
+        bed.ends = tmp_ptr3;
+      }
+      char **tmp_ptr4 = realloc(bed.range_names,
+        sizeof(*bed.range_names) * bed.n_alloc + sizeof(*bed.range_names) * BED_ALLOC_CHUNK_SIZE);
+      if (tmp_ptr4 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed range names.");
+      } else {
+        bed.range_names = tmp_ptr4;
+      }
+      char *tmp_ptr5 = realloc(bed.strands,
+        sizeof(*bed.strands) * bed.n_alloc + sizeof(*bed.strands) * BED_ALLOC_CHUNK_SIZE);
+      if (tmp_ptr5 == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate more memory for bed strands.");
+      } else {
+        bed.strands = tmp_ptr5;
+      }
+      bed.n_alloc += BED_ALLOC_CHUNK_SIZE;
+    }
+    n_fields = count_fields(line.s);
+    if (count_nonempty_chars(line.s) == 0) {
+      empty_lines += 1;
+      continue;
+    } else if (line.s[0] == '#') {
+      comment_lines += 1;
+      continue;
+    } else if (line.l >= 7 && line.s[0] == 'b' && line.s[1] == 'r' && line.s[2] == 'o' &&
+        line.s[3] == 'w' && line.s[4] == 's' && line.s[5] == 'e' && line.s[6] == 'r') {
+      comment_lines += 1;
+      continue;
+    } else if (line.l >= 5 && line.s[0] == 't' && line.s[1] == 'r' && line.s[2] == 'a' &&
+        line.s[3] == 'c' && line.s[4] == 'k') {
+      comment_lines += 1;
+      continue;
+    } else if (n_fields < 3) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Line %'" PRIu64 " has %'" PRIu64 " fields and %'" PRIu64 " non-whitespace characters.\n",
+          line_num, count_fields(line.s), count_nonempty_chars(line.s));
+      badexit("Error: Encountered line in bed with fewer than 3 tab-separated fields.");
+    }
+    if (n_fields >= 6) {
+      if ((field_size = parse_bed_field(line.s, 6, tmp_field, 1)) != 1) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Line %'" PRIu64 " in bed does not have a single character in the strand field (found %" PRIu64 ": '%s').",
+          line_num, field_size, tmp_field);
+        badexit("");
+      } else if (tmp_field[0] != '+' && tmp_field[0] != '-' && tmp_field[0] != '.') {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an incorrect strand character (found '%s', need +/-/.).",
+          line_num, tmp_field);
+        badexit("");
+      }
+      bed.strands[bed.n_regions] = tmp_field[0];
+    } else {
+      bed.strands[bed.n_regions] = '.';
+    }
+    if (parse_bed_field(line.s, 2, tmp_field, 1) == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty start field.", line_num);
+      badexit("");
+    }
+    if (str_to_uint64_t(tmp_field, &tmp_value)) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Failed to parse bed start value on line %'" PRIu64 ".\n", line_num);
+      fprintf(stderr, "  Line: %s\n  Bad value: '%s'", line.s, tmp_field);
+      badexit("");
+    }
+    bed.starts[bed.n_regions] = tmp_value;
+    if (parse_bed_field(line.s, 3, tmp_field, 1) == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty end field.", line_num);
+      badexit("");
+    }
+    if (str_to_uint64_t(tmp_field, &tmp_value)) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Failed to parse bed end value on line %'" PRIu64 ".\n", line_num);
+      fprintf(stderr, "  Line: %s\n  Bad value: '%s'", line.s, tmp_field);
+      badexit("");
+    }
+    bed.ends[bed.n_regions] = tmp_value;
+    if (bed.starts[bed.n_regions] >= bed.ends[bed.n_regions]) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has a start >= end value.", line_num);
+      badexit("");
+    }
+    if (n_fields >= 4) {
+      if ((field_size = parse_bed_field(line.s, 4, tmp_field, 0)) == 0) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty range name.", line_num);
+        badexit("");
+      }
+      if (field_size >= BED_FIELD_MAX_CHAR) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: Range name in bed on line  %'" PRIu64 " is too large (%" PRIu64 ">%" PRIu64 ").",
+          line_num, field_size, BED_FIELD_MAX_CHAR - 1);
+        badexit("");
+      }
+      bed.range_names[bed.n_regions] = malloc(sizeof(char) * (field_size + 1));
+      if (bed.range_names[bed.n_regions] == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate memory for bed range name.");
+      }
+      for (uint64_t i = 0; i < field_size; i++) {
+        bed.range_names[bed.n_regions][i] = tmp_field[i];
+      }
+      bed.range_names[bed.n_regions][field_size] = '\0';
+      for (uint64_t i = 0; i < BED_NAME_MAX_CHAR; i++) {
+        if (bed.range_names[bed.n_regions][i] == ' ') {
+          bed.range_names[bed.n_regions][i] = '\0';
+          break;
+        } else if (bed.range_names[bed.n_regions][i] == '\0') {
+          break;
+        }
+      }
+    } else {
+      bed.range_names[bed.n_regions] = malloc(sizeof(char) * 2);
+      if (bed.range_names[bed.n_regions] == NULL) {
+        ks_destroy(kbed);
+        badexit("Error: Failed to allocate memory for bed range name.");
+      }
+      bed.range_names[bed.n_regions][0] = '.';
+      bed.range_names[bed.n_regions][1] = '\0';
+    }
+    if ((field_size = parse_bed_field(line.s, 1, tmp_field, 0)) == 0) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      fprintf(stderr, "Error: Line %'" PRIu64 " in bed has an empty sequence name.", line_num);
+      badexit("");
+    }
+    if (field_size >= BED_FIELD_MAX_CHAR) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      fprintf(stderr, "Error: Sequence name in bed on line  %'" PRIu64 " is too large (%" PRIu64 ">%" PRIu64 ").",
+        line_num, field_size, BED_FIELD_MAX_CHAR - 1);
+      badexit("");
+    }
+    bed.seq_names[bed.n_regions] = malloc(sizeof(char) * (field_size + 1));
+    if (bed.seq_names[bed.n_regions] == NULL) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      badexit("Error: Failed to allocate memory for bed sequence name.");
+    }
+    for (uint64_t i = 0; i < field_size; i++) {
+      bed.seq_names[bed.n_regions][i] = tmp_field[i];
+    }
+    bed.seq_names[bed.n_regions][field_size] = '\0';
+    for (uint64_t i = 0; i < BED_NAME_MAX_CHAR; i++) {
+      if (bed.seq_names[bed.n_regions][i] == ' ') {
+        bed.seq_names[bed.n_regions][i] = '\0';
+        break;
+      } else if (bed.seq_names[bed.n_regions][i] == '\0') {
+        break;
+      }
+    }
+    bed.n_regions += 1;
+  }
+  if (ret_val == -3) {
+    ks_destroy(kbed);
+    badexit("Error: Failed to read file stream.");
+  } else if (!bed.n_regions) {
+    ks_destroy(kbed);
+    badexit("Error: Failed to read any records in bed file.");
+  }
+  ks_destroy(kbed);
+  free(line.s);
+  bed.n_lines = line_num;
+  bed.n_comments = comment_lines;
+  bed.n_empty = empty_lines;
+}
+
+static void build_bed_name_hash(void) {
+  bed_next = malloc(sizeof(uint64_t) * bed.n_regions);
+  if (!bed_next) badexit("Error: Failed to allocate BED next-range array.");
+  for (uint64_t i = 0; i < bed.n_regions; i++) bed_next[i] = UINT64_MAX;
+  int absent;
+  khint64_t k;
+  for (uint64_t i = 0; i < bed.n_regions; i++) {
+    k = kh_put(seq_str_h, bed_name_hash, bed.seq_names[i], &absent);
+    if (absent == -1) badexit("Error: Failed to hash BED sequence names.");
+    if (absent == 0) {
+      bed_next[i] = kh_val(bed_name_hash, k);
+      kh_val(bed_name_hash, k) = i;
+    } else {
+      kh_val(bed_name_hash, k) = i;
+    }
   }
 }
 
@@ -560,7 +985,7 @@ int main_shuf(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rnpvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:k:o:s:mlr:Rnpvwhx:")) != -1) {
     switch (opt) {
       case 'i':
         if (files.s_open) badexit("Error: -i specified more than once.");
@@ -645,6 +1070,16 @@ int main_shuf(int argc, char **argv) {
       case 'p':
         args.print_kmers = 1;
         break;
+      case 'x':
+        if (args.use_bed) badexit("Error: -x specified more than once.");
+        files.b = gzopen(optarg, "r");
+        if (files.b == NULL) {
+          fprintf(stderr, "Error: Failed to open BED file \"%s\" [%s]", optarg, strerror(errno));
+          badexit("");
+        }
+        files.b_open = 1;
+        args.use_bed = 1;
+        break;
       case 'w':
         args.w = 1;
       case 'v':
@@ -658,6 +1093,12 @@ int main_shuf(int argc, char **argv) {
     }
   }
 
+  if (!files.s_open) {
+    badexit("Error: -i must be specified.");
+  }
+  if (args.use_bed && args.print_kmers) {
+    badexit("Error: -p and -x cannot be combined.");
+  }
   if (args.use_linear && args.use_markov && !args.print_kmers) {
     badexit("Error: Cannot use both -m and -l.");
   }
@@ -714,8 +1155,23 @@ int main_shuf(int argc, char **argv) {
   const int total_reps = args.shuf_repeats + 1, is_dna = 1 - args.rna_out;
   const uint64_t k = (uint64_t) args.k;
   int ret_val, rep_counter;
+  unsigned char *scratch = NULL;
+  uint64_t scratch_size = 0;
+  uint8_t *bed_range_seen = NULL;
   kseq = kseq_init(files.s);
   sxrand_r(&xrng, args.seed);
+
+  if (args.use_bed) {
+    read_bed();
+    bed_name_hash = kh_init(seq_str_h);
+    if (!bed_name_hash) badexit("Error: Failed to initialize BED name hash.");
+    build_bed_name_hash();
+    bed_range_seen = calloc(bed.n_regions, sizeof(uint8_t));
+    if (!bed_range_seen) badexit("Error: Failed to allocate BED range seen array.");
+    if (args.v) {
+      fprintf(stderr, "Found %'" PRIu64 " range(s) in BED file.\n", bed.n_regions);
+    }
+  }
 
   if (k > 1 && !args.use_linear) {
     kmer_tab = malloc(sizeof(uint64_t) * pow5[k]);
@@ -816,6 +1272,91 @@ int main_shuf(int argc, char **argv) {
         }
       }
       fputc('\n', files.o);
+    } else if (args.use_bed) {
+      khint64_t bed_hit = kh_get(seq_str_h, bed_name_hash, seq_name);
+      if (bed_hit == kh_end(bed_name_hash)) {
+        while (rep_counter) {
+          write_seq(seq, size, seq_name, seq_comment, seq_comment_l, total_reps - rep_counter);
+          rep_counter--;
+        }
+      } else {
+        if (size > scratch_size) {
+          unsigned char *tmp = realloc(scratch, size);
+          if (!tmp) badexit("Error: Failed to allocate scratch buffer.");
+          scratch = tmp;
+          scratch_size = size;
+        }
+        while (rep_counter) {
+          memcpy(scratch, seq, size);
+          for (uint64_t r = kh_val(bed_name_hash, bed_hit); r != UINT64_MAX; r = bed_next[r]) {
+            uint64_t rstart = bed.starts[r];
+            uint64_t rend   = bed.ends[r];
+            if (rstart >= size) {
+              if (args.v) {
+                fprintf(stderr, "! Warning: Range #%'" PRIu64 " (%s:%'" PRIu64 "-%'" PRIu64 ") starts beyond end of %s (size=%'" PRIu64 "), skipping.\n",
+                  r + 1, seq_name, rstart + 1, rend, seq_name, size);
+              }
+              bed_range_seen[r] = 1;
+              continue;
+            }
+            if (rend > size) {
+              if (args.v) {
+                fprintf(stderr, "! Warning: Trimming range #%'" PRIu64 " on %s to %" PRIu64 ".\n",
+                  r + 1, seq_name, size);
+              }
+              rend = size;
+            }
+            uint64_t rlen = rend - rstart;
+            bed_range_seen[r] = 1;
+            if (args.k == 1) {
+              if (rlen < 2) {
+                if (args.v) {
+                  fprintf(stderr, "! Warning: Range #%'" PRIu64 " on %s too short (len=%" PRIu64 "), skipping.\n",
+                    r + 1, seq_name, rlen);
+                }
+                continue;
+              }
+              if (shuffle_fisher_yates(scratch + rstart, rlen)) goto error_shuffle;
+            } else if (args.use_linear) {
+              if (rlen < k * 2) {
+                if (args.v) {
+                  fprintf(stderr, "! Warning: Range #%'" PRIu64 " on %s too short for -l (len=%" PRIu64 " < 2k=%" PRIu64 "), skipping.\n",
+                    r + 1, seq_name, rlen, k * 2);
+                }
+                continue;
+              }
+              if (shuffle_linear(scratch + rstart, rlen, k)) goto error_shuffle;
+            } else if (args.use_markov) {
+              if (rlen < k * 2) {
+                if (args.v) {
+                  fprintf(stderr, "! Warning: Range #%'" PRIu64 " on %s too short for Markov (len=%" PRIu64 " < 2k=%" PRIu64 "), skipping.\n",
+                    r + 1, seq_name, rlen, k * 2);
+                }
+                continue;
+              }
+              ERASE_ARRAY(kmer_tab, pow5[k]);
+              count_kmers(scratch + rstart, rlen, kmer_tab, k);
+              if (shuffle_markov(scratch + rstart, rlen, k, kmer_tab, is_dna)) goto error_shuffle;
+            } else {
+              if (rlen < k * 2) {
+                if (args.v) {
+                  fprintf(stderr, "! Warning: Range #%'" PRIu64 " on %s too short for Euler (len=%" PRIu64 " < 2k=%" PRIu64 "), skipping.\n",
+                    r + 1, seq_name, rlen, k * 2);
+                }
+                continue;
+              }
+              ERASE_ARRAY(invalid_vertex, pow5[k - 1]);
+              ERASE_ARRAY(euler_path, pow5[k - 1]);
+              ERASE_ARRAY(next_index, pow5[k - 1]);
+              ERASE_ARRAY(kmer_tab, pow5[k]);
+              count_kmers(scratch + rstart, rlen, kmer_tab, k);
+              if (shuffle_euler(scratch + rstart, rlen, k, kmer_tab, is_dna, invalid_vertex, euler_path, next_index)) goto error_shuffle;
+            }
+          }
+          write_seq(scratch, size, seq_name, seq_comment, seq_comment_l, total_reps - rep_counter);
+          rep_counter--;
+        }
+      }
     } else if (size < k * 2) {
       if (args.v) {
         fprintf(stderr, "! Warning: Sequence too short to shuffle (size = %'" PRIu64 ", k = %" PRIu64 ")\n",
@@ -882,6 +1423,23 @@ int main_shuf(int argc, char **argv) {
     badexit("Error: Failed to read any sequences from input.");
   }
 
+  if (args.use_bed) {
+    for (uint64_t i = 0; i < bed.n_regions; i++) {
+      if (!bed_range_seen[i]) {
+        fprintf(stderr, "Error: BED range #%'" PRIu64 " references sequence not in input (%s).\n",
+          i + 1, bed.seq_names[i]);
+        free(bed_range_seen);
+        free(scratch);
+        badexit("");
+      }
+    }
+    free(bed_range_seen);
+    free(scratch);
+    if (bed_name_hash) { kh_destroy(seq_str_h, bed_name_hash); bed_name_hash = NULL; }
+    free(bed_next); bed_next = NULL;
+    free_bed();
+  }
+
   close_files();
 
   time_t time2 = time(NULL);
@@ -901,6 +1459,8 @@ error_shuffle:
     free(euler_path);
     free(next_index);
   }
+  free(bed_range_seen);
+  free(scratch);
   kseq_destroy(kseq);
   badexit("");
   return EXIT_FAILURE;

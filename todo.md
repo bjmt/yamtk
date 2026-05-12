@@ -1,12 +1,7 @@
 ## Todo
 
 - yamenr:
-  + sequence name duplication shouldn't matter, only for motif names
-  + peak memory is printed twice
-  + some -v text is printed to stdout?
   + print alt motif name too?
-  + is the number of motif hits properly calculated for seqs mode?
-  + NegSource: don't print filepath
 
 - yamsort: use file re-reading to perform nicer sorting
 - yamcompare: tomtom clone
