@@ -76,6 +76,17 @@ assert_enr_golden() {
     PASS "$desc matches golden"
 }
 
+assert_me_golden() {
+    local desc="$1"; local expected="$2"; shift 2
+    local actual
+    actual=$("$@" 2>/dev/null | grep -v '^##yamme ')
+    if ! diff -u "$expected" <(echo "$actual") >/dev/null 2>&1; then
+        diff -u "$expected" <(echo "$actual") >&2 || true
+        FAIL "$desc: output differs from golden $expected"
+    fi
+    PASS "$desc matches golden"
+}
+
 assert_line_count_eq() {
     local desc="$1"; local expected_n="$2"; shift 2
     local n
