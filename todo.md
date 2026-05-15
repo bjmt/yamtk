@@ -3,10 +3,7 @@
 - yamenr:
   + print alt motif name too?
 
-- yamsort: use file re-reading to perform nicer sorting
-- yamcompare: tomtom clone
-- yamrefine: optimize motif for maximum enrichemnt in a +ve set vs -ve
-  + optimize for addn specificity (extend edges) or less (trim low IC edges/letters)
+- yamcmp: tomtom clone
 - yamseq: sequence manipulation (subsetting, masking, insertion, formating, shuffling?)
 - yamshuf: DNA/RNA shuffler
   + streme paper says it preserves positions of separator characters; I should do this too

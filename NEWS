@@ -1,6 +1,22 @@
 UNRELEASED
 ----------
 
+* New subcommand: yamtk ref — refine a seed motif against positive sequences.
+  Takes a seed PWM (-m, accepting MEME/JASPAR/HOMER/HOCOMOCO) or an IUPAC
+  consensus string (-1, e.g. CACGTG or NRTACGTYN), scans it against the
+  positives, rebuilds the PWM from the resulting hit sites, and iterates
+  for -r passes (default 2) with early-exit when the PWM stops changing.
+  Flank operations: -e N adds N columns on each side on pass 1; -E walks
+  out symmetrically one column at a time until both new flanks fall below
+  the per-column IC threshold (-I, default 0.5 bits) and auto-trims any
+  asymmetric dead column afterward; -T explicitly IC-trims at the end.
+  Each motif gets an always-on stderr summary
+  ([name] w: W1->W2 | IC: I1->I2 bits | hits: H1->H2) so users can tell
+  refinement from drift. -Q drops motifs whose refined total IC is below
+  seed IC. Outputs MEME v4 (default stdout, -o file). Multi-motif input
+  is processed motif-by-motif; under-represented seeds (< MIN_REFINE_HITS,
+  default 20) are dropped with a warning and the rest emitted.
+
 * New subcommand: yamtk me — STREME-like de novo motif elicitation.
   Discovers enriched motifs from a positive FASTA against a negative
   set (or Eulerian-shuffled positives via -S).  For each width in
