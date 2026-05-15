@@ -1,0 +1,7 @@
+results/
+fixtures/*.fa
+fixtures/planted.tsv
+__pycache__/
+*.pyc
+run.log
+.DS_Store

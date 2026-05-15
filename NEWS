@@ -1,6 +1,28 @@
 UNRELEASED
 ----------
 
+* New subcommand: yamtk me — STREME-like de novo motif elicitation.
+  Discovers enriched motifs from a positive FASTA against a negative
+  set (or Eulerian-shuffled positives via -S).  For each width in
+  [-k, -K] (default 6–15), enumerates canonical k-mers by Fisher's
+  exact enrichment, builds and refines PWMs over the top seeds, masks
+  hits, and iterates up to -N motifs per width.  Pooled motifs across
+  widths are deduplicated by coverage overlap (-D), BH-FDR corrected,
+  and filtered by q-value (-q, default 1e-3).  Low-information
+  flanking PWM columns are trimmed at output, giving sharper
+  consensus strings (e.g. TGASTCA instead of TTACTGAGTCAG for AP-1)
+  and narrower MEME PWMs without changing p-values or hit counts.
+  Consensus columns use IUPAC ambiguity codes (R/Y/S/W/K/M, B/D/H/V,
+  N) when the smallest top-k base set covering CONSENSUS_THRESHOLD
+  probability mass has more than one base, so degenerate motifs read
+  naturally (e.g. RGGNNYTYCC → GGRARDBCCY).
+  Outputs TSV stats (-o, default motifs.tsv) and MEME PWM file (-M,
+  default motifs.meme).  -j enables per-width parallel discovery with
+  deterministic output (same -s seed → byte-identical TSV regardless
+  of -j).  Tunable compile-time macros (overridable via -D...):
+  HAMMING_MISMATCH=1, REFINE_PASSES=2, TOP_K_SEEDS=4,
+  MIN_REFINE_HITS=20, MIN_IC_BITS=0.5, CONSENSUS_THRESHOLD=0.75.
+
 * yamshuf: added -x <BED> to restrict shuffling to BED-defined ranges.
   Bases inside ranges are shuffled in place; bases outside pass through
   unchanged. Sequences with no overlapping ranges are emitted unchanged.

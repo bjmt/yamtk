@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <zlib.h>
+#include <pthread.h>
 #include "kseq.h"
 #include "khash.h"
 #include "version.h"
@@ -60,6 +61,9 @@ KHASH_SET_INIT_INT64(seed_set_h)
 #endif
 #ifndef MIN_IC_BITS
 #define MIN_IC_BITS       0.5
+#endif
+#ifndef CONSENSUS_THRESHOLD
+#define CONSENSUS_THRESHOLD 0.75
 #endif
 
 /* ---- Constants ---- */
@@ -205,6 +209,7 @@ typedef struct {
   uint64_t  seqs_pos;
   uint64_t  seqs_neg;
   int       dropped;
+  uint64_t  discovery_seq;  /* intra-width acceptance order, for deterministic merge */
 } disc_result_t;
 
 static disc_result_t *results       = NULL;
@@ -213,11 +218,21 @@ static uint64_t       n_results_alloc = 0;
 
 typedef struct { uint64_t kmer; double pval; } seed_t;
 
-/* ---- CDF state ---- */
+/* ---- Per-thread discovery context ---- */
 
-static double    **cdf          = NULL;
-static double   **tmp_pdf       = NULL;
-static uint64_t  *cdf_real_size = NULL;
+typedef struct {
+  int             tid;            /* 0..nthreads-1, diagnostic only */
+  unsigned char **seqs;           /* writable view of positives for this thread */
+  /* CDF scratch buffers (point to thread-local arrays; motif->cdf/tmp_pdf
+     are aliased here during convert_ppm_to_motif) */
+  double         *cdf;
+  double         *tmp_pdf;
+  uint64_t        cdf_real_size;
+  /* Thread-local accepted motifs; merged into global results[] after join */
+  disc_result_t  *local_results;
+  uint64_t        n_local;
+  uint64_t        n_local_alloc;
+} thread_ctx_t;
 
 /* ---- Lookup tables (from yamenr.c / yamscan.c) ---- */
 
@@ -316,27 +331,48 @@ static void free_seq_set(seq_set_t *s) {
 
 /* ---- CDF alloc/free (needed by badexit) ---- */
 
-static int alloc_cdf(void) {
-  cdf_real_size = malloc(sizeof(uint64_t));
-  if (!cdf_real_size) { fprintf(stderr, "Error: alloc_cdf failed.\n"); return 1; }
-  cdf_real_size[0] = 1;
-  cdf = malloc(sizeof(double *));
-  if (!cdf) { fprintf(stderr, "Error: alloc_cdf failed.\n"); return 1; }
-  tmp_pdf = malloc(sizeof(double *));
-  if (!tmp_pdf) { fprintf(stderr, "Error: alloc_cdf failed.\n"); return 1; }
-  cdf[0] = malloc(sizeof(double));
-  if (!cdf[0]) { fprintf(stderr, "Error: alloc_cdf failed.\n"); return 1; }
-  tmp_pdf[0] = malloc(sizeof(double));
-  if (!tmp_pdf[0]) { fprintf(stderr, "Error: alloc_cdf failed.\n"); return 1; }
+/* Thread context pool (lives in main_me; freed via free_thread_ctxs). */
+static thread_ctx_t *thread_ctxs   = NULL;
+static int           n_thread_ctxs = 0;
+
+static int init_thread_ctx(thread_ctx_t *ctx, int tid) {
+  memset(ctx, 0, sizeof(*ctx));
+  ctx->tid = tid;
+  ctx->cdf_real_size = 1;
+  ctx->cdf     = malloc(sizeof(double));
+  ctx->tmp_pdf = malloc(sizeof(double));
+  if (!ctx->cdf || !ctx->tmp_pdf) { fprintf(stderr, "Error: init_thread_ctx failed.\n"); return 1; }
+  /* seqs / local_results allocated separately once pos_set is loaded */
   return 0;
 }
 
-static void free_cdf(void) {
-  if (!cdf) return;
-  free(cdf[0]); free(tmp_pdf[0]);
-  free(cdf); cdf = NULL;
-  free(tmp_pdf); tmp_pdf = NULL;
-  free(cdf_real_size); cdf_real_size = NULL;
+/* Allocate per-thread mutable copy of positives. Caller fills with memcpy. */
+static int alloc_ctx_seqs(thread_ctx_t *ctx) {
+  ctx->seqs = malloc(sizeof(unsigned char *) * pos_set.n);
+  if (!ctx->seqs) return 1;
+  for (uint64_t si = 0; si < pos_set.n; si++) {
+    ctx->seqs[si] = malloc(pos_set.sizes[si]);
+    if (!ctx->seqs[si]) return 1;
+  }
+  return 0;
+}
+
+static void free_thread_ctx(thread_ctx_t *ctx) {
+  free(ctx->cdf); ctx->cdf = NULL;
+  free(ctx->tmp_pdf); ctx->tmp_pdf = NULL;
+  if (ctx->seqs) {
+    for (uint64_t si = 0; si < pos_set.n; si++) free(ctx->seqs[si]);
+    free(ctx->seqs); ctx->seqs = NULL;
+  }
+  /* local_results.motif/covered ownership transferred to global results[] on merge */
+  free(ctx->local_results); ctx->local_results = NULL;
+  ctx->n_local = 0; ctx->n_local_alloc = 0;
+}
+
+static void free_thread_ctxs(void) {
+  if (!thread_ctxs) return;
+  for (int t = 0; t < n_thread_ctxs; t++) free_thread_ctx(&thread_ctxs[t]);
+  free(thread_ctxs); thread_ctxs = NULL; n_thread_ctxs = 0;
 }
 
 /* ---- Results free (needed by badexit) ---- */
@@ -368,7 +404,7 @@ static void badexit(const char *msg) {
   free_results();
   free_seq_set(&pos_set);
   free_seq_set(&neg_set);
-  free_cdf();
+  free_thread_ctxs();
   close_files();
   exit(EXIT_FAILURE);
 }
@@ -509,29 +545,33 @@ static int get_pwm_max(const motif_t *m) {
 
 /* ---- CDF fill and threshold (from yamenr.c) ---- */
 
-static void fill_cdf(motif_t *motif) {
+/* Prefix used on -w log lines so multi-thread output is readable.  Empty
+   string when n_thread_ctxs <= 1 (no -j parallelism in effect). */
+static void w_prefix(const thread_ctx_t *ctx, char *buf, size_t bufsz) {
+  if (n_thread_ctxs > 1) snprintf(buf, bufsz, "[t%d] ", ctx->tid);
+  else                   buf[0] = '\0';
+}
+
+static void fill_cdf(thread_ctx_t *ctx, motif_t *motif, const char *phase) {
   uint64_t max_step, s;
   double pdf_sum = 0.0;
-  if (args.w)
-    fprintf(stderr, "        Generating CDF for [%s] (n=%'" PRIu64 ") ... ",
-      motif->name, motif->cdf_size);
   if (motif->cdf_size > MAX_CDF_SIZE) {
     fprintf(stderr,
       "\nError: CDF size for [%s] too large (%'" PRIu64 ">%'" PRIu64 ").\n",
       motif->name, motif->cdf_size, MAX_CDF_SIZE);
     badexit("");
   }
-  if (cdf_real_size[0] < motif->cdf_size) {
-    double *r1 = realloc(cdf[0], motif->cdf_size*sizeof(double));
+  if (ctx->cdf_real_size < motif->cdf_size) {
+    double *r1 = realloc(ctx->cdf, motif->cdf_size*sizeof(double));
     if (!r1) badexit("Error: Memory re-allocation for CDF failed.");
-    cdf[0] = r1;
-    double *r2 = realloc(tmp_pdf[0], motif->cdf_size*sizeof(double));
+    ctx->cdf = r1;
+    double *r2 = realloc(ctx->tmp_pdf, motif->cdf_size*sizeof(double));
     if (!r2) badexit("Error: Memory re-allocation for PDF failed.");
-    tmp_pdf[0] = r2;
-    cdf_real_size[0] = motif->cdf_size;
+    ctx->tmp_pdf = r2;
+    ctx->cdf_real_size = motif->cdf_size;
   }
-  motif->cdf     = cdf[0];
-  motif->tmp_pdf = tmp_pdf[0];
+  motif->cdf     = ctx->cdf;
+  motif->tmp_pdf = ctx->tmp_pdf;
   for (uint64_t i = 0; i < motif->cdf_size; i++) motif->cdf[i] = 1.0;
   for (uint64_t i = 0; i < motif->size; i++) {
     max_step = i * motif->cdf_max;
@@ -549,7 +589,11 @@ static void fill_cdf(motif_t *motif) {
   }
   for (uint64_t i = motif->cdf_size-2; i < (uint64_t)-1; i--)
     motif->cdf[i] += motif->cdf[i+1];
-  if (args.w) fprintf(stderr, "done.\n");
+  if (args.w) {
+    char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+    fprintf(stderr, "        %sCDF [%s | %s] (n=%'" PRIu64 ") done.\n",
+      pre, motif->name, phase, motif->cdf_size);
+  }
 }
 
 static inline double score2pval(const motif_t *motif, const int score) {
@@ -900,6 +944,16 @@ static uint64_t kmer_encode4(const unsigned char *seq, const uint64_t w, const u
   return kmer;
 }
 
+/* Decode a 4-base encoded w-mer into a NUL-terminated ACGT string. */
+static void kmer_to_string(uint64_t kmer, const uint64_t w, char *buf) {
+  static const char letters[4] = {'A','C','G','T'};
+  for (uint64_t i = w; i > 0; i--) {
+    buf[i-1] = letters[kmer & 3];
+    kmer >>= 2;
+  }
+  buf[w] = '\0';
+}
+
 /* Reverse-complement of a 4-base encoded w-mer */
 static uint64_t rc_kmer4(uint64_t kmer, const uint64_t w) {
   uint64_t rc = 0;
@@ -929,7 +983,7 @@ static int cmp_seed(const void *a, const void *b) {
 
 /* Enumerate top-K seeds of width w by per-sequence Fisher's p-value.
    Returns 0 on success. Sets *out_seeds (caller frees) and *out_n. */
-static int enumerate_seeds(uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
+static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
   *out_seeds = NULL; *out_n = 0;
 
   khash_t(seed_h) *pos_h = kh_init(seed_h);
@@ -940,7 +994,7 @@ static int enumerate_seeds(uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
 
   /* Count per-sequence canonical k-mer presence in positives */
   for (uint64_t si = 0; si < pos_set.n; si++) {
-    const unsigned char *seq = pos_set.seqs[si];
+    const unsigned char *seq = ctx->seqs[si];
     uint64_t seqlen = pos_set.sizes[si];
     if (seqlen < w) continue;
 
@@ -1011,11 +1065,12 @@ static int enumerate_seeds(uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
     uint64_t hbytes = ((uint64_t)kh_n_buckets(pos_h) + kh_n_buckets(neg_h))
                       * (sizeof(uint64_t) + sizeof(uint64_t) + 1);
     long rss = peak_mem();
+    char pre[16]; w_prefix(ctx, pre, sizeof(pre));
     fprintf(stderr,
-      "[me] w=%" PRIu64 "  pos_unique_kmers=%" PRIu64
+      "    %sEnumerated seeds  w=%" PRIu64 "  pos_unique_kmers=%" PRIu64
       "  neg_unique_kmers=%" PRIu64 "  hash_bytes=%" PRIu64
-      "  peak_rss=%.2f MB\n",
-      w, pos_uniq, neg_uniq, hbytes, (double)rss / (1024.0*1024.0));
+      "  peak_mem=%.2f MB\n",
+      pre, w, pos_uniq, neg_uniq, hbytes, (double)rss / (1024.0*1024.0));
   }
 
   /* Score and collect candidates */
@@ -1060,13 +1115,13 @@ static int enumerate_seeds(uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
 
 /* Build int PPM ppm[w][4] by aligning all positive windows within
    HAMMING_MISMATCH of seed_kmer (or its RC).  Returns aligned hit count. */
-static int build_ppm_from_seed(const uint64_t seed_kmer, const uint64_t w,
+static int build_ppm_from_seed(thread_ctx_t *ctx, const uint64_t seed_kmer, const uint64_t w,
                                 int ppm[][4]) {
   uint64_t rc_seed = args.scan_rc ? rc_kmer4(seed_kmer, w) : UINT64_MAX;
   int nsites = 0;
 
   for (uint64_t si = 0; si < pos_set.n; si++) {
-    const unsigned char *seq = pos_set.seqs[si];
+    const unsigned char *seq = ctx->seqs[si];
     uint64_t seqlen = pos_set.sizes[si];
     if (seqlen < w) continue;
 
@@ -1096,9 +1151,11 @@ static int build_ppm_from_seed(const uint64_t seed_kmer, const uint64_t w,
 
 /* ---- Discovery: PPM → PWM ---- */
 
-/* Convert int count PPM to log-odds PWM in motif, fill probs, CDF, threshold. */
-static void convert_ppm_to_motif(motif_t *motif, int ppm[][4],
-                                  const uint64_t w, const int nsites) {
+/* Convert int count PPM to log-odds PWM in motif, fill probs, CDF, threshold.
+   `phase` is a short label used in -w output (e.g. "initial", "refine 1/2"). */
+static void convert_ppm_to_motif(thread_ctx_t *ctx, motif_t *motif, int ppm[][4],
+                                  const uint64_t w, const int nsites,
+                                  const char *phase) {
   motif->nsites_actual = (uint64_t)nsites;
   motif->size          = w;
 
@@ -1129,7 +1186,7 @@ static void convert_ppm_to_motif(motif_t *motif, int ppm[][4],
     return;
   }
 
-  fill_cdf(motif);
+  fill_cdf(ctx, motif, phase);
 
   motif->threshold  = 0;
   motif->max_score  = 0;
@@ -1138,6 +1195,11 @@ static void convert_ppm_to_motif(motif_t *motif, int ppm[][4],
 
   if (motif->threshold == INT_MAX) {
     /* Fallback: relax to top 1% */
+    if (args.w) {
+      char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+      fprintf(stderr, "        %s  (threshold@p=%g unreachable; retrying at p=0.01)\n",
+              pre, args.hit_pval);
+    }
     motif->threshold = 0;
     motif->max_score = 0;
     motif->min_score = 0;
@@ -1150,7 +1212,8 @@ static void convert_ppm_to_motif(motif_t *motif, int ppm[][4],
 /* One refinement pass: score positives with current PWM threshold,
    rebuild PPM from hits, re-call convert_ppm_to_motif.
    Returns new nsites (>= MIN_REFINE_HITS) or 0 if bailed. */
-static int refine_motif(motif_t *motif, const uint64_t w) {
+static int refine_motif(thread_ctx_t *ctx, motif_t *motif, const uint64_t w,
+                         int pass_idx) {
   if (motif->threshold == INT_MAX) return 0;
   int ppm[50][4];
   memset(ppm, 0, sizeof(ppm));
@@ -1158,7 +1221,7 @@ static int refine_motif(motif_t *motif, const uint64_t w) {
   const int thr = motif->threshold - 1;
 
   for (uint64_t si = 0; si < pos_set.n; si++) {
-    const unsigned char *seq = pos_set.seqs[si];
+    const unsigned char *seq = ctx->seqs[si];
     uint64_t seqlen = pos_set.sizes[si];
     if (seqlen < w) continue;
 
@@ -1193,8 +1256,22 @@ static int refine_motif(motif_t *motif, const uint64_t w) {
     }
   }
 
-  if (nsites < MIN_REFINE_HITS) return 0;
-  convert_ppm_to_motif(motif, ppm, w, nsites);
+  if (args.w) {
+    char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+    fprintf(stderr, "        %sRefinement %d/%d: %d hits\n",
+            pre, pass_idx, REFINE_PASSES, nsites);
+  }
+  if (nsites < MIN_REFINE_HITS) {
+    if (args.w) {
+      char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+      fprintf(stderr, "        %s  (below MIN_REFINE_HITS=%d; bailing)\n",
+              pre, MIN_REFINE_HITS);
+    }
+    return 0;
+  }
+  char phase[24];
+  snprintf(phase, sizeof(phase), "refine %d/%d", pass_idx, REFINE_PASSES);
+  convert_ppm_to_motif(ctx, motif, ppm, w, nsites, phase);
   return nsites;
 }
 
@@ -1203,7 +1280,7 @@ static int refine_motif(motif_t *motif, const uint64_t w) {
 /* Score positives and negatives; count seqs/sites with hits.
    Fills covered[si][byte] bitmask over positives when covered != NULL.
    Returns Fisher's p-value on per-sequence presence. */
-static double evaluate_motif(const motif_t *motif, const uint64_t w,
+static double evaluate_motif(thread_ctx_t *ctx, const motif_t *motif, const uint64_t w,
                               uint64_t *out_sites_pos, uint64_t *out_sites_neg,
                               uint64_t *out_seqs_pos,  uint64_t *out_seqs_neg,
                               uint8_t **covered) {
@@ -1212,7 +1289,7 @@ static double evaluate_motif(const motif_t *motif, const uint64_t w,
   uint64_t sites_pos = 0, sites_neg = 0;
 
   for (uint64_t si = 0; si < pos_set.n; si++) {
-    const unsigned char *seq = pos_set.seqs[si];
+    const unsigned char *seq = ctx->seqs[si];
     uint64_t seqlen = pos_set.sizes[si];
     int has_hit = 0;
     if (seqlen < w) continue;
@@ -1279,7 +1356,7 @@ static double evaluate_motif(const motif_t *motif, const uint64_t w,
 
 /* ---- Discovery: position masking ---- */
 
-static void mask_positions(uint8_t **covered) {
+static void mask_positions(thread_ctx_t *ctx, uint8_t **covered) {
   for (uint64_t si = 0; si < pos_set.n; si++) {
     if (!covered[si]) continue;
     uint64_t nbytes = (pos_set.sizes[si] + 7) / 8;
@@ -1288,7 +1365,7 @@ static void mask_positions(uint8_t **covered) {
       for (int bit = 0; bit < 8; bit++) {
         if (covered[si][b] & (1u << bit)) {
           uint64_t pos = b * 8 + bit;
-          if (pos < pos_set.sizes[si]) pos_set.seqs[si][pos] = 'N';
+          if (pos < pos_set.sizes[si]) ctx->seqs[si][pos] = 'N';
         }
       }
     }
@@ -1297,63 +1374,97 @@ static void mask_positions(uint8_t **covered) {
 
 /* ---- Discovery: add accepted motif to results array ---- */
 
-static int add_result(const motif_t *motif, uint8_t **covered,
-                      double pvalue,
-                      uint64_t sites_pos, uint64_t sites_neg,
-                      uint64_t seqs_pos,  uint64_t seqs_neg) {
-  n_results++;
-  if (n_results > n_results_alloc) {
-    disc_result_t *tmp = realloc(results,
-      (n_results_alloc + ALLOC_CHUNK_SIZE) * sizeof(disc_result_t));
+/* Push an accepted motif onto the thread's local results list.  Results are
+   merged (and renamed) by the main thread after all workers complete. */
+static int add_result_local(thread_ctx_t *ctx, const motif_t *motif,
+                            uint8_t **covered, double pvalue,
+                            uint64_t sites_pos, uint64_t sites_neg,
+                            uint64_t seqs_pos,  uint64_t seqs_neg,
+                            uint64_t discovery_seq) {
+  if (ctx->n_local + 1 > ctx->n_local_alloc) {
+    uint64_t newcap = ctx->n_local_alloc + ALLOC_CHUNK_SIZE;
+    disc_result_t *tmp = realloc(ctx->local_results, newcap * sizeof(disc_result_t));
     if (!tmp) return 1;
-    results = tmp;
-    n_results_alloc += ALLOC_CHUNK_SIZE;
+    ctx->local_results = tmp;
+    ctx->n_local_alloc = newcap;
   }
-  uint64_t ri = n_results - 1;
-  results[ri].motif     = *motif;
-  results[ri].covered   = covered;
-  results[ri].pvalue    = pvalue;
-  results[ri].qvalue    = 1.0;
-  results[ri].sites_pos = sites_pos;
-  results[ri].sites_neg = sites_neg;
-  results[ri].seqs_pos  = seqs_pos;
-  results[ri].seqs_neg  = seqs_neg;
-  results[ri].dropped   = 0;
+  uint64_t ri = ctx->n_local++;
+  disc_result_t *r = &ctx->local_results[ri];
+  r->motif         = *motif;
+  r->covered       = covered;
+  r->pvalue        = pvalue;
+  r->qvalue        = 1.0;
+  r->sites_pos     = sites_pos;
+  r->sites_neg     = sites_neg;
+  r->seqs_pos      = seqs_pos;
+  r->seqs_neg      = seqs_neg;
+  r->dropped       = 0;
+  r->discovery_seq = discovery_seq;
   return 0;
 }
 
 /* ---- Discovery: per-width discovery loop ---- */
 
-static void discover_for_width(const uint64_t w) {
-  /* Save original positive sequences so we can restore after masking */
-  unsigned char **orig = malloc(sizeof(unsigned char *) * pos_set.n);
-  if (!orig) badexit("Error: Failed to alloc pos backup.");
-  for (uint64_t si = 0; si < pos_set.n; si++) {
-    orig[si] = malloc(pos_set.sizes[si]);
-    if (!orig[si]) badexit("Error: Failed to alloc pos backup buffer.");
-    memcpy(orig[si], pos_set.seqs[si], pos_set.sizes[si]);
+static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
+  /* Refresh ctx->seqs from the pristine pos_set.seqs (each width pass starts
+     from unmasked positives; mask_positions then mutates ctx->seqs only) */
+  for (uint64_t si = 0; si < pos_set.n; si++)
+    memcpy(ctx->seqs[si], pos_set.seqs[si], pos_set.sizes[si]);
+
+  if (args.v) {
+    char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+    fprintf(stderr, "  %sWidth %'" PRIu64 " ...\n", pre, w);
   }
 
-  if (args.v) fprintf(stderr, "  Width %'" PRIu64 " ...\n", w);
-
+  uint64_t intra = 0;  /* intra-width acceptance counter for deterministic merge */
   for (int ki = 0; ki < args.n_motifs; ki++) {
     seed_t *seeds = NULL; uint64_t n_seeds = 0;
-    if (enumerate_seeds(w, &seeds, &n_seeds)) badexit("Error: enumerate_seeds failed.");
+    if (enumerate_seeds(ctx, w, &seeds, &n_seeds)) badexit("Error: enumerate_seeds failed.");
     if (n_seeds == 0) { free(seeds); break; }
+    if (args.w) {
+      char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+      fprintf(stderr, "    %sIteration %d/%d (w=%" PRIu64 "): trying %"
+              PRIu64 " seed(s)\n", pre, ki + 1, args.n_motifs, w, n_seeds);
+    }
 
     int accepted = 0;
     for (uint64_t si = 0; si < n_seeds && !accepted; si++) {
+      char kbuf[64]; kmer_to_string(seeds[si].kmer, w, kbuf);
+      if (args.w) {
+        char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+        fprintf(stderr, "      %sSeed %" PRIu64 "/%" PRIu64
+                " kmer=%s fisher_log_p=%.3g\n",
+                pre, si + 1, n_seeds, kbuf, seeds[si].pval);
+      }
       int ppm[50][4]; memset(ppm, 0, sizeof(ppm));
-      int nsites = build_ppm_from_seed(seeds[si].kmer, w, ppm);
-      if (nsites < MIN_REFINE_HITS) continue;
+      int nsites = build_ppm_from_seed(ctx, seeds[si].kmer, w, ppm);
+      if (nsites < MIN_REFINE_HITS) {
+        if (args.w) {
+          char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+          fprintf(stderr, "        %sPPM sites=%d (< MIN_REFINE_HITS=%d); skipping seed\n",
+                  pre, nsites, MIN_REFINE_HITS);
+        }
+        continue;
+      }
+      if (args.w) {
+        char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+        fprintf(stderr, "        %sInitial PPM sites=%d\n", pre, nsites);
+      }
 
       motif_t motif; init_motif(&motif);
-      snprintf(motif.name, MAX_NAME_SIZE, "motif_%" PRIu64, n_results + 1);
-      convert_ppm_to_motif(&motif, ppm, w, nsites);
-      if (motif.threshold == INT_MAX) continue;
+      /* Temporary name; final names assigned post-merge in main thread */
+      snprintf(motif.name, MAX_NAME_SIZE, "w%" PRIu64 "_%" PRIu64, w, intra);
+      convert_ppm_to_motif(ctx, &motif, ppm, w, nsites, "initial");
+      if (motif.threshold == INT_MAX) {
+        if (args.w) {
+          char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+          fprintf(stderr, "        %sThreshold unreachable; skipping seed\n", pre);
+        }
+        continue;
+      }
 
       for (int ri = 0; ri < REFINE_PASSES; ri++) {
-        if (!refine_motif(&motif, w)) break;
+        if (!refine_motif(ctx, &motif, w, ri + 1)) break;
       }
       if (motif.threshold == INT_MAX) continue;
 
@@ -1373,48 +1484,140 @@ static void discover_for_width(const uint64_t w) {
       }
 
       uint64_t sp, sn, ep, en;
-      double pval = evaluate_motif(&motif, w, &sp, &sn, &ep, &en, covered);
+      double pval = evaluate_motif(ctx, &motif, w, &sp, &sn, &ep, &en, covered);
 
       if (pval > args.stop_pval) {
+        if (args.w) {
+          char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+          fprintf(stderr, "        %sRejected: p=%.3g > stop_pval=%.3g\n",
+                  pre, pval, args.stop_pval);
+        }
         for (uint64_t sj = 0; sj < pos_set.n; sj++) free(covered[sj]);
         free(covered);
         continue;
       }
 
-      /* Assign final name */
-      snprintf(motif.name, MAX_NAME_SIZE, "motif_%" PRIu64, n_results + 1);
-
-      if (add_result(&motif, covered, pval, sp, sn, ep, en)) {
+      if (add_result_local(ctx, &motif, covered, pval, sp, sn, ep, en, intra)) {
         for (uint64_t sj = 0; sj < pos_set.n; sj++) free(covered[sj]);
         free(covered);
         badexit("Error: Failed to add result.");
       }
 
-      mask_positions(covered);
+      mask_positions(ctx, covered);
       accepted = 1;
+      intra++;
 
-      if (args.v)
-        fprintf(stderr, "    Accepted motif %s  w=%" PRIu64 "  p=%.3g\n",
-          motif.name, w, pval);
+      if (args.v) {
+        char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+        fprintf(stderr, "    %sAccepted %s  w=%" PRIu64 "  p=%.3g  sites=%" PRIu64 "  seqs_pos=%" PRIu64 "/%" PRIu64 "\n",
+          pre, motif.name, w, pval, sp, ep, pos_set.n);
+      }
     }
     free(seeds);
-    if (!accepted) break;
+    if (!accepted) {
+      if (args.w) {
+        char pre[16]; w_prefix(ctx, pre, sizeof(pre));
+        fprintf(stderr, "    %sNo seed accepted; ending iterations for width %" PRIu64 "\n",
+                pre, w);
+      }
+      break;
+    }
   }
-
-  /* Restore original positive sequences */
-  for (uint64_t si = 0; si < pos_set.n; si++) {
-    memcpy(pos_set.seqs[si], orig[si], pos_set.sizes[si]);
-    free(orig[si]);
-  }
-  free(orig);
 }
 
 /* ---- Discovery: width sweep ---- */
 
-static void discover_all(void) {
-  for (uint64_t w = (uint64_t)args.min_w; w <= (uint64_t)args.max_w; w++) {
-    discover_for_width(w);
+/* Merge per-thread local_results into the global results[] in deterministic
+   width-then-discovery_seq order, and assign final motif_<N> names. */
+static int cmp_local_result(const void *a, const void *b) {
+  const disc_result_t *ra = (const disc_result_t *)a;
+  const disc_result_t *rb = (const disc_result_t *)b;
+  if (ra->motif.size != rb->motif.size)
+    return (ra->motif.size > rb->motif.size) - (ra->motif.size < rb->motif.size);
+  return (ra->discovery_seq > rb->discovery_seq) - (ra->discovery_seq < rb->discovery_seq);
+}
+
+static void merge_thread_results(void) {
+  uint64_t total = 0;
+  for (int t = 0; t < n_thread_ctxs; t++) total += thread_ctxs[t].n_local;
+  if (total == 0) return;
+  if (total > n_results_alloc) {
+    disc_result_t *tmp = realloc(results, total * sizeof(disc_result_t));
+    if (!tmp) badexit("Error: Failed to alloc merged results.");
+    results = tmp;
+    n_results_alloc = total;
   }
+  for (int t = 0; t < n_thread_ctxs; t++) {
+    for (uint64_t i = 0; i < thread_ctxs[t].n_local; i++) {
+      results[n_results++] = thread_ctxs[t].local_results[i];
+    }
+  }
+  qsort(results, n_results, sizeof(disc_result_t), cmp_local_result);
+  for (uint64_t i = 0; i < n_results; i++)
+    snprintf(results[i].motif.name, MAX_NAME_SIZE, "motif_%" PRIu64, i + 1);
+}
+
+/* Tiny thread-safe FIFO of widths. Pre-populated before workers start. */
+typedef struct {
+  uint64_t       *widths;
+  uint64_t        head;
+  uint64_t        tail;
+  pthread_mutex_t mu;
+} width_queue_t;
+
+typedef struct {
+  thread_ctx_t   *ctx;
+  width_queue_t  *q;
+} worker_arg_t;
+
+static void *worker(void *arg) {
+  worker_arg_t *wa = (worker_arg_t *)arg;
+  for (;;) {
+    uint64_t w;
+    pthread_mutex_lock(&wa->q->mu);
+    if (wa->q->head >= wa->q->tail) {
+      pthread_mutex_unlock(&wa->q->mu);
+      break;
+    }
+    w = wa->q->widths[wa->q->head++];
+    pthread_mutex_unlock(&wa->q->mu);
+    discover_for_width(wa->ctx, w);
+  }
+  return NULL;
+}
+
+static void discover_all(void) {
+  /* Build width queue */
+  uint64_t n_widths = (uint64_t)(args.max_w - args.min_w + 1);
+  width_queue_t q;
+  q.widths = malloc(sizeof(uint64_t) * n_widths);
+  if (!q.widths) badexit("Error: Failed to alloc width queue.");
+  for (uint64_t i = 0; i < n_widths; i++) q.widths[i] = (uint64_t)args.min_w + i;
+  q.head = 0; q.tail = n_widths;
+  if (pthread_mutex_init(&q.mu, NULL) != 0) badexit("Error: mutex init failed.");
+
+  if (n_thread_ctxs <= 1) {
+    /* Serial path: same code, single context, no pthread overhead */
+    worker_arg_t wa = { .ctx = &thread_ctxs[0], .q = &q };
+    worker(&wa);
+  } else {
+    pthread_t *threads = malloc(sizeof(pthread_t) * n_thread_ctxs);
+    worker_arg_t *wargs = malloc(sizeof(worker_arg_t) * n_thread_ctxs);
+    if (!threads || !wargs) badexit("Error: Failed to alloc thread arrays.");
+    for (int t = 0; t < n_thread_ctxs; t++) {
+      wargs[t].ctx = &thread_ctxs[t];
+      wargs[t].q   = &q;
+      if (pthread_create(&threads[t], NULL, worker, &wargs[t]) != 0)
+        badexit("Error: pthread_create failed.");
+    }
+    for (int t = 0; t < n_thread_ctxs; t++) pthread_join(threads[t], NULL);
+    free(threads); free(wargs);
+  }
+
+  pthread_mutex_destroy(&q.mu);
+  free(q.widths);
+
+  merge_thread_results();
 }
 
 /* ---- Rebuild coverage on unmasked sequences ---- */
@@ -1423,6 +1626,11 @@ static void discover_all(void) {
    accepted motif on those unmasked sequences so that dedup compares
    coverage bitmasks built under identical, unmasked conditions. */
 static void rebuild_coverage(void) {
+  /* Borrow thread 0's ctx but force it to read from the pristine pos_set.seqs
+     (rebuild happens in the main thread after all discovery is complete). */
+  thread_ctx_t *ctx = &thread_ctxs[0];
+  unsigned char **saved = ctx->seqs;
+  ctx->seqs = pos_set.seqs;
   for (uint64_t ri = 0; ri < n_results; ri++) {
     disc_result_t *r = &results[ri];
     for (uint64_t si = 0; si < pos_set.n; si++) {
@@ -1430,7 +1638,7 @@ static void rebuild_coverage(void) {
       memset(r->covered[si], 0, nbytes);
     }
     uint64_t sites_pos, sites_neg, seqs_pos, seqs_neg;
-    double pval = evaluate_motif(&r->motif, r->motif.size,
+    double pval = evaluate_motif(ctx, &r->motif, r->motif.size,
                                  &sites_pos, &sites_neg,
                                  &seqs_pos,  &seqs_neg, r->covered);
     r->pvalue    = pval;
@@ -1439,6 +1647,7 @@ static void rebuild_coverage(void) {
     r->seqs_pos  = seqs_pos;
     r->seqs_neg  = seqs_neg;
   }
+  ctx->seqs = saved;
 }
 
 /* ---- Cross-width dedup ---- */
@@ -1476,11 +1685,47 @@ static void dedup_results(void) {
 
 /* ---- Output: consensus ---- */
 
+/* Map IUPAC base-set mask to letter.  Bit positions: 0=A, 1=C, 2=G, 3=T. */
+static char iupac_from_mask(int mask) {
+  switch (mask) {
+    case 0x1: return 'A';
+    case 0x2: return 'C';
+    case 0x4: return 'G';
+    case 0x8: return 'T';
+    case 0x3: return 'M';  /* A,C */
+    case 0x5: return 'R';  /* A,G */
+    case 0x9: return 'W';  /* A,T */
+    case 0x6: return 'S';  /* C,G */
+    case 0xA: return 'Y';  /* C,T */
+    case 0xC: return 'K';  /* G,T */
+    case 0x7: return 'V';  /* A,C,G */
+    case 0xB: return 'H';  /* A,C,T */
+    case 0xD: return 'D';  /* A,G,T */
+    case 0xE: return 'B';  /* C,G,T */
+    default:  return 'N';
+  }
+}
+
+/* Render a column as the smallest IUPAC code whose constituent bases together
+   account for at least CONSENSUS_THRESHOLD of the probability mass. */
 static char consensus_char(const double probs[4]) {
-  static const char bases[4] = {'A','C','G','T'};
-  int best = 0;
-  for (int i = 1; i < 4; i++) if (probs[i] > probs[best]) best = i;
-  return bases[best];
+  int order[4] = {0, 1, 2, 3};
+  /* Insertion sort descending by probability (4 elements; trivial). */
+  for (int i = 1; i < 4; i++) {
+    int j = i;
+    while (j > 0 && probs[order[j]] > probs[order[j-1]]) {
+      int t = order[j]; order[j] = order[j-1]; order[j-1] = t;
+      j--;
+    }
+  }
+  double cum = 0.0;
+  int mask = 0;
+  for (int k = 0; k < 4; k++) {
+    cum += probs[order[k]];
+    mask |= 1 << order[k];
+    if (cum >= CONSENSUS_THRESHOLD) break;
+  }
+  return iupac_from_mask(mask);
 }
 
 static void build_consensus(const motif_t *m, char *buf) {
@@ -1570,7 +1815,7 @@ static void write_meme(void) {
   fprintf(f, "MEME version 4\n\n");
   fprintf(f, "ALPHABET= ACGT\n\n");
   fprintf(f, "strands: %s\n\n", args.scan_rc ? "+ -" : "+");
-  fprintf(f, "Background letter frequencies (from yamme):\n");
+  fprintf(f, "Background letter frequencies:\n");
   fprintf(f, "A %.6f C %.6f G %.6f T %.6f\n\n",
     args.bkg[0], args.bkg[1], args.bkg[2], args.bkg[3]);
 
@@ -1596,25 +1841,25 @@ static void write_meme(void) {
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk me [options] -i positives.fa\n"
+    "Usage:  yamtk me [options] -i positives.fa[.gz]\n"
     "\n"
-    " -i <str>   Positives FASTA/FASTQ (gzipped ok; '-' = stdin, requires -n).\n"
-    " -n <str>   Negatives FASTA (default: Eulerian shuffle of positives).\n"
+    " -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).\n"
+    " -n <str>   Negatives FASTA (default: shuffle of positives).\n"
     " -o <str>   TSV output file (default: motifs.tsv; '-' = stdout).\n"
-    " -M <str>   MEME motif output (default: motifs.meme; '-' = stdout; '' = off).\n"
+    " -M <str>   MEME motif output (default: motifs.meme; '-' = stdout).\n"
     " -k <int>   Min motif width (default 6, min 3).\n"
     " -K <int>   Max motif width (default 15, max %d).\n"
     " -N <int>   Max motifs to discover (default 10).\n"
     " -t <dbl>   Per-motif stopping p-value at discovery (default 1e-3).\n"
     " -P <dbl>   Hit-scoring p-value threshold (default 1e-3).\n"
     " -D <dbl>   Cross-width dedup overlap threshold (default 0.5).\n"
-    " -q <dbl>   BH q-value filter on surviving motifs (default 1e-3; set to 1 to disable).\n"
+    " -q <dbl>   BH q-value filter on surviving motifs (default 1e-3).\n"
     " -S <int>   Shuffle k-mer size for default negatives (default 2, max 9).\n"
     " -b <A,C,G,T>  Background (default: computed from positives).\n"
     " -p <int>   PWM pseudocount (default %d).\n"
     " -R         Disable reverse-strand scoring.\n"
     " -s <uint>  RNG seed (default: time-seeded).\n"
-    " -j <int>   Threads accepted (v1: serial, ignored).\n"
+    " -j <int>   Worker threads for discovery (default 1).\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR,
     MAX_MOTIF_WIDTH, DEFAULT_PSEUDOCOUNT
@@ -1711,7 +1956,8 @@ int main_me(int argc, char **argv) {
         args.use_seed = 1;
         break;
       case 'j':
-        /* Accepted but ignored in v1 (serial only) */
+        if (str_to_int(optarg, &args.nthreads)) badexit("Error: Failed to parse -j value.");
+        if (args.nthreads < 1) badexit("Error: -j must be >= 1.");
         break;
       case 'w':
         args.w = 1;
@@ -1775,8 +2021,6 @@ int main_me(int argc, char **argv) {
     parse_user_bkg(user_bkg);
   }
 
-  if (alloc_cdf()) badexit("Error: alloc_cdf failed.");
-
   /* Load positives */
   if (args.v) fprintf(stderr, "Loading positives ...\n");
   time_t t0 = time(NULL);
@@ -1828,6 +2072,23 @@ int main_me(int argc, char **argv) {
     }
     files.meme_open = 1;
   }
+
+  /* Allocate thread contexts (one per worker).  Cap by the number of widths
+     to discover so we never create idle workers. */
+  int n_widths = args.max_w - args.min_w + 1;
+  n_thread_ctxs = args.nthreads;
+  if (n_thread_ctxs < 1) n_thread_ctxs = 1;
+  if (n_thread_ctxs > n_widths) n_thread_ctxs = n_widths;
+  if (n_thread_ctxs < 1) n_thread_ctxs = 1;
+  thread_ctxs = malloc(sizeof(thread_ctx_t) * n_thread_ctxs);
+  if (!thread_ctxs) badexit("Error: Failed to alloc thread contexts.");
+  for (int t = 0; t < n_thread_ctxs; t++) {
+    if (init_thread_ctx(&thread_ctxs[t], t)) badexit("Error: init_thread_ctx failed.");
+    if (alloc_ctx_seqs(&thread_ctxs[t])) badexit("Error: alloc_ctx_seqs failed.");
+  }
+  if (args.v && n_thread_ctxs > 1)
+    fprintf(stderr, "Discovery: %d worker thread(s) (width-level parallelism).\n",
+            n_thread_ctxs);
 
   /* Discover motifs */
   if (args.v) fprintf(stderr, "Discovering motifs (widths %d-%d, max %d each) ...\n",
@@ -1889,7 +2150,7 @@ int main_me(int argc, char **argv) {
   free_results();
   free_seq_set(&pos_set);
   free_seq_set(&neg_set);
-  free_cdf();
+  free_thread_ctxs();
   close_files();
 
   if (args.v) {

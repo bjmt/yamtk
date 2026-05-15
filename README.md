@@ -418,6 +418,58 @@ sorted ascending by q-value:
 - `seqs` / `sites` — fold enrichment (positive/negative hit rate ratio)
 - `ranksum` — AUC (0.5 = no signal; range 0–1) / log-odds of AUC
 
+## yamme
+
+Discover motifs de novo from a positive FASTA using a STREME-like approach.
+Enumerates enriched k-mers per width, refines each into a PWM, masks accepted
+hits, and iterates. Outputs a TSV table and a MEME probability-matrix file.
+
+### Usage
+
+```
+yamtk me [options] -i positives.fa
+
+ -i <str>   Positives FASTA/FASTQ (gzipped ok; '-' = stdin, requires -n).
+ -n <str>   Negatives FASTA (default: Eulerian shuffle of positives).
+ -o <str>   TSV output file (default: motifs.tsv; '-' = stdout).
+ -M <str>   MEME motif output (default: motifs.meme; '-' = stdout; '' = off).
+ -k <int>   Min motif width (default 6, min 3).
+ -K <int>   Max motif width (default 15, max 30).
+ -N <int>   Max motifs to discover (default 10).
+ -t <dbl>   Per-motif stopping p-value (default 0.05).
+ -P <dbl>   Hit-scoring p-value threshold (default 1e-3).
+ -D <dbl>   Cross-width dedup overlap threshold (default 0.5).
+ -S <int>   Shuffle k-mer size for default negatives (default 2, max 9).
+ -b <A,C,G,T>  Background (default: computed from positives).
+ -p <int>   PWM pseudocount (default 1).
+ -R         Disable reverse-strand scoring.
+ -s <uint>  RNG seed (default: time-seeded).
+ -j <int>   Threads accepted (v1: serial, ignored).
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Example
+
+```sh
+yamtk me -i chip_peaks.fa -k 6 -K 15 -N 10 -s 1 -v
+# writes motifs.tsv and motifs.meme in the working directory
+```
+
+### TSV output columns
+
+| Column | Description |
+|--------|-------------|
+| motif | Motif name (motif_1, motif_2, …) |
+| rank | Rank by p-value among surviving motifs |
+| width | Motif width in bp |
+| consensus | Argmax consensus sequence |
+| nsites | Aligned sites from last refinement pass |
+| seqs_pos / seqs_neg | Positive / negative sequences with ≥1 hit |
+| sites_pos / sites_neg | Total hit count in positives / negatives |
+| n_pos / n_neg | Total sequences in each set |
+| pvalue | One-tailed Fisher's exact p-value (per-sequence presence) |
+| qvalue | Benjamini-Hochberg FDR q-value |
+
 ## yamshuf
 
 A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
