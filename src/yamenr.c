@@ -383,6 +383,16 @@ static int check_char_is_one_of(const char c, const char *list) {
   return 0;
 }
 
+/* True iff the first non-whitespace character looks like the start of a
+   numeric PPM value (digit or decimal point). Used to detect end of a
+   MEME letter-probability matrix block when a non-data line (e.g. JASPAR's
+   `URL ...`) follows. */
+static int is_ppm_data_line(const char *line) {
+  uint64_t i = 0;
+  while (line[i] == ' ' || line[i] == '\t') i++;
+  return (line[i] >= '0' && line[i] <= '9') || line[i] == '.';
+}
+
 /* ---- Background ---- */
 
 static int check_and_load_bkg(double *bkg) {
@@ -725,16 +735,34 @@ static void read_meme(void) {
   char *line=NULL; size_t len=0; ssize_t read;
   uint64_t ln=0, lpm=0, bkg_L=0, mi=(uint64_t)-1, pi=(uint64_t)-1;
   int alph=0, strand=0, live=0;
+  int warned_bkg=0, warned_alph=0, warned_strand=0;
   while ((read = getline(&line,&len,files.m)) != -1) {
     ln++;
     if (check_line_contains(line,"Background letter frequencies\0")) {
+      /* Only honor the first; concatenated MEME files repeat the header per chunk. */
       if (!bkg_L && mi==(uint64_t)-1) bkg_L=ln;
+      else if (!warned_bkg) {
+        fprintf(stderr,
+          "Warning: Multiple 'Background letter frequencies' lines in MEME file "
+          "(L%" PRIu64 "); using the first.\n", ln);
+        warned_bkg = 1;
+      }
     } else if (bkg_L && bkg_L==ln-1) {
       if (get_meme_bkg(line,ln)) { free(line); badexit(""); }
     } else if (check_line_contains(line,"ALPHABET\0")) {
       if (!alph && mi==(uint64_t)-1) { if(check_meme_alph(line,ln)){free(line);badexit("");} alph=1; }
+      else if (!warned_alph) {
+        fprintf(stderr,
+          "Warning: Multiple ALPHABET lines in MEME file (L%" PRIu64 "); using the first.\n", ln);
+        warned_alph = 1;
+      }
     } else if (check_line_contains(line,"strands:\0")) {
       if (!strand && mi==(uint64_t)-1) { check_meme_strand(line,ln); strand=1; }
+      else if (!warned_strand) {
+        fprintf(stderr,
+          "Warning: Multiple 'strands:' lines in MEME file (L%" PRIu64 "); using the first.\n", ln);
+        warned_strand = 1;
+      }
     } else if (check_line_contains(line,"MOTIF\0")) {
       if (mi!=(uint64_t)-1&&args.w) fprintf(stderr,"%" PRIu64 ")\n",motifs[mi]->size);
       mi++;
@@ -745,7 +773,7 @@ static void read_meme(void) {
     } else if (check_line_contains(line,"letter-probability matrix\0")) {
       if (pi==0) { lpm=ln; live=1; }
     } else if (live) {
-      if (!count_nonempty_chars(line)||check_char_is_one_of('-',line)||check_char_is_one_of('*',line)) {
+      if (!count_nonempty_chars(line)||!is_ppm_data_line(line)) {
         live=0;
       } else if (ln==(lpm+pi+1)) {
         if (pi>=MAX_MOTIF_SIZE/5&&pi<(uint64_t)-1) {
@@ -1565,6 +1593,9 @@ static int cmp_result(const void *a, const void *b) {
 
 int main_enr(int argc, char **argv) {
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   /* Initial allocations */
   motifs = malloc(sizeof(*motifs) * ALLOC_CHUNK_SIZE);
   if (!motifs) badexit("Error: Failed to allocate motifs.");
@@ -1963,7 +1994,12 @@ int main_enr(int argc, char **argv) {
   close_files();
 
   if (args.v) {
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                   + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
     fprintf(stderr, "Done.\n");
+    fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
     print_peak_mb();
   }
 

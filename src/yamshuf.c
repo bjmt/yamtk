@@ -981,6 +981,9 @@ static void print_kmer_table_header(const uint64_t k, const int is_dna) {
 
 int main_shuf(int argc, char **argv) {
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   kseq_t *kseq;
   int opt;
   int use_stdout = 1;
@@ -1444,9 +1447,14 @@ int main_shuf(int argc, char **argv) {
 
   time_t time2 = time(NULL);
   if (args.v) {
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                   + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
     fprintf(stderr, "Done.\n");
     time_t time3 = difftime(time2, time1);
-    print_time((uint64_t) time3, "shuffle"); 
+    print_time((uint64_t) time3, "shuffle");
+    fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
     print_peak_mb();
   }
 

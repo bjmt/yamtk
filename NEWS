@@ -1,6 +1,43 @@
 UNRELEASED
 ----------
 
+* New subcommand: yamtk cmp — TOMTOM-equivalent query-vs-target motif
+  comparison. Takes a query motif file (-q) and target motif database
+  (-t), both in MEME/JASPAR/HOMER/HOCOMOCO. For each query x target it
+  slides query columns against target columns at every valid offset
+  (both orientations unless -R), scores the alignment with Pearson
+  correlation (-d pcc, the only metric in v1; dispatch table set up so
+  ED/SW/ALLR can be added later), and reports best-alignment p-values
+  with per-query BH q-values. The null is the empirical distribution of
+  PCC scores against actual database columns (TOMTOM-style; p-values
+  match TOMTOM's within a small constant factor on JASPAR2026). For
+  small target databases (< ~500 total columns) the empirical histogram
+  becomes too sparse — use -e to switch to a parametric Dirichlet-
+  Multinomial enumeration over a 56-column grid. Threading via -j over
+  queries. TSV output columns: query_id, target_id, offset, p_value,
+  q_value, score, overlap, query_consensus, target_consensus,
+  orientation; sorted per-query by ascending q. -Q filters by q-value
+  (default 0.1). -p applies a TOMTOM-style pseudocount before scoring
+  (default 0; PCC is largely invariant to it but provided for
+  compatibility); -N overrides every motif's nsites. Per-query PMFs are
+  computed per-(start, length) window — not averaged — matching
+  TOMTOM's get_pv_lookup_new structure. Deterministic; no RNG.
+
+* yamtk scan/enr/ref/cmp MEME parser: handle JASPAR2026-style files.
+  (1) URL trailer lines (e.g. "URL http://jaspar.elixir.no/...") after
+  each PPM block are skipped via a positive numeric-line check instead
+  of the previous '-'/'*' blacklist, which caught some URLs but not all.
+  (2) Concatenated MEME files with repeated "MEME version", ALPHABET,
+  "strands:" and "Background letter frequencies" headers now parse
+  cleanly — the parser honors the first occurrence and emits one
+  warning per repeated header type. The previous behavior was to abort
+  with "Multiple alphabet definitions". (yamenr already had lenient
+  behavior; warnings are new there too.)
+
+* All subcommands: print "Total runtime: N.NNNs" with millisecond
+  resolution under -v, using clock_gettime(CLOCK_MONOTONIC). Per-phase
+  print_time calls (which suppress sub-2-second timings) are unchanged.
+
 * New subcommand: yamtk ref — refine a seed motif against positive sequences.
   Takes a seed PWM (-m, accepting MEME/JASPAR/HOMER/HOCOMOCO) or an IUPAC
   consensus string (-1, e.g. CACGTG or NRTACGTYN), scans it against the

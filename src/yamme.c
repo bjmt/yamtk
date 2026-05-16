@@ -1898,6 +1898,9 @@ int main_me(int argc, char **argv) {
   char *user_bkg  = NULL;
   char *seed_str  = NULL;
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   while ((opt = getopt(argc, argv, "i:n:o:O:k:K:N:t:P:D:S:b:p:q:RMs:j:vwh")) != -1) {
     switch (opt) {
       case 'i':
@@ -2180,7 +2183,12 @@ int main_me(int argc, char **argv) {
   close_files();
 
   if (args.v) {
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                   + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
     fprintf(stderr, "Done.\n");
+    fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
     print_peak_mb();
   }
 

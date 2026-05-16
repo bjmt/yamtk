@@ -842,6 +842,9 @@ error_blank:
 
 int main_dedup(int argc, char **argv) {
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   int opt;
   int use_stdout = 1, has_input = 0;
 
@@ -951,8 +954,13 @@ int main_dedup(int argc, char **argv) {
   run_minidedup();
   time_t time2 = time(NULL);
   if (args.v) {
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                   + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
     time_t time3 = difftime(time2, time1);
-    print_time((uint64_t) time3, "deduplicate"); 
+    print_time((uint64_t) time3, "deduplicate");
+    fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
     print_peak_mb();
   }
 

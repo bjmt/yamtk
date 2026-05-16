@@ -583,6 +583,16 @@ static int check_char_is_one_of(const char c, const char *list) {
   return 0;
 }
 
+/* True iff the first non-whitespace character looks like the start of a
+   numeric PPM value (digit or decimal point). Used to detect end of a
+   MEME letter-probability matrix block when a non-data line (e.g. JASPAR's
+   `URL ...`) follows. */
+static int is_ppm_data_line(const char *line) {
+  uint64_t i = 0;
+  while (line[i] == ' ' || line[i] == '\t') i++;
+  return (line[i] >= '0' && line[i] <= '9') || line[i] == '.';
+}
+
 static int detect_motif_fmt(void) {
   int jaspar_or_hocomoco = 0, file_fmt = 0, has_tabs = 0;
   char *line = NULL;
@@ -797,19 +807,31 @@ static void read_meme(void) {
   ssize_t r;
   uint64_t line_num = 0, l_p_m_L = 0, bkg_L = 0, motif_i = -1, pos_i = 0;
   int alph_detected = 0, live_motif = 0;
+  int warned_bkg = 0, warned_alph = 0;
   while ((r = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (check_line_contains(line, "Background letter frequencies\0")) {
-      if (bkg_L) { free(line); badexit("Error: Multiple bkg definitions in MEME file."); }
-      if (motif_i < -1) { free(line); badexit("Error: Bkg definition after motifs."); }
-      bkg_L = line_num;
+      /* Only honor the first occurrence; concatenated MEME files (e.g.
+         JASPAR2026_CORE_*_meme.txt) repeat the header per chunk. */
+      if (!bkg_L) bkg_L = line_num;
+      else if (!warned_bkg) {
+        fprintf(stderr,
+          "Warning: Multiple 'Background letter frequencies' lines in MEME file "
+          "(L%" PRIu64 "); using the first.\n", line_num);
+        warned_bkg = 1;
+      }
     } else if (bkg_L && bkg_L == line_num - 1) {
       if (get_meme_bkg(line, line_num)) { free(line); badexit(""); }
     } else if (check_line_contains(line, "ALPHABET\0")) {
-      if (alph_detected) { free(line); badexit("Error: Multiple alphabet definitions."); }
-      if (motif_i < -1) { free(line); badexit("Error: Alphabet definition after motifs."); }
-      if (check_meme_alph(line, line_num)) { free(line); badexit(""); }
-      alph_detected = 1;
+      if (!alph_detected) {
+        if (check_meme_alph(line, line_num)) { free(line); badexit(""); }
+        alph_detected = 1;
+      } else if (!warned_alph) {
+        fprintf(stderr,
+          "Warning: Multiple ALPHABET lines in MEME file (L%" PRIu64 "); using the first.\n",
+          line_num);
+        warned_alph = 1;
+      }
     } else if (check_line_contains(line, "MOTIF\0")) {
       motif_i++;
       if (add_motif()) { free(line); badexit(""); }
@@ -821,8 +843,7 @@ static void read_meme(void) {
       l_p_m_L = line_num;
       live_motif = 1;
     } else if (live_motif) {
-      if (!count_nonempty_chars(line) || check_char_is_one_of('-', line) ||
-          check_char_is_one_of('*', line)) {
+      if (!count_nonempty_chars(line) || !is_ppm_data_line(line)) {
         live_motif = 0;
       } else if (line_num == (l_p_m_L + pos_i + 1)) {
         if (pos_i >= MAX_MOTIF_WIDTH) {
@@ -1557,6 +1578,9 @@ int main_ref(int argc, char **argv) {
   char *user_bkg = NULL;
   char *consensus = NULL;
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   while ((opt = getopt(argc, argv, "m:1:i:o:P:r:e:ETI:Qb:p:RMvwh")) != -1) {
     switch (opt) {
       case 'm':
@@ -1843,7 +1867,12 @@ int main_ref(int argc, char **argv) {
   close_files();
 
   if (args.v) {
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                   + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
     fprintf(stderr, "Done.\n");
+    fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
     print_peak_mb();
   }
 

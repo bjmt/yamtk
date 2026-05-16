@@ -955,6 +955,16 @@ static int check_char_is_one_of(const char c, const char *list) {
   return 0;
 }
 
+/* True iff the first non-whitespace character looks like the start of a
+   numeric PPM value (digit or decimal point). Used to detect end of a
+   MEME letter-probability matrix block when a non-data line (e.g. JASPAR's
+   `URL ...`) follows. */
+static int is_ppm_data_line(const char *line) {
+  uint64_t i = 0;
+  while (line[i] == ' ' || line[i] == '\t') i++;
+  return (line[i] >= '0' && line[i] <= '9') || line[i] == '.';
+}
+
 /* ---- Motif format detection ---- */
 
 static int detect_motif_fmt(void) {
@@ -1300,22 +1310,18 @@ static void read_meme(void) {
   ssize_t read;
   uint64_t line_num = 0, l_p_m_L = 0, bkg_let_freqs_L = 0, motif_i = -1, pos_i = -1;
   int alph_detected = 0, strand_detected = 0, live_motif = 0;
+  int warned_bkg = 0, warned_alph = 0, warned_strand = 0;
   while ((read = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (check_line_contains(line, "Background letter frequencies\0")) {
-      if (bkg_let_freqs_L) {
-        free(line);
+      /* Only honor the first occurrence; concatenated MEME files (e.g.
+         JASPAR2026_CORE_*_meme.txt) repeat the header per chunk. */
+      if (!bkg_let_freqs_L) bkg_let_freqs_L = line_num;
+      else if (!warned_bkg) {
         fprintf(stderr,
-          "Error: Detected multiple background definition lines in MEME file (L%" PRIu64 ").",
-          line_num);
-      } else {
-        if (motif_i < -1) {
-          free(line);
-          fprintf(stderr, "Error: Found background definition line after motifs (L%" PRIu64 ").",
-            line_num);
-          badexit("");
-        }
-        bkg_let_freqs_L = line_num;
+          "Warning: Multiple 'Background letter frequencies' lines in MEME file "
+          "(L%" PRIu64 "); using the first.\n", line_num);
+        warned_bkg = 1;
       }
     } else if (bkg_let_freqs_L && bkg_let_freqs_L == line_num - 1) {
       if (get_meme_bkg(line, line_num)) {
@@ -1323,43 +1329,31 @@ static void read_meme(void) {
         badexit("");
       }
     } else if (check_line_contains(line, "ALPHABET\0")) {
-      if (alph_detected) {
-        free(line);
+      if (!alph_detected) {
+        if (check_meme_alph(line, line_num)) {
+          free(line);
+          badexit("");
+        }
+        alph_detected = 1;
+      } else if (!warned_alph) {
         fprintf(stderr,
-          "Error: Detected multiple alphabet definition lines in MEME file (L%" PRIu64 ").",
+          "Warning: Multiple ALPHABET lines in MEME file (L%" PRIu64 "); using the first.\n",
           line_num);
-        badexit("");
+        warned_alph = 1;
       }
-      if (motif_i < -1) {
-        free(line);
-        fprintf(stderr, "Error: Found alphabet definition line after motifs (L%" PRIu64 ").",
-          line_num);
-        badexit("");
-      }
-      if (check_meme_alph(line, line_num)) {
-        free(line);
-        badexit("");
-      }
-      alph_detected = 1;
     } else if (check_line_contains(line, "strands:\0")) {
-      if (strand_detected) {
-        free(line);
+      if (!strand_detected) {
+        if (check_meme_strand(line, line_num)) {
+          free(line);
+          badexit("");
+        }
+        strand_detected = 1;
+      } else if (!warned_strand) {
         fprintf(stderr,
-          "Error: Detected multiple strand information lines in MEME file (L%" PRIu64 ").",
+          "Warning: Multiple 'strands:' lines in MEME file (L%" PRIu64 "); using the first.\n",
           line_num);
-        badexit("");
+        warned_strand = 1;
       }
-      if (motif_i < -1) {
-        free(line);
-        fprintf(stderr, "Error: Found strand information line after motifs (L%" PRIu64 ").",
-          line_num);
-        badexit("");
-      }
-      if (check_meme_strand(line, line_num)) {
-        free(line);
-        badexit("");
-      }
-      strand_detected = 1;
     } else if (check_line_contains(line, "MOTIF\0")) {
       if (motif_i < -1 && args.w) {
         fprintf(stderr, "%" PRIu64 ")\n", motifs[motif_i]->size);
@@ -1383,8 +1377,7 @@ static void read_meme(void) {
       live_motif = 1;
     } else if (live_motif) {
 
-      if (!count_nonempty_chars(line) || check_char_is_one_of('-', line) ||
-          check_char_is_one_of('*', line)) {
+      if (!count_nonempty_chars(line) || !is_ppm_data_line(line)) {
         live_motif = 0;
       } else if (line_num == (l_p_m_L + pos_i + 1)) {
 
@@ -2987,6 +2980,9 @@ static void *scan_sub_process(void *thread_i) {
 
 int main_scan(int argc, char **argv) {
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   motifs = malloc(sizeof(*motifs) * ALLOC_CHUNK_SIZE);
   if (motifs == NULL) {
     badexit("Error: Failed to allocate memory for motifs.");
@@ -3417,8 +3413,13 @@ int main_scan(int argc, char **argv) {
     time_t time2 = time(NULL);
     time_t time3 = difftime(time2, time1);
     if (args.v) {
+      struct timespec ts_end;
+      clock_gettime(CLOCK_MONOTONIC, &ts_end);
+      double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                     + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
       fprintf(stderr, "Done.\n");
       print_time((uint64_t) time3, "scan");
+      fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
       print_peak_mb();
     }
 
