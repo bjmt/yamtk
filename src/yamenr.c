@@ -130,6 +130,7 @@ typedef struct args_t {
   int      pseudocount;
   int      nthreads;
   int      scan_rc;
+  int      mask;
   int      trim_names;
   int      use_user_bkg;
   int      shuffle_k;
@@ -149,6 +150,7 @@ static args_t args = {
   .pseudocount  = DEFAULT_PSEUDOCOUNT,
   .nthreads     = 1,
   .scan_rc      = 1,
+  .mask         = 0,
   .trim_names   = 1,
   .use_user_bkg = 0,
   .shuffle_k    = DEFAULT_SHUFFLE_K,
@@ -300,6 +302,19 @@ static const unsigned char char2index[256] = {
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,  /* A,C,G,T,U */
   4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,  /* a,c,g,t,u */
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+};
+
+/* Like char2index but treats lowercase a/c/g/t/u as ambiguity (index 4),
+   used when -M masking is enabled to skip lowercase regions during scanning. */
+static const unsigned char char2maskindex[256] = {
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
@@ -1438,10 +1453,11 @@ static void score_seq_scan(const motif_t *motif, const unsigned char *seq,
   const int mot_size = (int)motif->size;
   /* Use INT_MAX-1 as effective threshold when threshold==INT_MAX (no hits, but max computed). */
   const int threshold = motif->threshold - 1;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
   int score, score_rc;
   if (args.scan_rc) {
     for (uint64_t i=0; i<=seq_size-mot_size; i++) {
-      score_subseq_rc(motif, seq, i, &score, &score_rc, char2index);
+      score_subseq_rc(motif, seq, i, &score, &score_rc, tbl);
       if (UNLIKELY(score > threshold))    (*out_hits)++;
       if (UNLIKELY(score_rc > threshold)) (*out_hits)++;
       if (score    > *out_max) *out_max = score;
@@ -1449,7 +1465,7 @@ static void score_seq_scan(const motif_t *motif, const unsigned char *seq,
     }
   } else {
     for (uint64_t i=0; i<=seq_size-mot_size; i++) {
-      score_subseq(motif, seq, i, &score, char2index);
+      score_subseq(motif, seq, i, &score, tbl);
       if (UNLIKELY(score > threshold)) (*out_hits)++;
       if (score > *out_max) *out_max = score;
     }
@@ -1517,6 +1533,7 @@ static void usage(void) {
     "            sites   = Fisher's exact on per-position hit rate.\n"
     "            ranksum = Threshold-free Mann-Whitney U on max PWM score.\n"
     " -f         Only scan the forward strand.\n"
+    " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -k <int>   Shuffle k-mer size when -n is absent. Default: %d.\n"
     " -s <uint>  RNG seed for shuffling. Default: time-seeded.\n"
     " -q <dbl>   Only report rows with q-value <= this. Default: 1.0.\n"
@@ -1564,7 +1581,7 @@ int main_enr(int argc, char **argv) {
   char *seed_str = NULL;
   char neg_source_str[512]; neg_source_str[0]='\0';
 
-  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:fdrk:s:q:j:vwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:fMdrk:s:q:j:vwh")) != -1) {
     switch (opt) {
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1646,6 +1663,9 @@ int main_enr(int argc, char **argv) {
         break;
       case 'f':
         args.scan_rc = 0;
+        break;
+      case 'M':
+        args.mask = 1;
         break;
       case 'k':
         if (str_to_int(optarg, &args.shuffle_k)) badexit("Error: Failed to parse -k value.");

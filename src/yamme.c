@@ -131,6 +131,7 @@ typedef struct {
   int      pseudocount;
   int      nthreads;
   int      scan_rc;
+  int      mask;
   int      trim_names;
   int      use_user_bkg;
   int      shuffle_k;
@@ -152,6 +153,7 @@ static args_t args = {
   .pseudocount   = DEFAULT_PSEUDOCOUNT,
   .nthreads      = 1,
   .scan_rc       = 1,
+  .mask          = 0,
   .trim_names    = 1,
   .use_user_bkg  = 0,
   .shuffle_k     = DEFAULT_SHUFFLE_K,
@@ -243,6 +245,19 @@ static const unsigned char char2index[256] = {
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
   4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+};
+
+/* Like char2index but treats lowercase a/c/g/t/u as ambiguity (index 4),
+   used when -M masking is enabled to skip lowercase regions during scanning. */
+static const unsigned char char2maskindex[256] = {
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
@@ -933,11 +948,14 @@ static inline void score_subseq_rc(const motif_t *m, const unsigned char *seq,
 /* ---- Discovery: k-mer encoding ---- */
 
 /* Encode a w-mer starting at off using 2-bit (4-base) encoding.
-   Returns UINT64_MAX if any position is non-ACGT. */
-static uint64_t kmer_encode4(const unsigned char *seq, const uint64_t w, const uint64_t off) {
+   Returns UINT64_MAX if any position is non-ACGT under the given lookup
+   table (char2index for normal, char2maskindex when -M is set so lowercase
+   positions abort the encoding). */
+static uint64_t kmer_encode4(const unsigned char *seq, const uint64_t w,
+                              const uint64_t off, const unsigned char *tbl) {
   uint64_t kmer = 0;
   for (uint64_t i = 0; i < w; i++) {
-    uint8_t idx = char2index[seq[off+i]];
+    uint8_t idx = tbl[seq[off+i]];
     if (idx >= 4) return UINT64_MAX;
     kmer = kmer * 4 + idx;
   }
@@ -985,6 +1003,7 @@ static int cmp_seed(const void *a, const void *b) {
    Returns 0 on success. Sets *out_seeds (caller frees) and *out_n. */
 static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
   *out_seeds = NULL; *out_n = 0;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
 
   khash_t(seed_h) *pos_h = kh_init(seed_h);
   khash_t(seed_h) *neg_h = kh_init(seed_h);
@@ -1004,7 +1023,7 @@ static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, ui
     }
 
     for (uint64_t off = 0; off <= seqlen - w; off++) {
-      uint64_t kmer = kmer_encode4(seq, w, off);
+      uint64_t kmer = kmer_encode4(seq, w, off, tbl);
       if (kmer == UINT64_MAX) continue;
       uint64_t rc = args.scan_rc ? rc_kmer4(kmer, w) : kmer;
       uint64_t canon = (kmer <= rc) ? kmer : rc;
@@ -1037,7 +1056,7 @@ static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, ui
     }
 
     for (uint64_t off = 0; off <= seqlen - w; off++) {
-      uint64_t kmer = kmer_encode4(seq, w, off);
+      uint64_t kmer = kmer_encode4(seq, w, off, tbl);
       if (kmer == UINT64_MAX) continue;
       uint64_t rc = args.scan_rc ? rc_kmer4(kmer, w) : kmer;
       uint64_t canon = (kmer <= rc) ? kmer : rc;
@@ -1119,6 +1138,7 @@ static int build_ppm_from_seed(thread_ctx_t *ctx, const uint64_t seed_kmer, cons
                                 int ppm[][4]) {
   uint64_t rc_seed = args.scan_rc ? rc_kmer4(seed_kmer, w) : UINT64_MAX;
   int nsites = 0;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
 
   for (uint64_t si = 0; si < pos_set.n; si++) {
     const unsigned char *seq = ctx->seqs[si];
@@ -1126,20 +1146,20 @@ static int build_ppm_from_seed(thread_ctx_t *ctx, const uint64_t seed_kmer, cons
     if (seqlen < w) continue;
 
     for (uint64_t off = 0; off <= seqlen - w; off++) {
-      uint64_t kmer = kmer_encode4(seq, w, off);
+      uint64_t kmer = kmer_encode4(seq, w, off, tbl);
       if (kmer == UINT64_MAX) continue;
 
       uint64_t dist_fwd = hamming4(kmer, seed_kmer, w);
       if (dist_fwd <= HAMMING_MISMATCH) {
         for (uint64_t i = 0; i < w; i++) {
-          uint8_t idx = char2index[seq[off+i]];
+          uint8_t idx = tbl[seq[off+i]];
           if (idx < 4) ppm[i][idx]++;
         }
         nsites++;
       } else if (rc_seed != UINT64_MAX && hamming4(kmer, rc_seed, w) <= HAMMING_MISMATCH) {
         /* RC match: add reverse-complement of the window */
         for (uint64_t i = 0; i < w; i++) {
-          uint8_t idx = char2index[seq[off + w - 1 - i]];
+          uint8_t idx = tbl[seq[off + w - 1 - i]];
           if (idx < 4) ppm[i][comp4[idx]]++;
         }
         nsites++;
@@ -1219,6 +1239,7 @@ static int refine_motif(thread_ctx_t *ctx, motif_t *motif, const uint64_t w,
   memset(ppm, 0, sizeof(ppm));
   int nsites = 0;
   const int thr = motif->threshold - 1;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
 
   for (uint64_t si = 0; si < pos_set.n; si++) {
     const unsigned char *seq = ctx->seqs[si];
@@ -1228,26 +1249,26 @@ static int refine_motif(thread_ctx_t *ctx, motif_t *motif, const uint64_t w,
     for (uint64_t off = 0; off <= seqlen - w; off++) {
       int score, src;
       if (args.scan_rc) {
-        score_subseq_rc(motif, seq, off, &score, &src, char2index);
+        score_subseq_rc(motif, seq, off, &score, &src, tbl);
         if (score > thr) {
           for (uint64_t i = 0; i < w; i++) {
-            uint8_t idx = char2index[seq[off+i]];
+            uint8_t idx = tbl[seq[off+i]];
             if (idx < 4) ppm[i][idx]++;
           }
           nsites++;
         }
         if (src > thr) {
           for (uint64_t i = 0; i < w; i++) {
-            uint8_t idx = char2index[seq[off + w - 1 - i]];
+            uint8_t idx = tbl[seq[off + w - 1 - i]];
             if (idx < 4) ppm[i][comp4[idx]]++;
           }
           nsites++;
         }
       } else {
-        score_subseq(motif, seq, off, &score, char2index);
+        score_subseq(motif, seq, off, &score, tbl);
         if (score > thr) {
           for (uint64_t i = 0; i < w; i++) {
-            uint8_t idx = char2index[seq[off+i]];
+            uint8_t idx = tbl[seq[off+i]];
             if (idx < 4) ppm[i][idx]++;
           }
           nsites++;
@@ -1285,6 +1306,7 @@ static double evaluate_motif(thread_ctx_t *ctx, const motif_t *motif, const uint
                               uint64_t *out_seqs_pos,  uint64_t *out_seqs_neg,
                               uint8_t **covered) {
   const int thr = motif->threshold - 1;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
   uint64_t seqs_pos = 0, seqs_neg = 0;
   uint64_t sites_pos = 0, sites_neg = 0;
 
@@ -1297,7 +1319,7 @@ static double evaluate_motif(thread_ctx_t *ctx, const motif_t *motif, const uint
     for (uint64_t off = 0; off <= seqlen - w; off++) {
       int score, src;
       if (args.scan_rc) {
-        score_subseq_rc(motif, seq, off, &score, &src, char2index);
+        score_subseq_rc(motif, seq, off, &score, &src, tbl);
         if (UNLIKELY(score > thr)) {
           has_hit = 1; sites_pos++;
           if (covered)
@@ -1311,7 +1333,7 @@ static double evaluate_motif(thread_ctx_t *ctx, const motif_t *motif, const uint
               covered[si][p/8] |= (uint8_t)(1u << (p%8));
         }
       } else {
-        score_subseq(motif, seq, off, &score, char2index);
+        score_subseq(motif, seq, off, &score, tbl);
         if (UNLIKELY(score > thr)) {
           has_hit = 1; sites_pos++;
           if (covered)
@@ -1332,11 +1354,11 @@ static double evaluate_motif(thread_ctx_t *ctx, const motif_t *motif, const uint
     for (uint64_t off = 0; off <= seqlen - w; off++) {
       int score, src;
       if (args.scan_rc) {
-        score_subseq_rc(motif, seq, off, &score, &src, char2index);
+        score_subseq_rc(motif, seq, off, &score, &src, tbl);
         if (UNLIKELY(score > thr)) { has_hit = 1; sites_neg++; }
         if (UNLIKELY(src > thr))   { has_hit = 1; sites_neg++; }
       } else {
-        score_subseq(motif, seq, off, &score, char2index);
+        score_subseq(motif, seq, off, &score, tbl);
         if (UNLIKELY(score > thr)) { has_hit = 1; sites_neg++; }
       }
     }
@@ -1846,7 +1868,7 @@ static void usage(void) {
     " -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).\n"
     " -n <str>   Negatives FASTA (default: shuffle of positives).\n"
     " -o <str>   TSV output file (default: motifs.tsv; '-' = stdout).\n"
-    " -M <str>   MEME motif output (default: motifs.meme; '-' = stdout).\n"
+    " -O <str>   MEME motif output (default: motifs.meme; '-' = stdout).\n"
     " -k <int>   Min motif width (default 6, min 3).\n"
     " -K <int>   Max motif width (default 15, max %d).\n"
     " -N <int>   Max motifs to discover (default 10).\n"
@@ -1858,6 +1880,7 @@ static void usage(void) {
     " -b <A,C,G,T>  Background (default: computed from positives).\n"
     " -p <int>   PWM pseudocount (default %d).\n"
     " -R         Disable reverse-strand scoring.\n"
+    " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -s <uint>  RNG seed (default: time-seeded).\n"
     " -j <int>   Worker threads for discovery (default 1).\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
@@ -1875,7 +1898,7 @@ int main_me(int argc, char **argv) {
   char *user_bkg  = NULL;
   char *seed_str  = NULL;
 
-  while ((opt = getopt(argc, argv, "i:n:o:M:k:K:N:t:P:D:S:b:p:q:Rs:j:vwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:n:o:O:k:K:N:t:P:D:S:b:p:q:RMs:j:vwh")) != -1) {
     switch (opt) {
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1905,7 +1928,7 @@ int main_me(int argc, char **argv) {
       case 'o':
         tsv_path = optarg;
         break;
-      case 'M':
+      case 'O':
         if (optarg[0] == '\0') meme_path = NULL;
         else meme_path = optarg;
         break;
@@ -1950,6 +1973,9 @@ int main_me(int argc, char **argv) {
         break;
       case 'R':
         args.scan_rc = 0;
+        break;
+      case 'M':
+        args.mask = 1;
         break;
       case 's':
         seed_str = optarg;

@@ -119,6 +119,7 @@ typedef struct {
   int      quality_gate;
   double   ic_min;
   int      scan_rc;
+  int      mask;
   int      use_user_bkg;
   int      v;
   int      w;
@@ -136,6 +137,7 @@ static args_t args = {
   .quality_gate = 0,
   .ic_min       = MIN_IC_BITS,
   .scan_rc      = 1,
+  .mask         = 0,
   .use_user_bkg = 0,
   .v            = 0,
   .w            = 0
@@ -177,6 +179,19 @@ static const unsigned char char2index[256] = {
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
   4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+};
+
+/* Like char2index but treats lowercase a/c/g/t/u as ambiguity (index 4),
+   used when -M masking is enabled to skip lowercase regions during scanning. */
+static const unsigned char char2maskindex[256] = {
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
   4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
@@ -1299,6 +1314,7 @@ static int refine_motif_ext(motif_t *motif, const int flank) {
   memset(ppm, 0, sizeof(ppm));
   int nsites = 0;
   const int thr = motif->threshold - 1;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
 
   for (uint64_t si = 0; si < pos_set.n; si++) {
     const unsigned char *seq = pos_set.seqs[si];
@@ -1308,13 +1324,13 @@ static int refine_motif_ext(motif_t *motif, const int flank) {
     for (uint64_t off = 0; off <= seqlen - w_in; off++) {
       int score, src;
       if (args.scan_rc) {
-        score_subseq_rc(motif, seq, off, &score, &src, char2index);
+        score_subseq_rc(motif, seq, off, &score, &src, tbl);
         if (score > thr) {
           /* Boundary policy: skip whole hit if extended window runs off the seq */
           if ((int64_t)off >= flank &&
               off + w_in + (uint64_t)flank <= seqlen) {
             for (uint64_t i = 0; i < w_out; i++) {
-              uint8_t idx = char2index[seq[off - flank + i]];
+              uint8_t idx = tbl[seq[off - flank + i]];
               if (idx < 4) ppm[i][idx]++;
             }
             nsites++;
@@ -1324,19 +1340,19 @@ static int refine_motif_ext(motif_t *motif, const int flank) {
           if ((int64_t)off >= flank &&
               off + w_in + (uint64_t)flank <= seqlen) {
             for (uint64_t i = 0; i < w_out; i++) {
-              uint8_t idx = char2index[seq[off - flank + w_out - 1 - i]];
+              uint8_t idx = tbl[seq[off - flank + w_out - 1 - i]];
               if (idx < 4) ppm[i][comp4[idx]]++;
             }
             nsites++;
           }
         }
       } else {
-        score_subseq(motif, seq, off, &score, char2index);
+        score_subseq(motif, seq, off, &score, tbl);
         if (score > thr) {
           if ((int64_t)off >= flank &&
               off + w_in + (uint64_t)flank <= seqlen) {
             for (uint64_t i = 0; i < w_out; i++) {
-              uint8_t idx = char2index[seq[off - flank + i]];
+              uint8_t idx = tbl[seq[off - flank + i]];
               if (idx < 4) ppm[i][idx]++;
             }
             nsites++;
@@ -1438,6 +1454,7 @@ static uint64_t count_hits(const motif_t *m) {
   if (m->threshold == INT_MAX) return 0;
   uint64_t n = 0;
   const int thr = m->threshold - 1;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
   for (uint64_t si = 0; si < pos_set.n; si++) {
     const unsigned char *seq = pos_set.seqs[si];
     uint64_t seqlen = pos_set.sizes[si];
@@ -1445,11 +1462,11 @@ static uint64_t count_hits(const motif_t *m) {
     for (uint64_t off = 0; off <= seqlen - m->size; off++) {
       int score, src;
       if (args.scan_rc) {
-        score_subseq_rc(m, seq, off, &score, &src, char2index);
+        score_subseq_rc(m, seq, off, &score, &src, tbl);
         if (score > thr) n++;
         if (src   > thr) n++;
       } else {
-        score_subseq(m, seq, off, &score, char2index);
+        score_subseq(m, seq, off, &score, tbl);
         if (score > thr) n++;
       }
     }
@@ -1526,6 +1543,7 @@ static void usage(void) {
     " -b <A,C,G,T>  Background (default: from MEME bkg or uniform).\n"
     " -p <int>   PWM pseudocount (default: %d).\n"
     " -R         Disable reverse-strand scoring.\n"
+    " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR, MIN_IC_BITS, DEFAULT_PSEUDOCOUNT
   );
@@ -1539,7 +1557,7 @@ int main_ref(int argc, char **argv) {
   char *user_bkg = NULL;
   char *consensus = NULL;
 
-  while ((opt = getopt(argc, argv, "m:1:i:o:P:r:e:ETI:Qb:p:Rvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:P:r:e:ETI:Qb:p:RMvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1603,6 +1621,8 @@ int main_ref(int argc, char **argv) {
         break;
       case 'R':
         args.scan_rc = 0; break;
+      case 'M':
+        args.mask = 1; break;
       case 'v':
         args.v = 1; break;
       case 'w':

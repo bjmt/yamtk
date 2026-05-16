@@ -5,7 +5,7 @@ source "${TESTDIR}/lib.sh"
 TMPDIR=$(mktemp -d)
 
 "$YAMTK" me -i "${TESTDIR}/fixtures/me_implanted.fa" \
-  -k 8 -K 8 -N 1 -s 42 -o /dev/null -M "${TMPDIR}/out.meme" 2>/dev/null
+  -k 8 -K 8 -N 1 -s 42 -o /dev/null -O "${TMPDIR}/out.meme" 2>/dev/null
 
 HITS=$("$YAMTK" scan -m "${TMPDIR}/out.meme" \
   -s "${TESTDIR}/fixtures/me_implanted.fa" -j 1 2>/dev/null \
