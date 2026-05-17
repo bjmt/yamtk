@@ -28,10 +28,14 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <zlib.h>
+#include <ctype.h>
 #include "kseq.h"
+#include "khash.h"
 #include "version.h"
 
 KSEQ_INIT(gzFile, gzread)
+KHASH_MAP_INIT_STR(seq_str_h, uint64_t)
+KHASH_MAP_INIT_STR(motif_str_h, uint64_t)
 
 /* ---- Constants ---- */
 
@@ -44,6 +48,9 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_NSITES                      1000
 #define DEFAULT_PSEUDOCOUNT                    1
 #define MAX_RETRIES                          100
+#define BED_FIELD_MAX_CHAR    ((uint64_t) 256)
+#define BED_NAME_MAX_CHAR     ((uint64_t) 512)
+#define BED_ALLOC_CHUNK_SIZE  ((uint64_t) 256)
 
 #define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 #define VEC_DIV(VEC, X, VEC_LEN) \
@@ -181,10 +188,13 @@ static void free_motifs(void) {
   motif_info.n = 0; motif_info.n_alloc = 0;
 }
 
+static void free_bed(void);
+
 static void badexit(const char *msg) {
   if (msg && msg[0]) fprintf(stderr, "%s\n", msg);
   fprintf(stderr, "Run yamtk seed -h to see usage.\n");
   free_motifs();
+  free_bed();
   close_files();
   exit(EXIT_FAILURE);
 }
@@ -887,6 +897,378 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
   free(ivls);
 }
 
+/* ---- BED file (-x mode) ---- */
+
+typedef struct bed_t {
+  uint64_t  *starts;
+  uint64_t  *ends;
+  char      *strands;
+  char     **seq_names;
+  char     **range_names;   /* col 4 = motif name */
+  uint64_t   n_regions;
+  uint64_t   n_alloc;
+} bed_t;
+
+static bed_t bed = { .n_regions = 0, .n_alloc = 0 };
+
+static khash_t(seq_str_h)   *bed_seq_hash   = NULL;
+static khash_t(motif_str_h) *motif_name_hash = NULL;
+static uint64_t             *bed_next       = NULL;  /* linked list of regions per seq */
+
+static void free_bed(void) {
+  if (bed.n_alloc) {
+    if (bed.n_regions) {
+      for (uint64_t i = 0; i < bed.n_regions; i++) {
+        free(bed.seq_names[i]);
+        free(bed.range_names[i]);
+      }
+    }
+    free(bed.seq_names);
+    free(bed.range_names);
+    free(bed.starts);
+    free(bed.ends);
+    free(bed.strands);
+    bed.n_alloc = 0;
+    bed.n_regions = 0;
+  }
+  free(bed_next); bed_next = NULL;
+  if (bed_seq_hash) { kh_destroy(seq_str_h, bed_seq_hash); bed_seq_hash = NULL; }
+  if (motif_name_hash) { kh_destroy(motif_str_h, motif_name_hash); motif_name_hash = NULL; }
+}
+
+static uint64_t count_fields(const char *line) {
+  uint64_t res = 1, i = 0;
+  while (line[i] != '\0') { if (line[i] == '\t') res++; i++; }
+  return res;
+}
+
+static uint64_t count_field_size(const char *line, const uint64_t k) {
+  uint64_t res = 0, i = 0, n = 0;
+  while (line[i] != '\0') {
+    if (line[i] == '\t') { n++; }
+    else if (n + 1 == k) res++;
+    else if (n + 1 > k) break;
+    i++;
+  }
+  return res;
+}
+
+static uint64_t field_start(const char *line, const uint64_t k) {
+  uint64_t i = 0, n = 0;
+  while (line[i] != '\0') {
+    if (line[i] == '\t') n++;
+    else if (n + 1 == k) break;
+    i++;
+  }
+  return i;
+}
+
+static uint64_t field_end(const char *line, const uint64_t k) {
+  uint64_t i = 0, n = 0;
+  while (line[i] != '\0') {
+    if (line[i] == '\t') n++;
+    if (n == k) { i--; break; }
+    i++;
+  }
+  return i;
+}
+
+static inline uint64_t parse_bed_field(const char *line, const uint64_t k, char *field, const int no_spaces) {
+  uint64_t start_i = field_start(line, k);
+  uint64_t end_i = field_end(line, k);
+  uint64_t size_i = count_field_size(line, k);
+  uint64_t field_it = 0;
+  ERASE_ARRAY(field, BED_FIELD_MAX_CHAR);
+  if (size_i > 0 && size_i < BED_FIELD_MAX_CHAR) {
+    for (uint64_t i = start_i; i <= end_i; i++) {
+      if (no_spaces && isspace((unsigned char) line[i])) size_i--;
+      else { field[field_it++] = line[i]; }
+    }
+  }
+  return size_i;
+}
+
+static void bed_grow_if_needed(void) {
+  if (bed.n_regions + 1 <= bed.n_alloc) return;
+  const uint64_t new_alloc = bed.n_alloc + BED_ALLOC_CHUNK_SIZE;
+  char     **p1 = realloc(bed.seq_names,   sizeof(*bed.seq_names)   * new_alloc);
+  uint64_t  *p2 = realloc(bed.starts,      sizeof(*bed.starts)      * new_alloc);
+  uint64_t  *p3 = realloc(bed.ends,        sizeof(*bed.ends)        * new_alloc);
+  char     **p4 = realloc(bed.range_names, sizeof(*bed.range_names) * new_alloc);
+  char      *p5 = realloc(bed.strands,     sizeof(*bed.strands)     * new_alloc);
+  if (!p1 || !p2 || !p3 || !p4 || !p5) {
+    badexit("Error: Failed to grow BED storage.");
+  }
+  bed.seq_names = p1; bed.starts = p2; bed.ends = p3;
+  bed.range_names = p4; bed.strands = p5;
+  bed.n_alloc = new_alloc;
+}
+
+static void read_bed(void) {
+  bed.seq_names   = malloc(sizeof(*bed.seq_names)   * BED_ALLOC_CHUNK_SIZE);
+  bed.range_names = malloc(sizeof(*bed.range_names) * BED_ALLOC_CHUNK_SIZE);
+  bed.starts      = malloc(sizeof(*bed.starts)      * BED_ALLOC_CHUNK_SIZE);
+  bed.ends        = malloc(sizeof(*bed.ends)        * BED_ALLOC_CHUNK_SIZE);
+  bed.strands     = malloc(sizeof(*bed.strands)     * BED_ALLOC_CHUNK_SIZE);
+  if (!bed.seq_names || !bed.range_names || !bed.starts || !bed.ends || !bed.strands) {
+    badexit("Error: Failed to allocate BED storage.");
+  }
+  bed.n_alloc = BED_ALLOC_CHUNK_SIZE;
+
+  kstream_t *kbed = ks_init(files.x);
+  kstring_t  line = { 0, 0, 0 };
+  int        ret_val;
+  uint64_t   line_num = 0;
+  char       tmp_field[BED_FIELD_MAX_CHAR];
+
+  while ((ret_val = ks_getuntil(kbed, '\n', &line, 0)) >= 0) {
+    line_num++;
+    if (count_nonempty_chars(line.s) == 0) continue;
+    if (line.s[0] == '#') continue;
+    if (line.l >= 7 && memcmp(line.s, "browser", 7) == 0) continue;
+    if (line.l >= 5 && memcmp(line.s, "track", 5) == 0) continue;
+    const uint64_t n_fields = count_fields(line.s);
+    if (n_fields < 4) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: BED line %" PRIu64 " has %" PRIu64 " fields; need ≥4 (col 4 = motif name).\n",
+        line_num, n_fields);
+      badexit("");
+    }
+    bed_grow_if_needed();
+
+    /* Strand (col 6). Default to '.' if missing. */
+    if (n_fields >= 6) {
+      const uint64_t sz = parse_bed_field(line.s, 6, tmp_field, 1);
+      if (sz != 1 || (tmp_field[0] != '+' && tmp_field[0] != '-' && tmp_field[0] != '.')) {
+        ks_destroy(kbed);
+        fprintf(stderr, "Error: BED line %" PRIu64 " strand field must be one of +/-/. (got '%s').\n",
+          line_num, tmp_field);
+        badexit("");
+      }
+      bed.strands[bed.n_regions] = tmp_field[0];
+    } else {
+      bed.strands[bed.n_regions] = '.';
+    }
+
+    /* Start (col 2) */
+    if (parse_bed_field(line.s, 2, tmp_field, 1) == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: BED line %" PRIu64 " has empty start field.\n", line_num);
+      badexit("");
+    }
+    uint64_t tmp_value;
+    if (str_to_uint64_t(tmp_field, &tmp_value)) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Failed to parse BED start on line %" PRIu64 " ('%s').\n", line_num, tmp_field);
+      badexit("");
+    }
+    bed.starts[bed.n_regions] = tmp_value;
+
+    /* End (col 3) */
+    if (parse_bed_field(line.s, 3, tmp_field, 1) == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: BED line %" PRIu64 " has empty end field.\n", line_num);
+      badexit("");
+    }
+    if (str_to_uint64_t(tmp_field, &tmp_value)) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: Failed to parse BED end on line %" PRIu64 " ('%s').\n", line_num, tmp_field);
+      badexit("");
+    }
+    bed.ends[bed.n_regions] = tmp_value;
+    if (bed.starts[bed.n_regions] >= bed.ends[bed.n_regions]) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: BED line %" PRIu64 " has start >= end.\n", line_num);
+      badexit("");
+    }
+
+    /* Motif name (col 4) */
+    const uint64_t sz4 = parse_bed_field(line.s, 4, tmp_field, 0);
+    if (sz4 == 0) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: BED line %" PRIu64 " has empty motif-name field (col 4).\n", line_num);
+      badexit("");
+    }
+    if (sz4 >= BED_FIELD_MAX_CHAR) {
+      ks_destroy(kbed);
+      fprintf(stderr, "Error: BED line %" PRIu64 " motif name too long (%" PRIu64 ">%" PRIu64 ").\n",
+        line_num, sz4, BED_FIELD_MAX_CHAR - 1);
+      badexit("");
+    }
+    bed.range_names[bed.n_regions] = malloc(sizeof(char) * (sz4 + 1));
+    if (!bed.range_names[bed.n_regions]) { ks_destroy(kbed); badexit("Error: BED motif name alloc."); }
+    memcpy(bed.range_names[bed.n_regions], tmp_field, sz4);
+    bed.range_names[bed.n_regions][sz4] = '\0';
+    /* Trim at first space (consistent with motif name trimming) */
+    for (uint64_t i = 0; i < sz4; i++) {
+      if (bed.range_names[bed.n_regions][i] == ' ') {
+        bed.range_names[bed.n_regions][i] = '\0';
+        break;
+      }
+    }
+
+    /* Sequence name (col 1) */
+    const uint64_t sz1 = parse_bed_field(line.s, 1, tmp_field, 0);
+    if (sz1 == 0) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      fprintf(stderr, "Error: BED line %" PRIu64 " has empty sequence name.\n", line_num);
+      badexit("");
+    }
+    if (sz1 >= BED_FIELD_MAX_CHAR) {
+      ks_destroy(kbed);
+      free(bed.range_names[bed.n_regions]);
+      fprintf(stderr, "Error: BED line %" PRIu64 " sequence name too long.\n", line_num);
+      badexit("");
+    }
+    bed.seq_names[bed.n_regions] = malloc(sizeof(char) * (sz1 + 1));
+    if (!bed.seq_names[bed.n_regions]) {
+      ks_destroy(kbed); free(bed.range_names[bed.n_regions]);
+      badexit("Error: BED seq name alloc.");
+    }
+    memcpy(bed.seq_names[bed.n_regions], tmp_field, sz1);
+    bed.seq_names[bed.n_regions][sz1] = '\0';
+    for (uint64_t i = 0; i < sz1; i++) {
+      if (bed.seq_names[bed.n_regions][i] == ' ') {
+        bed.seq_names[bed.n_regions][i] = '\0';
+        break;
+      }
+    }
+
+    bed.n_regions++;
+  }
+  if (ret_val == -3) { ks_destroy(kbed); badexit("Error: Failed to read BED stream."); }
+  if (!bed.n_regions) { ks_destroy(kbed); badexit("Error: BED has no usable records."); }
+  ks_destroy(kbed);
+  free(line.s);
+  if (args.v) fprintf(stderr, "Read %" PRIu64 " BED region(s).\n", bed.n_regions);
+}
+
+static void build_bed_seq_hash(void) {
+  bed_seq_hash = kh_init(seq_str_h);
+  if (!bed_seq_hash) badexit("Error: Failed to init BED seq-name hash.");
+  bed_next = malloc(sizeof(*bed_next) * bed.n_regions);
+  if (!bed_next) badexit("Error: Failed to alloc BED next-region list.");
+  for (uint64_t i = 0; i < bed.n_regions; i++) bed_next[i] = UINT64_MAX;
+  int absent;
+  khint_t k;
+  for (uint64_t i = 0; i < bed.n_regions; i++) {
+    k = kh_put(seq_str_h, bed_seq_hash, bed.seq_names[i], &absent);
+    if (absent == -1) badexit("Error: Failed to hash BED sequence names.");
+    if (absent == 0) {
+      bed_next[i] = kh_val(bed_seq_hash, k);
+      kh_val(bed_seq_hash, k) = i;
+    } else {
+      kh_val(bed_seq_hash, k) = i;
+    }
+  }
+}
+
+static void build_motif_name_hash(void) {
+  motif_name_hash = kh_init(motif_str_h);
+  if (!motif_name_hash) badexit("Error: Failed to init motif-name hash.");
+  int absent;
+  khint_t k;
+  for (uint64_t i = 0; i < motif_info.n; i++) {
+    k = kh_put(motif_str_h, motif_name_hash, motifs[i]->name, &absent);
+    if (absent == -1) badexit("Error: Failed to hash motif names.");
+    if (absent == 0 && args.v) {
+      fprintf(stderr, "Warning: duplicate motif name '%s'; using last occurrence for BED lookup.\n",
+        motifs[i]->name);
+    }
+    kh_val(motif_name_hash, k) = i;
+  }
+}
+
+/* Collect all BED region indices belonging to a sequence into `out`; return count.
+   `out` must be at least bed.n_regions long. */
+static uint64_t collect_seq_regions(const char *seq_name, uint64_t *out) {
+  if (!bed_seq_hash) return 0;
+  khint_t k = kh_get(seq_str_h, bed_seq_hash, seq_name);
+  if (k == kh_end(bed_seq_hash)) return 0;
+  uint64_t n = 0;
+  uint64_t idx = kh_val(bed_seq_hash, k);
+  while (idx != UINT64_MAX) {
+    out[n++] = idx;
+    idx = bed_next[idx];
+  }
+  return n;
+}
+
+static int cmp_idx_by_start(const void *a, const void *b) {
+  const uint64_t ia = *(const uint64_t *)a;
+  const uint64_t ib = *(const uint64_t *)b;
+  if (bed.starts[ia] < bed.starts[ib]) return -1;
+  if (bed.starts[ia] > bed.starts[ib]) return  1;
+  return 0;
+}
+
+static void do_bed_insertion(unsigned char *seq, const uint64_t L, const char *name,
+                             const uint64_t region_i, xrng_t *r) {
+  /* Look up motif by col-4 name */
+  khint_t k = kh_get(motif_str_h, motif_name_hash, bed.range_names[region_i]);
+  if (k == kh_end(motif_name_hash)) {
+    fprintf(stderr, "Error: BED region '%s' (line refers to motif '%s') has no matching motif in -m.\n",
+      name, bed.range_names[region_i]);
+    badexit("");
+  }
+  motif_t *m = motifs[kh_val(motif_name_hash, k)];
+  const uint64_t w = m->size;
+  if (w == 0) {
+    fprintf(stderr, "Warning: motif '%s' is empty; skipping BED region on '%s'.\n",
+      m->name, name);
+    return;
+  }
+  if (L < w) {
+    fprintf(stderr, "Warning: seq '%s' (len %" PRIu64 ") shorter than motif '%s' (width %" PRIu64 "); skipping.\n",
+      name, L, m->name, w);
+    return;
+  }
+
+  uint64_t bs = bed.starts[region_i];
+  uint64_t be = bed.ends[region_i];
+  uint64_t start;
+  if ((be - bs) == w) {
+    start = bs;
+  } else {
+    /* Center motif at BED midpoint. */
+    fprintf(stderr,
+      "Warning: BED region %s:%" PRIu64 "-%" PRIu64 " width %" PRIu64
+      " != motif '%s' width %" PRIu64 "; centering at midpoint.\n",
+      name, bs, be, be - bs, m->name, w);
+    const uint64_t mid = (bs + be) / 2;
+    const uint64_t half = w / 2;
+    if (mid < half) {
+      fprintf(stderr,
+        "Warning: BED region too close to sequence start to center motif '%s'; skipping.\n", m->name);
+      return;
+    }
+    start = mid - half;
+    if (start + w > L) {
+      fprintf(stderr,
+        "Warning: BED region centered position exceeds seq '%s' length; skipping.\n", name);
+      return;
+    }
+  }
+  if (start + w > L) {
+    fprintf(stderr,
+      "Warning: BED start %" PRIu64 " + motif width %" PRIu64 " > seq '%s' length %" PRIu64 "; skipping.\n",
+      start, w, name, L);
+    return;
+  }
+
+  char strand = bed.strands[region_i];
+  if (strand == '.') strand = '+';
+  if (args.no_rc) strand = '+';
+  const int rc = (strand == '-') ? 1 : 0;
+
+  overwrite_motif(seq, start, m, rc, r);
+  if (files.O_open) {
+    fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
+      name, start, start + w, m->name, strand);
+  }
+}
+
 /* ---- Usage ---- */
 
 static void usage(void) {
@@ -1038,6 +1420,16 @@ int main_seed(int argc, char **argv) {
   /* Parse motifs */
   load_motifs();
 
+  /* BED setup */
+  uint64_t *seq_regions_buf = NULL;
+  if (args.use_bed) {
+    read_bed();
+    build_bed_seq_hash();
+    build_motif_name_hash();
+    seq_regions_buf = malloc(sizeof(*seq_regions_buf) * bed.n_regions);
+    if (!seq_regions_buf) badexit("Error: Failed to alloc per-seq BED scratch.");
+  }
+
   /* Seed the PRNG */
   sxrand_r(&xrng, (uint64_t) args.seed);
 
@@ -1052,20 +1444,30 @@ int main_seed(int argc, char **argv) {
     const char *name = kseq->name.s;
     if (args.use_random) {
       do_random_mode(seq, L, name, &xrng);
+    } else if (args.use_bed) {
+      const uint64_t nr = collect_seq_regions(name, seq_regions_buf);
+      if (nr > 0) {
+        qsort(seq_regions_buf, nr, sizeof(*seq_regions_buf), cmp_idx_by_start);
+        for (uint64_t r_i = 0; r_i < nr; r_i++) {
+          do_bed_insertion(seq, L, name, seq_regions_buf[r_i], &xrng);
+        }
+      }
     }
-    /* BED mode wired in step 5 */
     write_seq(seq, L, name);
   }
   if (ret_val < -1) {
     fprintf(stderr, "Error: Failed to read input FASTA (kseq_read returned %d).\n", ret_val);
     kseq_destroy(kseq);
+    free(seq_regions_buf);
     badexit("");
   }
   kseq_destroy(kseq);
+  free(seq_regions_buf);
 
   if (args.v) fprintf(stderr, "Processed %" PRIu64 " sequence(s).\n", n_seqs);
 
   free_motifs();
+  free_bed();
   close_files();
   return EXIT_SUCCESS;
 }
