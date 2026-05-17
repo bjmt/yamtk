@@ -1557,11 +1557,11 @@ static void write_meme(int argc, char **argv) {
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk ref [options] [-m <motifs> | -1 <CONSENSUS>] -i <positives.fa[.gz]>\n"
+    "Usage:  yamtk ref [options] [ -m motifs.txt | -1 CONSENSUS ] -i positives.fa[.gz]\n"
     "\n"
     " -m <str>   Seed motif file (MEME/JASPAR/HOMER/HOCOMOCO).\n"
     " -1 <str>   Seed from a single IUPAC consensus string (e.g. CACGTG).\n"
-    " -i <str>   Positives FASTA/FASTQ ('-' = stdin, can be gzipped).\n"
+    " -i <str>   Positives FASTA/FASTQ ('-' = stdin).\n"
     " -o <str>   MEME output file (default: stdout).\n"
     " -t <dbl>   Hit-scoring p-value (default: %g).\n"
     " -r <int>   Refinement passes (default: %d; 0 = trim/extend only).\n"
@@ -1572,7 +1572,7 @@ static void usage(void) {
     " -I <dbl>   IC threshold for -E stopping and -T trimming (default: %.2g).\n"
     " -Q         Drop motifs whose refined total IC < seed total IC.\n"
     " -b A,C,G,T Background (default: from MEME bkg or uniform).\n"
-    " -p <int>   PWM pseudocount (default: %d).\n"
+    " -p <int>   Pseudocount for PWM generation (default: %d).\n"
     " -R         Disable reverse-strand scoring.\n"
     " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -g         Show progress bar.\n"

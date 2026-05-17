@@ -1505,7 +1505,7 @@ static void usage(void) {
     " -n <int>   Minimum overlap columns (default: %d).\n"
     " -R         Disable reverse-strand scoring.\n"
     " -q <dbl>   Only report rows with q-value <= this (default: %g).\n"
-    " -b A,C,G,T Background (default: from query MEME or uniform).\n"
+    " -b A,C,G,T Background (default: from MEME bkg or uniform).\n"
     " -p <dbl>   Pseudocount added to PPMs before scoring (default: %g).\n"
     " -N <int>   Override every motif's nsites (default: parsed nsites,\n"
     "            falling back to %" PRIu64 ").\n"

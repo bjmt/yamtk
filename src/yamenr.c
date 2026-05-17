@@ -1576,7 +1576,7 @@ static void usage(void) {
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
     "Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt\n"
     "\n"
-    " -i <str>   Positives FASTA. Can be gzipped. Use '-' for stdin (requires -n).\n"
+    " -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).\n"
     " -n <str>   Negatives FASTA. If omitted, positives are shuffled (see -k, -s).\n"
     " -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).\n"
     " -o <str>   Output TSV file (default: stdout).\n"
