@@ -171,6 +171,51 @@ static void usage(void) {
   );
 }
 
+/* ---- IUPAC complement ---- */
+
+static inline unsigned char iupac_comp(unsigned char c) {
+  switch (c) {
+    case 'A':           return 'T'; case 'a':           return 't';
+    case 'T': case 'U': return 'A'; case 't': case 'u': return 'a';
+    case 'C':           return 'G'; case 'c':           return 'g';
+    case 'G':           return 'C'; case 'g':           return 'c';
+    case 'R':           return 'Y'; case 'r':           return 'y';
+    case 'Y':           return 'R'; case 'y':           return 'r';
+    case 'K':           return 'M'; case 'k':           return 'm';
+    case 'M':           return 'K'; case 'm':           return 'k';
+    case 'B':           return 'V'; case 'b':           return 'v';
+    case 'V':           return 'B'; case 'v':           return 'b';
+    case 'D':           return 'H'; case 'd':           return 'h';
+    case 'H':           return 'D'; case 'h':           return 'd';
+    /* W, S, N are self-complement; anything else passes through (gaps, etc). */
+    default: return c;
+  }
+}
+
+static void reverse_complement(unsigned char *seq, const uint64_t L) {
+  if (L == 0) return;
+  for (uint64_t i = 0, j = L - 1; i < j; i++, j--) {
+    const unsigned char a = iupac_comp(seq[i]);
+    const unsigned char b = iupac_comp(seq[j]);
+    seq[i] = b; seq[j] = a;
+  }
+  if (L % 2 == 1) seq[L / 2] = iupac_comp(seq[L / 2]);
+}
+
+/* ---- FASTA output ---- */
+
+static void write_seq(const unsigned char *seq, const uint64_t L, const char *name,
+                      const char *comment, const uint64_t comment_l) {
+  if (!args.trim_names && comment_l) {
+    fprintf(files.o, ">%s %s\n", name, comment);
+  } else {
+    fprintf(files.o, ">%s\n", name);
+  }
+  for (uint64_t i = 0; i < L; i += FASTA_LINE_LEN) {
+    fprintf(files.o, "%.*s\n", FASTA_LINE_LEN, seq + i);
+  }
+}
+
 /* ---- Action: stats ---- */
 
 static void emit_stats_header(void) {
@@ -325,13 +370,17 @@ int main_seq(int argc, char **argv) {
   uint64_t idx = 0;
   while ((ret_val = kseq_read(kseq)) >= 0) {
     idx++;
-    const unsigned char *seq = (const unsigned char *) kseq->seq.s;
+    unsigned char *seq = (unsigned char *) kseq->seq.s;
     const uint64_t L = kseq->seq.l;
     const char *name = kseq->name.s;
 
     switch (args.action) {
       case ACTION_STATS:
         emit_stats_row(seq, L, name, idx);
+        break;
+      case ACTION_RC:
+        reverse_complement(seq, L);
+        write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
         break;
       default:
         /* Other actions wired in subsequent commits */
