@@ -3,6 +3,9 @@
 * Motif scanning: [yamtk scan](#yamscan)
 * Deduplicate overlapping motif hits: [yamtk dedup](#yamdedup)
 * Motif enrichment: [yamtk enr](#yamenr)
+* De novo motif discovery: [yamtk me](#yamme)
+* PWM refinement against positive sequences: [yamtk ref](#yamref)
+* Motif-vs-database comparison: [yamtk cmp](#yamcmp)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
@@ -42,24 +45,23 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 
 ```
 yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
-Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
+Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa[.gz]
 
- -m <str>   Motif file (MEME, JASPAR, HOMER, HOCOMOCO PCM). 1-50 bases wide.
+ -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO). 1-50 bases wide.
  -1 <str>   Scan a single consensus sequence (ambiguity letters allowed).
-            1-50 bases wide. Ignores -b, -t, -0, -p, -n.
- -s <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.
-            Omit -s to print parsed motifs; omit -m/-1 to print sequence stats.
-            Non-ACGTU characters are treated as gaps during scanning.
+            1-50 bases wide. Ignores -b, -t, -0, -p, -N.
+ -s <str>   Input FASTA/FASTQ ('-' = stdin). Omit -s to print parsed
+            motifs; omit -m/-1 to print sequence stats. Non-ACGTU chars
+            are treated as gaps during scanning.
  -x <str>   BED file of ranges to restrict scanning to. Col 4 = range name,
-            col 6 = strand. Can be gzipped. Disables -f.
- -o <str>   Output file. Default: stdout.
- -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T. Default: from
-            motif file (MEME only) or uniform.
- -f         Only scan the forward strand.
- -t <dbl>   P-value threshold. Default: 0.0001.
+            col 6 = strand. Can be gzipped. Disables -R.
+ -o <str>   Output file (default: stdout).
+ -b A,C,G,T Background (default: from MEME bkg or uniform).
+ -R         Disable reverse-strand scoring.
+ -t <dbl>   P-value threshold (default: 0.0001).
  -0         Report all hits with score >= 0 (no p-value threshold).
- -p <int>   Pseudocount for PWM generation. Default: 1.
- -n <int>   Motif sites for PPM->PCM conversion. Default: 1000.
+ -p <int>   Pseudocount for PWM generation (default: 1).
+ -N <int>   Motif sites for PPM->PCM conversion (default: 1000).
  -M         Mask lower-case bases (skip scanning at those positions).
  -d         Deduplicate motif/sequence names (default: abort on duplicates).
             Incompatible with -x.
@@ -67,7 +69,7 @@ Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa
             first word.
  -l         Load all sequences into memory (default: one at a time). Auto-set
             with stdin or -j > 1.
- -j <int>   Threads. Default: 1. Capped at number of input motifs.
+ -j <int>   Threads (default: 1, capped at number of input motifs).
  -g         Show progress bar (only useful with multiple motifs).
  -v / -w / -h   Verbose / very-verbose / help.
 ```
@@ -83,7 +85,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##yamscan v2.0.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.1.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -141,7 +143,7 @@ speed-ups to the runtime proportional to the fraction of the input sequences
 being scanned. Example output:
 
 ```
-##yamscan v2.0.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
+##yamscan v2.1.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
 ##MotifCount=1 MotifSize=5 BedCount=2 BedSize=73 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##bed_range	bed_name	seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1:1-35(+)	A	1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -172,7 +174,7 @@ motif		3	28	32	+	3.69903	0.0195		GTCTA
 yamscan (also manually setting the nsites value found in the motif file):
 ```sh
 $ yamtk scan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
-##yamscan v2.0.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+##yamscan v2.1.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
@@ -262,34 +264,25 @@ memory at a time.
 
 ### Usage
 
-```sh
-yamtk v2.0.0  Copyright (C) 2022  Benjamin Jean-Marie Tremblay               
-Usage:  yamtk dedup [options] -i [ results.txt | ranges.bed ]                    
-                                                                              
- -i <str>   Filename of yamscan results file or a tab-delimited BED file      
-            with at least six columns: (1) sequence name, (2) 0-based start,  
-            (3) end, (4) motif name, (5) motif score, and (6) the strand.     
-            If a yamscan results file is provided the P-value is used for     
-            deciding which overlapping hit(s) to discard, otherwise for BED   
-            the score column is used and lower scores are discarded. The input
-            is assumed to be partially sorted: different sequence/motif/strand
-            combinations can be interleaved, but the individual combinations  
-            themselves must be sorted by their start coordinates. The         
-            yamscan program outputs its results this way, so no additional    
-            sorting is needed. Can be gzipped. Use '-' for stdin.             
- -o <str>   Filename to output results. By default output goes to stdout.     
- -s         Ignore strand when finding overlapping ranges.                    
- -m         Ignore motif name when finding overlapping ranges.                
- -0         Ignore scores when removing overlapping ranges, causing yamdedup  
-            to simply remove overlapping ranges in the order they appear.     
- -S         Sort on range size instead of score/p-value (keeping larger ones).
- -r         Sort in opposite order (i.e., keep lower scores, higher p-values, 
-            or smaller ranges).                                               
- -y         Force yamdedup to treat the input as a yamscan output file.       
- -b         Force yamdedup to treat the input as a BED file.                  
- -v         Verbose mode.                                                     
- -w         Very verbose mode.                                                
- -h         Print this help message. 
+```
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk dedup [options] -i [ results.txt[.gz] | ranges.bed[.gz] ]
+
+ -i <str>   yamscan TSV output or a BED file ('-' = stdin; >=6 columns:
+            seq, start, end, name, score, strand). yamscan TSV uses
+            p-value to pick which overlap to keep; BED uses score
+            (lower discarded). Input must be sorted by start within
+            each seq/motif/strand combination (yamscan output already is).
+ -o <str>   Output file (default: stdout).
+ -s         Ignore strand when finding overlaps.
+ -m         Ignore motif name when finding overlaps.
+ -0         Ignore scores; drop overlaps in input order.
+ -S         Sort by range size instead of score/p-value (keep larger).
+ -r         Reverse sort (keep lower scores / higher p-values / smaller
+            ranges).
+ -y         Force input format = yamscan TSV.
+ -b         Force input format = BED.
+ -v / -w / -h   Verbose / very-verbose / help.
 ```
 
 ### Examples
@@ -298,7 +291,7 @@ Let us consider the following basic scenario:
 
 ```sh
 $ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
-##yamscan v2.0.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.1.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
@@ -311,7 +304,7 @@ a much worse score. yamdedup will recognize this and simply remove only that hit
 
 ```sh
 $ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | yamtk dedup -i-
-##yamscan v2.0.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.1.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
@@ -356,29 +349,29 @@ Benjamini-Hochberg FDR-corrected q-values.
 
 ```
 yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
-Usage:  yamtk enr [options] -i positives.fa -m motifs.txt
+Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt
 
- -i <str>   Positives FASTA. Can be gzipped. Use '-' for stdin (requires -n).
+ -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).
  -n <str>   Negatives FASTA. If omitted, positives are shuffled (see -k, -s).
- -m <str>   Motif file (MEME, JASPAR, HOMER, HOCOMOCO PCM).
- -o <str>   Output TSV file. Default: stdout.
- -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T. Default: from
-            motif file (MEME only) or uniform.
- -p <int>   Pseudocount for PWM generation. Default: 1.
- -N <int>   Motif sites for PPM->PCM conversion. Default: 1000.
- -d         Deduplicate motif/sequence names (default: abort on duplicates).
- -r         Do not trim motif (HOCOMOCO/JASPAR) and sequence names to the
-            first word.
- -t <dbl>   P-value threshold for a hit. Default: 0.0001.
+ -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).
+ -o <str>   Output TSV file (default: stdout).
+ -b A,C,G,T Background (default: from MEME bkg or uniform).
+ -p <int>   Pseudocount for PWM generation (default: 1).
+ -N <int>   Motif sites for PPM->PCM conversion (default: 1000).
+ -d         Deduplicate motif names (default: abort on duplicates).
+ -r         Do not trim motif names to the first word.
+ -t <dbl>   P-value threshold for a hit (default: 0.0001).
  -T <str>   Test mode: 'seqs' (default), 'sites', or 'ranksum'.
             seqs    = Fisher's exact on per-sequence hit presence.
             sites   = Fisher's exact on per-position hit rate.
             ranksum = Threshold-free Mann-Whitney U on max PWM score.
- -f         Only scan the forward strand.
- -k <int>   Shuffle k-mer size when -n is absent. Default: 2.
- -s <uint>  RNG seed for shuffling. Default: time-seeded.
- -q <dbl>   Only report rows with q-value <= this. Default: 1.0.
- -j <int>   Threads. Default: 1.
+ -R         Disable reverse-strand scoring.
+ -M         Mask lower-case bases (skip scanning at those positions).
+ -k <int>   Shuffle k-mer size when -n is absent (default: 2).
+ -s <uint>  RNG seed for shuffling (default: time-seeded).
+ -q <dbl>   Only report rows with q-value <= this (default: 0.1).
+ -j <int>   Threads (default: 1).
+ -g         Show progress bar.
  -v / -w / -h   Verbose / very-verbose / help.
 ```
 
@@ -427,24 +420,28 @@ hits, and iterates. Outputs a TSV table and a MEME probability-matrix file.
 ### Usage
 
 ```
-yamtk me [options] -i positives.fa
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk me [options] -i positives.fa[.gz]
 
- -i <str>   Positives FASTA/FASTQ (gzipped ok; '-' = stdin, requires -n).
- -n <str>   Negatives FASTA (default: Eulerian shuffle of positives).
- -o <str>   TSV output file (default: motifs.tsv; '-' = stdout).
- -M <str>   MEME motif output (default: motifs.meme; '-' = stdout; '' = off).
- -k <int>   Min motif width (default 6, min 3).
- -K <int>   Max motif width (default 15, max 30).
- -N <int>   Max motifs to discover (default 10).
- -t <dbl>   Per-motif stopping p-value (default 0.05).
- -P <dbl>   Hit-scoring p-value threshold (default 1e-3).
- -D <dbl>   Cross-width dedup overlap threshold (default 0.5).
- -S <int>   Shuffle k-mer size for default negatives (default 2, max 9).
- -b <A,C,G,T>  Background (default: computed from positives).
- -p <int>   PWM pseudocount (default 1).
+ -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).
+ -n <str>   Negatives FASTA (default: shuffle of positives).
+ -o <str>   Output TSV file (default: motifs.tsv; '-' = stdout).
+ -O <str>   Output MEME motif file (default: motifs.meme; '-' = stdout).
+ -k <int>   Min motif width (default: 6, min 3).
+ -K <int>   Max motif width (default: 15, max 30).
+ -N <int>   Max motifs to discover (default: 10).
+ -t <dbl>   Per-motif stopping p-value at discovery (default: 0.001).
+ -P <dbl>   Hit-scoring p-value threshold (default: 0.001).
+ -D <dbl>   Cross-width dedup overlap threshold (default: 0.5).
+ -q <dbl>   BH q-value filter on surviving motifs (default: 0.001).
+ -S <int>   Shuffle k-mer size for default negatives (default: 2, max 9).
+ -b A,C,G,T Background (default: computed from positives).
+ -p <int>   Pseudocount for PWM generation (default: 1).
  -R         Disable reverse-strand scoring.
+ -M         Mask lower-case bases (skip scanning at those positions).
  -s <uint>  RNG seed (default: time-seeded).
- -j <int>   Threads accepted (v1: serial, ignored).
+ -j <int>   Threads (default: 1).
+ -g         Show progress bar.
  -v / -w / -h   Verbose / very-verbose / help.
 ```
 
@@ -470,6 +467,105 @@ yamtk me -i chip_peaks.fa -k 6 -K 15 -N 10 -s 1 -v
 | pvalue | One-tailed Fisher's exact p-value (per-sequence presence) |
 | qvalue | Benjamini-Hochberg FDR q-value |
 
+## yamref
+
+Refine a seed PWM (or IUPAC consensus) against a set of positive sequences. The
+seed is scanned, hits are aligned, and a new PWM is built from the aligned
+columns; the process repeats for the requested number of refinement passes.
+Flanks can be extended before refinement, and optionally IC-trimmed after.
+Output is a MEME motif file containing the refined PWM(s).
+
+### Usage
+
+```
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk ref [options] [ -m motifs.txt | -1 CONSENSUS ] -i positives.fa[.gz]
+
+ -m <str>   Seed motif file (MEME/JASPAR/HOMER/HOCOMOCO).
+ -1 <str>   Seed from a single IUPAC consensus string (e.g. CACGTG).
+ -i <str>   Positives FASTA/FASTQ ('-' = stdin).
+ -o <str>   MEME output file (default: stdout).
+ -t <dbl>   Hit-scoring p-value (default: 0.001).
+ -r <int>   Refinement passes (default: 2; 0 = trim/extend only).
+ -e <int>   Extend by N flanking positions per side on pass 1 (default: 0).
+ -E         Auto-extend: grow flanks 1 column at a time until both sides'
+            new column IC falls below -I. Implies -T.
+ -T         IC-trim flanks after refinement.
+ -I <dbl>   IC threshold for -E stopping and -T trimming (default: 0.5).
+ -Q         Drop motifs whose refined total IC < seed total IC.
+ -b A,C,G,T Background (default: from MEME bkg or uniform).
+ -p <int>   Pseudocount for PWM generation (default: 1).
+ -R         Disable reverse-strand scoring.
+ -M         Mask lower-case bases (skip scanning at those positions).
+ -g         Show progress bar.
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Examples
+
+Refine a seed motif against ChIP peaks (default: 2 passes, no flank extension):
+
+```sh
+$ yamtk ref -m seed.meme -i peaks.fa -o refined.meme
+```
+
+Seed from a consensus, auto-extend flanks until per-column IC drops below 0.5,
+then IC-trim:
+
+```sh
+$ yamtk ref -1 CACGTG -i peaks.fa -E -I 0.5 -o refined.meme
+```
+
+## yamcmp
+
+Compare query motifs against a target motif database, similar to TOMTOM. Every
+query is aligned at all valid offsets (forward and reverse) against every
+target, scored by a column-similarity metric, and assigned a p-value against
+either an empirical or a parametric null. Output is a TSV with BH-corrected
+q-values; one row per query-target pair passing the q-value filter.
+
+### Usage
+
+```
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk cmp [options] -m queries.meme -t targets.meme
+
+ -m <str>   Query motif file (MEME/JASPAR/HOMER/HOCOMOCO).
+ -t <str>   Target motif database (same formats).
+ -o <str>   Output TSV file (default: stdout).
+ -d <str>   Column-similarity metric: pcc (default: pcc).
+ -n <int>   Minimum overlap columns (default: 5).
+ -R         Disable reverse-strand scoring.
+ -q <dbl>   Only report rows with q-value <= this (default: 0.1).
+ -b A,C,G,T Background (default: from MEME bkg or uniform).
+ -p <dbl>   Pseudocount added to PPMs before scoring (default: 0).
+ -N <int>   Override every motif's nsites (default: parsed nsites,
+            falling back to 20).
+ -r         Do not trim motif names to the first word.
+ -e         Use parametric enumeration null (Dirichlet-Multinomial over
+            a 56-column grid) instead of the empirical null. Use when
+            the target db is small (< ~500 columns).
+ -j <int>   Threads (default: 1).
+ -g         Show progress bar.
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Examples
+
+Compare query motifs against a JASPAR database with the default empirical null
+and BH q-value filter:
+
+```sh
+$ yamtk cmp -m queries.meme -t JASPAR2026_CORE.meme -o cmp.tsv
+```
+
+For a small target database, switch to the parametric enumeration null and
+loosen the q-value threshold:
+
+```sh
+$ yamtk cmp -m queries.meme -t small_db.meme -e -q 1 -o cmp.tsv
+```
+
 ## yamshuf
 
 A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
@@ -477,15 +573,15 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
-Usage:  yamtk shuf [options] -i sequences.fa
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk shuf [options] -i sequences.fa[.gz]
 
- -i <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.
-            Non-ACGTU characters are treated as N (except with -l or -k 1).
- -k <int>   k-mer size for shuffling. Default: 3. k=1 uses Fisher-Yates;
+ -i <str>   Input FASTA/FASTQ ('-' = stdin). Non-ACGTU chars become N
+            (except with -l or -k 1).
+ -k <int>   k-mer size for shuffling (default: 3). k=1 uses Fisher-Yates;
             max k for Euler/Markov: 9.
- -o <str>   Output file. Default: stdout.
- -s <int>   RNG seed. Default: 4.
+ -o <str>   Output file (default: stdout).
+ -s <int>   RNG seed (default: 4).
  -m         Markov shuffling: generates sequences with similar k-mer
             frequencies. Best for large sequences.
  -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).
