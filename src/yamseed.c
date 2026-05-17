@@ -176,6 +176,7 @@ typedef struct args_t {
   int         v;
   int         w;
   const char *consensus;     /* -1, single-motif IUPAC string */
+  const char *single_range;  /* -X, "seqname:start-end[:strand]" */
 } args_t;
 
 static args_t args = {
@@ -189,7 +190,8 @@ static args_t args = {
   .progress    = 0,
   .v           = 0,
   .w           = 0,
-  .consensus   = NULL
+  .consensus   = NULL,
+  .single_range = NULL
 };
 
 /* ---- Files ---- */
@@ -1235,6 +1237,89 @@ static void read_bed(void) {
   if (args.v) fprintf(stderr, "Read %" PRIu64 " BED region(s).\n", bed.n_regions);
 }
 
+/* Populate bed_t with one record from a "seqname:start-end[:strand]" string.
+   Requires exactly one motif loaded (uses motifs[0]'s name as the col-4 key). */
+static void populate_bed_from_single_range(const char *s) {
+  if (motif_info.n != 1) {
+    fprintf(stderr, "Error: -X requires exactly one motif loaded (got %" PRIu64 ").\n",
+      motif_info.n);
+    badexit("");
+  }
+
+  const char *colon1 = strchr(s, ':');
+  if (!colon1 || colon1 == s) {
+    badexit("Error: -X format is seqname:start-end[:strand].");
+  }
+  const char *dash = strchr(colon1 + 1, '-');
+  if (!dash) {
+    badexit("Error: -X format is seqname:start-end[:strand].");
+  }
+  const char *colon2 = strchr(dash + 1, ':');
+
+  const size_t name_len  = (size_t)(colon1 - s);
+  const size_t start_len = (size_t)(dash - (colon1 + 1));
+  const size_t end_len   = colon2 ? (size_t)(colon2 - (dash + 1)) : strlen(dash + 1);
+  if (name_len == 0 || start_len == 0 || end_len == 0) {
+    badexit("Error: -X has an empty seqname/start/end field.");
+  }
+  char buf[BED_FIELD_MAX_CHAR];
+  if (start_len >= sizeof(buf) || end_len >= sizeof(buf) || name_len >= sizeof(buf)) {
+    badexit("Error: -X field too long.");
+  }
+
+  /* Strand */
+  char strand = '+';
+  if (colon2) {
+    if (colon2[1] == '\0' || colon2[2] != '\0') {
+      badexit("Error: -X strand must be a single char (+, -, or .).");
+    }
+    if (colon2[1] != '+' && colon2[1] != '-' && colon2[1] != '.') {
+      badexit("Error: -X strand must be one of +, -, or .");
+    }
+    strand = colon2[1];
+  }
+
+  /* Parse start/end */
+  memcpy(buf, colon1 + 1, start_len); buf[start_len] = '\0';
+  uint64_t start_v;
+  if (str_to_uint64_t(buf, &start_v)) badexit("Error: -X bad start value.");
+  memcpy(buf, dash + 1, end_len); buf[end_len] = '\0';
+  uint64_t end_v;
+  if (str_to_uint64_t(buf, &end_v)) badexit("Error: -X bad end value.");
+  if (start_v >= end_v) badexit("Error: -X start must be < end.");
+
+  /* Allocate one BED row. */
+  bed.seq_names   = malloc(sizeof(*bed.seq_names));
+  bed.range_names = malloc(sizeof(*bed.range_names));
+  bed.starts      = malloc(sizeof(*bed.starts));
+  bed.ends        = malloc(sizeof(*bed.ends));
+  bed.strands     = malloc(sizeof(*bed.strands));
+  if (!bed.seq_names || !bed.range_names || !bed.starts || !bed.ends || !bed.strands) {
+    badexit("Error: Failed to allocate single-range BED.");
+  }
+  bed.n_alloc = 1;
+
+  bed.seq_names[0] = malloc(name_len + 1);
+  if (!bed.seq_names[0]) badexit("Error: alloc.");
+  memcpy(bed.seq_names[0], s, name_len);
+  bed.seq_names[0][name_len] = '\0';
+
+  /* col-4 is the loaded motif's name (the only motif). */
+  const size_t mn_len = strlen(motifs[0]->name);
+  bed.range_names[0] = malloc(mn_len + 1);
+  if (!bed.range_names[0]) badexit("Error: alloc.");
+  memcpy(bed.range_names[0], motifs[0]->name, mn_len + 1);
+
+  bed.starts[0]  = start_v;
+  bed.ends[0]    = end_v;
+  bed.strands[0] = strand;
+  bed.n_regions  = 1;
+  if (args.v) {
+    fprintf(stderr, "Single-range insertion: %s:%" PRIu64 "-%" PRIu64 ":%c (motif '%s')\n",
+      bed.seq_names[0], start_v, end_v, strand, motifs[0]->name);
+  }
+}
+
 static void build_bed_seq_hash(void) {
   bed_seq_hash = kh_init(seq_str_h);
   if (!bed_seq_hash) badexit("Error: Failed to init BED seq-name hash.");
@@ -1379,10 +1464,12 @@ static void usage(void) {
     " -o <str>   Output FASTA (default: stdout).\n"
     " -O <str>   Write ground-truth BED of insertions (seq, start, end,\n"
     "            motif, '.', strand).\n"
-    " -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x.\n"
+    " -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x/-X.\n"
     " -x <str>   BED mode: col-4 = motif name (must match a loaded motif),\n"
     "            col-6 = strand. If end-start != motif width, motif is\n"
-    "            centered at the BED-range midpoint. Excludes -f.\n"
+    "            centered at the BED-range midpoint. Excludes -f/-X.\n"
+    " -X <str>   Single-range shortcut: seqname:start-end[:strand].\n"
+    "            Requires exactly one motif loaded. Excludes -f/-x.\n"
     " -M <int>   Minimum spacing (bp) between -f insertions (default: 0).\n"
     " -R         Disable reverse-strand sampling (always insert '+').\n"
     " -s <int>   RNG seed (default: %d).\n"
@@ -1401,7 +1488,7 @@ int main_seed(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:x:M:Rrs:gvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:x:X:M:Rrs:gvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1472,6 +1559,10 @@ int main_seed(int argc, char **argv) {
         files.x_open = 1;
         args.use_bed = 1;
         break;
+      case 'X':
+        if (args.single_range) badexit("Error: -X specified more than once.");
+        args.single_range = optarg;
+        break;
       case 'M':
         if (str_to_uint64_t(optarg, &args.min_spacing)) {
           badexit("Error: Failed to parse -M value.");
@@ -1515,11 +1606,11 @@ int main_seed(int argc, char **argv) {
     badexit("Error: one of -m or -1 must be specified.");
   }
   if (!files.i_open) badexit("Error: -i must be specified.");
-  if (args.use_random && args.use_bed) {
-    badexit("Error: -f and -x are mutually exclusive.");
-  }
-  if (!args.use_random && !args.use_bed) {
-    badexit("Error: one of -f or -x must be specified.");
+  {
+    const int n_modes = (args.use_random ? 1 : 0) + (args.use_bed ? 1 : 0) +
+                        (args.single_range ? 1 : 0);
+    if (n_modes > 1) badexit("Error: -f, -x, and -X are mutually exclusive.");
+    if (n_modes == 0) badexit("Error: one of -f, -x, or -X must be specified.");
   }
   if (use_stdout) files.o = stdout;
 
@@ -1534,10 +1625,11 @@ int main_seed(int argc, char **argv) {
   per_motif_count = calloc(motif_info.n, sizeof(*per_motif_count));
   if (!per_motif_count) badexit("Error: Failed to allocate per-motif counters.");
 
-  /* BED setup */
+  /* BED setup (-x reads a file; -X synthesizes a 1-row BED) */
   uint64_t *seq_regions_buf = NULL;
-  if (args.use_bed) {
-    read_bed();
+  if (args.use_bed || args.single_range) {
+    if (args.single_range) populate_bed_from_single_range(args.single_range);
+    else                   read_bed();
     build_bed_seq_hash();
     build_motif_name_hash();
     seq_regions_buf = malloc(sizeof(*seq_regions_buf) * bed.n_regions);
@@ -1559,7 +1651,7 @@ int main_seed(int argc, char **argv) {
     const uint64_t before = total_insertions;
     if (args.use_random) {
       do_random_mode(seq, L, name, &xrng);
-    } else if (args.use_bed) {
+    } else if (args.use_bed || args.single_range) {
       const uint64_t nr = collect_seq_regions(name, seq_regions_buf);
       if (nr > 0) {
         qsort(seq_regions_buf, nr, sizeof(*seq_regions_buf), cmp_idx_by_start);

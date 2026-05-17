@@ -591,10 +591,12 @@ Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
  -o <str>   Output FASTA (default: stdout).
  -O <str>   Write ground-truth BED of insertions (seq, start, end,
             motif, '.', strand).
- -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x.
+ -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x/-X.
  -x <str>   BED mode: col-4 = motif name (must match a loaded motif),
             col-6 = strand. If end-start != motif width, motif is
-            centered at the BED-range midpoint. Excludes -f.
+            centered at the BED-range midpoint. Excludes -f/-X.
+ -X <str>   Single-range shortcut: seqname:start-end[:strand].
+            Requires exactly one motif loaded. Excludes -f/-x.
  -M <int>   Minimum spacing (bp) between -f insertions (default: 0).
  -R         Disable reverse-strand sampling (always insert '+').
  -s <int>   RNG seed (default: 4).
@@ -638,6 +640,17 @@ chr1    500    506    ebox    0    -
 chr2    200    206    gcbox   0    +
 EOF
 yamtk seed -m motifs.meme -i bg.fa -x truth.bed -O recovered.bed > seeded.fa
+```
+
+For one-off insertions, `-X seqname:start-end[:strand]` skips the BED file
+entirely. It requires exactly one motif loaded (most useful with `-1`):
+
+```sh
+# Plant a single E-box on the '+' strand
+yamtk seed -1 CACGTG -X chr1:1000-1006 -i bg.fa > seeded.fa
+
+# Same, on '-' strand
+yamtk seed -1 CACGTG -X chr1:1000-1006:- -i bg.fa > seeded.fa
 ```
 
 ### Output
