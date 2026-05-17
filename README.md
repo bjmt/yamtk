@@ -580,9 +580,12 @@ in place, never extend). Two placement modes are supported.
 
 ```
 yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
-Usage:  yamtk seed [options] -m motifs.txt -i seqs.fa[.gz]
+Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
 
  -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).
+ -1 <str>   Use a single IUPAC consensus string as the motif (e.g. CACGTG).
+            Ambiguity letters expand to uniform probabilities over their
+            constituent bases. Mutually exclusive with -m.
  -i <str>   Input FASTA/FASTQ ('-' = stdin). Sequence bases in seeded
             regions are overwritten with samples from the motif PPM.
  -o <str>   Output FASTA (default: stdout).

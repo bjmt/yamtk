@@ -60,6 +60,44 @@ KHASH_MAP_INIT_STR(motif_str_h, uint64_t)
 
 static const char index2dna[6] = "ACGTN";
 
+/* IUPAC consensus letter -> uniform probability over its constituent bases. */
+static const double consensus2probs[] = {
+  1.0,   0.0,   0.0,   0.0,        /*  0. A */
+  0.0,   1.0,   0.0,   0.0,        /*  1. C */
+  0.0,   0.0,   1.0,   0.0,        /*  2. G */
+  0.0,   0.0,   0.0,   1.0,        /*  3. T (or U) */
+  0.0,   0.5,   0.0,   0.5,        /*  4. Y */
+  0.5,   0.0,   0.5,   0.0,        /*  5. R */
+  0.5,   0.0,   0.0,   0.5,        /*  6. W */
+  0.0,   0.5,   0.5,   0.0,        /*  7. S */
+  0.0,   0.0,   0.5,   0.5,        /*  8. K */
+  0.5,   0.5,   0.0,   0.0,        /*  9. M */
+  1.0/3, 0.0,   1.0/3, 1.0/3,      /* 10. D */
+  1.0/3, 1.0/3, 1.0/3, 0.0,        /* 11. V */
+  1.0/3, 1.0/3, 0.0,   1.0/3,      /* 12. H */
+  0.0,   1.0/3, 1.0/3, 1.0/3,      /* 13. B */
+  0.25,  0.25,  0.25,  0.25        /* 14. N */
+};
+
+static const int consensus2index[256] = {
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1,  0, 13,  1, 10, -1, -1,  2, 12, -1, -1,  8, -1,  9, 14, -1,
+  -1, -1,  5,  7,  3,  3, 11,  6, -1,  4, -1, -1, -1, -1, -1, -1,
+  -1,  0, 13,  1, 10, -1, -1,  2, 12, -1, -1,  8, -1,  9, 14, -1,
+  -1, -1,  5,  7,  3,  3, 11,  6, -1,  4, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+};
+
 /* ---- PRNG (xoroshiro128++, seeded via splitmix64) ---- */
 
 typedef struct { uint64_t s[2]; } xrng_t;
@@ -127,16 +165,17 @@ static motif_t **motifs = NULL;
 /* ---- Args ---- */
 
 typedef struct args_t {
-  double   lambda;        /* -f, per-bp Poisson rate (random mode) */
-  uint64_t min_spacing;   /* -M */
-  int      seed;          /* -s */
-  int      trim_names;    /* 1 = trim (default); -r sets to 0 */
-  int      use_random;    /* set by -f */
-  int      use_bed;       /* set by -x */
-  int      no_rc;         /* -R */
-  int      progress;      /* -g */
-  int      v;
-  int      w;
+  double      lambda;        /* -f, per-bp Poisson rate (random mode) */
+  uint64_t    min_spacing;   /* -M */
+  int         seed;          /* -s */
+  int         trim_names;    /* 1 = trim (default); -r sets to 0 */
+  int         use_random;    /* set by -f */
+  int         use_bed;       /* set by -x */
+  int         no_rc;         /* -R */
+  int         progress;      /* -g */
+  int         v;
+  int         w;
+  const char *consensus;     /* -1, single-motif IUPAC string */
 } args_t;
 
 static args_t args = {
@@ -149,7 +188,8 @@ static args_t args = {
   .no_rc       = 0,
   .progress    = 0,
   .v           = 0,
-  .w           = 0
+  .w           = 0,
+  .consensus   = NULL
 };
 
 /* ---- Files ---- */
@@ -784,6 +824,41 @@ static void read_hocomoco(void) {
   if (args.v) fprintf(stderr, "Found %" PRIu64 " HOCOMOCO motif(s).\n", motif_info.n);
 }
 
+/* ---- Single-motif loader from IUPAC consensus (-1 flag) ---- */
+
+static void load_motif_from_consensus(const char *s) {
+  const uint64_t len = strlen(s);
+  if (len == 0) badexit("Error: -1 consensus string is empty.");
+  if (len > MAX_MOTIF_WIDTH) {
+    fprintf(stderr, "Error: -1 consensus exceeds max motif width (%d).\n", MAX_MOTIF_WIDTH);
+    badexit("");
+  }
+  for (uint64_t i = 0; i < len; i++) {
+    if (consensus2index[(unsigned char) s[i]] < 0) {
+      fprintf(stderr, "Error: -1 consensus has invalid IUPAC character '%c' at position %" PRIu64 ".\n",
+        s[i], i + 1);
+      badexit("");
+    }
+  }
+  if (add_motif()) badexit("");
+  motif_t *m = motifs[0];
+  /* Name the motif after the consensus string itself. */
+  uint64_t copy_len = len < MAX_NAME_SIZE - 1 ? len : MAX_NAME_SIZE - 1;
+  memcpy(m->name, s, copy_len);
+  m->name[copy_len] = '\0';
+  m->size = len;
+  for (uint64_t i = 0; i < len; i++) {
+    const int ci = consensus2index[(unsigned char) s[i]];
+    const double *p = &consensus2probs[ci * 4];
+    m->pwm_probs[i][0] = p[0];
+    m->pwm_probs[i][1] = p[1];
+    m->pwm_probs[i][2] = p[2];
+    m->pwm_probs[i][3] = p[3];
+  }
+  motif_info.fmt = FMT_UNKNOWN;  /* not from a file; format is irrelevant */
+  if (args.v) fprintf(stderr, "Loaded consensus motif '%s' (width %" PRIu64 ").\n", s, len);
+}
+
 /* ---- Motif loading entrypoint ---- */
 
 static void load_motifs(void) {
@@ -1293,9 +1368,12 @@ static void do_bed_insertion(unsigned char *seq, const uint64_t L, const char *n
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk seed [options] -m motifs.txt -i seqs.fa[.gz]\n"
+    "Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]\n"
     "\n"
     " -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).\n"
+    " -1 <str>   Use a single IUPAC consensus string as the motif (e.g. CACGTG).\n"
+    "            Ambiguity letters expand to uniform probabilities over their\n"
+    "            constituent bases. Mutually exclusive with -m.\n"
     " -i <str>   Input FASTA/FASTQ ('-' = stdin). Sequence bases in seeded\n"
     "            regions are overwritten with samples from the motif PPM.\n"
     " -o <str>   Output FASTA (default: stdout).\n"
@@ -1323,7 +1401,7 @@ int main_seed(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "m:i:o:O:f:x:M:Rrs:gvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:x:M:Rrs:gvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1334,6 +1412,10 @@ int main_seed(int argc, char **argv) {
           badexit("");
         }
         files.m_open = 1;
+        break;
+      case '1':
+        if (args.consensus) badexit("Error: -1 specified more than once.");
+        args.consensus = optarg;
         break;
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1426,7 +1508,12 @@ int main_seed(int argc, char **argv) {
     }
   }
 
-  if (!files.m_open) badexit("Error: -m must be specified.");
+  if (files.m_open && args.consensus) {
+    badexit("Error: -m and -1 are mutually exclusive.");
+  }
+  if (!files.m_open && !args.consensus) {
+    badexit("Error: one of -m or -1 must be specified.");
+  }
   if (!files.i_open) badexit("Error: -i must be specified.");
   if (args.use_random && args.use_bed) {
     badexit("Error: -f and -x are mutually exclusive.");
@@ -1436,8 +1523,12 @@ int main_seed(int argc, char **argv) {
   }
   if (use_stdout) files.o = stdout;
 
-  /* Parse motifs */
-  load_motifs();
+  /* Load motifs */
+  if (args.consensus) {
+    load_motif_from_consensus(args.consensus);
+  } else {
+    load_motifs();
+  }
 
   /* Per-motif insertion counters (for -v / -w summary) */
   per_motif_count = calloc(motif_info.n, sizeof(*per_motif_count));
