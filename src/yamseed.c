@@ -93,6 +93,10 @@ static inline double xrand_double(xrng_t *r) {
 
 static xrng_t xrng;
 
+/* ---- Insertion counters (for -v / -w summary) ---- */
+static uint64_t total_insertions = 0;
+static uint64_t *per_motif_count = NULL;
+
 /* ---- Motif struct (slim — no PWM scoring; PPM-only) ---- */
 
 typedef struct motif_t {
@@ -193,6 +197,7 @@ static void free_bed(void);
 static void badexit(const char *msg) {
   if (msg && msg[0]) fprintf(stderr, "%s\n", msg);
   fprintf(stderr, "Run yamtk seed -h to see usage.\n");
+  free(per_motif_count); per_motif_count = NULL;
   free_motifs();
   free_bed();
   close_files();
@@ -887,7 +892,8 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
   for (uint64_t k = 0; k < N; k++) {
     int placed = 0;
     for (int attempt = 0; attempt < MAX_RETRIES && !placed; attempt++) {
-      motif_t *m = motifs[xrand_r(r) % motif_info.n];
+      const uint64_t mi = xrand_r(r) % motif_info.n;
+      motif_t *m = motifs[mi];
       if (m->size == 0 || m->size > L) break;
       const uint64_t pos = xrand_r(r) % (L - m->size + 1);
       const uint64_t end = pos + m->size;
@@ -899,6 +905,8 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
           name, pos, end, m->name, rc ? '-' : '+');
       }
       ivls[n_ivls++] = (ivl_t){pos, end};
+      total_insertions++;
+      per_motif_count[mi]++;
       placed = 1;
     }
   }
@@ -1220,7 +1228,8 @@ static void do_bed_insertion(unsigned char *seq, const uint64_t L, const char *n
       name, bed.range_names[region_i]);
     badexit("");
   }
-  motif_t *m = motifs[kh_val(motif_name_hash, k)];
+  const uint64_t mi = kh_val(motif_name_hash, k);
+  motif_t *m = motifs[mi];
   const uint64_t w = m->size;
   if (w == 0) {
     fprintf(stderr, "Warning: motif '%s' is empty; skipping BED region on '%s'.\n",
@@ -1275,6 +1284,8 @@ static void do_bed_insertion(unsigned char *seq, const uint64_t L, const char *n
     fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
       name, start, start + w, m->name, strand);
   }
+  total_insertions++;
+  per_motif_count[mi]++;
 }
 
 /* ---- Usage ---- */
@@ -1428,6 +1439,10 @@ int main_seed(int argc, char **argv) {
   /* Parse motifs */
   load_motifs();
 
+  /* Per-motif insertion counters (for -v / -w summary) */
+  per_motif_count = calloc(motif_info.n, sizeof(*per_motif_count));
+  if (!per_motif_count) badexit("Error: Failed to allocate per-motif counters.");
+
   /* BED setup */
   uint64_t *seq_regions_buf = NULL;
   if (args.use_bed) {
@@ -1450,6 +1465,7 @@ int main_seed(int argc, char **argv) {
     unsigned char *seq = (unsigned char *) kseq->seq.s;
     uint64_t L = kseq->seq.l;
     const char *name = kseq->name.s;
+    const uint64_t before = total_insertions;
     if (args.use_random) {
       do_random_mode(seq, L, name, &xrng);
     } else if (args.use_bed) {
@@ -1461,7 +1477,18 @@ int main_seed(int argc, char **argv) {
         }
       }
     }
+    if (args.w) {
+      fprintf(stderr, "  %s (len %" PRIu64 "): %" PRIu64 " insertion(s)\n",
+        name, L, total_insertions - before);
+    }
     write_seq(seq, L, name);
+    if (args.progress && (n_seqs % 100) == 0) {
+      fprintf(stderr, "\rSequences processed: %" PRIu64, n_seqs);
+      fflush(stderr);
+    }
+  }
+  if (args.progress && n_seqs > 0) {
+    fprintf(stderr, "\rSequences processed: %" PRIu64 "\n", n_seqs);
   }
   if (ret_val < -1) {
     fprintf(stderr, "Error: Failed to read input FASTA (kseq_read returned %d).\n", ret_val);
@@ -1472,8 +1499,18 @@ int main_seed(int argc, char **argv) {
   kseq_destroy(kseq);
   free(seq_regions_buf);
 
-  if (args.v) fprintf(stderr, "Processed %" PRIu64 " sequence(s).\n", n_seqs);
+  if (args.v) {
+    fprintf(stderr, "Processed %" PRIu64 " sequence(s); %" PRIu64 " insertion(s).\n",
+      n_seqs, total_insertions);
+  }
+  if (args.w) {
+    for (uint64_t i = 0; i < motif_info.n; i++) {
+      fprintf(stderr, "  motif %s: %" PRIu64 " insertion(s)\n",
+        motifs[i]->name, per_motif_count[i]);
+    }
+  }
 
+  free(per_motif_count); per_motif_count = NULL;
   free_motifs();
   free_bed();
   close_files();
