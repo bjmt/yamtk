@@ -1,11 +1,5 @@
 ## Todo
 
-- make sure yamcmp and tomtom give similar results
-
-- yamenr:
-  + print alt motif name too?
-
-- yamcmp: tomtom clone
 - yamseq: sequence manipulation (subsetting, masking, insertion, duplication,
   rna/dna conversion, reverse complement, seq sizes)
 - yamshuf: DNA/RNA shuffler
