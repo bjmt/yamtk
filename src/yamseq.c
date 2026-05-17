@@ -556,6 +556,25 @@ static void do_subset(const unsigned char *seq, const uint64_t L, const char *se
   free(buf);
 }
 
+/* ---- Action: mask ---- */
+
+static void do_mask(unsigned char *seq, const uint64_t L, const char *seq_name,
+                    const uint64_t region_i) {
+  const uint64_t s = bed.starts[region_i];
+  if (s >= L) {
+    fprintf(stderr, "Warning: BED start %" PRIu64 " >= seq '%s' length %" PRIu64 "; skipping.\n",
+      s, seq_name, L);
+    return;
+  }
+  uint64_t e = bed.ends[region_i];
+  if (e > L) e = L;
+  if (args.mask_hard) {
+    for (uint64_t i = s; i < e; i++) seq[i] = 'N';
+  } else {
+    for (uint64_t i = s; i < e; i++) seq[i] = (unsigned char) tolower(seq[i]);
+  }
+}
+
 /* ---- Action: stats ---- */
 
 static void emit_stats_header(void) {
@@ -755,6 +774,14 @@ int main_seq(int argc, char **argv) {
             do_subset(seq, L, name, seq_regions_buf[r_i]);
           }
         }
+        break;
+      }
+      case ACTION_MASK: {
+        const uint64_t nr = collect_seq_regions(name, seq_regions_buf);
+        for (uint64_t r_i = 0; r_i < nr; r_i++) {
+          do_mask(seq, L, name, seq_regions_buf[r_i]);
+        }
+        write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
         break;
       }
       default:
