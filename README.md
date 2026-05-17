@@ -6,6 +6,7 @@
 * De novo motif discovery: [yamtk me](#yamme)
 * PWM refinement against positive sequences: [yamtk ref](#yamref)
 * Motif-vs-database comparison: [yamtk cmp](#yamcmp)
+* Seed sequences with sampled motifs: [yamtk seed](#yamseed)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
@@ -565,6 +566,88 @@ loosen the q-value threshold:
 ```sh
 $ yamtk cmp -m queries.meme -t small_db.meme -e -q 1 -o cmp.tsv
 ```
+
+## yamseed
+
+Generate synthetic benchmark FASTA by inserting motif samples into input
+sequences. For each insertion, the bases overlaid on the sequence are sampled
+column-by-column from the motif's PPM (so a column with `[A=0.8, C=0.1, G=0.05,
+T=0.05]` yields 'A' 80% of the time). Sequence length is preserved (overwrite
+in place, never extend). Two placement modes are supported.
+
+### Usage
+
+```
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk seed [options] -m motifs.txt -i seqs.fa[.gz]
+
+ -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).
+ -i <str>   Input FASTA/FASTQ ('-' = stdin). Sequence bases in seeded
+            regions are overwritten with samples from the motif PPM.
+ -o <str>   Output FASTA (default: stdout).
+ -O <str>   Write ground-truth BED of insertions (seq, start, end,
+            motif, '.', strand).
+ -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x.
+ -x <str>   BED mode: col-4 = motif name (must match a loaded motif),
+            col-6 = strand. If end-start != motif width, motif is
+            centered at the BED-range midpoint. Excludes -f.
+ -M <int>   Minimum spacing (bp) between -f insertions (default: 0).
+ -R         Disable reverse-strand sampling (always insert '+').
+ -s <int>   RNG seed (default: 4).
+ -r         Do not trim motif/sequence names to the first word.
+ -g         Show progress bar.
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Random mode
+
+`-f λ` requests Poisson(λ × seqlen) insertions per sequence at uniform random
+positions. The motif is picked uniformly per insertion from the loaded set,
+and the strand is 50/50 ± (unless `-R`). Use `-M <int>` to enforce a minimum
+spacing in bp between insertions (defaults to 0 = touching ok; on collision
+the placement is retried up to 100 times before being skipped).
+
+Useful for stress-testing motif scanners on synthetic positives:
+
+```sh
+yamtk seed -m motifs.meme -i background.fa -f 0.005 -s 1 -O truth.bed > seeded.fa
+yamtk scan -m motifs.meme -s seeded.fa -t 0.001 \
+  | awk 'NR>3 && $1!~/^#/ {print $1"\t"($2-1)"\t"$3"\t"$5"\t.\t"$4}' \
+  | sort > scanned.bed
+comm -12 <(sort truth.bed) scanned.bed | wc -l
+# How many planted instances does the scanner recover?
+```
+
+### BED mode
+
+`-x bed.txt` inserts one motif per BED row. Column 4 (range name) selects the
+motif by name from `-m` (abort on unknown name). Column 6 sets the strand. If
+the BED range width differs from the motif width, a warning is printed and the
+motif is centered on the midpoint of the BED range (clamped to fit within
+the sequence; skipped with a warning if it cannot fit).
+
+```sh
+# Hand-rolled benchmark with known motif positions
+cat > truth.bed <<EOF
+chr1    100    106    ebox    0    +
+chr1    500    506    ebox    0    -
+chr2    200    206    gcbox   0    +
+EOF
+yamtk seed -m motifs.meme -i bg.fa -x truth.bed -O recovered.bed > seeded.fa
+```
+
+### Output
+
+The seeded FASTA goes to stdout (or `-o`). When `-O <file>` is given, a BED
+of every committed insertion is written with columns:
+
+```
+seq_name    start    end    motif_name    .    strand
+```
+
+`start` and `end` are 0-based, half-open. Coordinates always reflect the
+position that was actually written into the sequence (after any width-mismatch
+centering or clamping in BED mode).
 
 ## yamshuf
 

@@ -1,0 +1,14 @@
+seq4	39	45	gcbox	.	-
+seq5	56	62	ebox	.	-
+seq6	55	61	gcbox	.	+
+seq10	73	79	gcbox	.	+
+seq10	8	14	ebox	.	-
+seq12	82	88	gcbox	.	+
+seq12	41	47	gcbox	.	-
+seq12	73	79	gcbox	.	+
+seq12	94	100	ebox	.	-
+seq14	1	7	gcbox	.	-
+seq15	46	52	gcbox	.	+
+seq16	51	57	gcbox	.	+
+seq18	8	14	gcbox	.	-
+seq19	90	96	ebox	.	-

@@ -11,7 +11,6 @@
     PWM degrees of freedom) in addition to the output-time IC trimming already
     implemented (MIN_IC_BITS).
 - yamconv: convert between motif formats
-- yamseed: seed sequences with motifs of interest
 
 - yamscan: Make only using -x and -s output the subset sequences instead of just
   info about the ranges? --> actually make it a separate program to manipulate seqs
