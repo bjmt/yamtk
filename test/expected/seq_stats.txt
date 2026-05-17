@@ -1,0 +1,4 @@
+##seq_num	seq_name	size	gc_pct	n_count
+1	1	55	49.09	0
+2	2	70	45.71	0
+3	3	33	39.39	0

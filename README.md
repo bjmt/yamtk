@@ -7,6 +7,7 @@
 * PWM refinement against positive sequences: [yamtk ref](#yamref)
 * Motif-vs-database comparison: [yamtk cmp](#yamcmp)
 * Seed sequences with sampled motifs: [yamtk seed](#yamseed)
+* Sequence manipulation (stats/rc/rna-dna/dup/subset/mask): [yamtk seq](#yamseq)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
@@ -648,6 +649,58 @@ seq_name    start    end    motif_name    .    strand
 `start` and `end` are 0-based, half-open. Coordinates always reflect the
 position that was actually written into the sequence (after any width-mismatch
 centering or clamping in BED mode).
+
+## yamseq
+
+A collection of common FASTA manipulations gathered behind a single
+subcommand with an `-a <action>` selector. The supported actions are:
+
+| Action | Effect |
+|---|---|
+| `stats` | Per-sequence TSV with size, GC%, and N-count (matches `yamtk scan -s`). |
+| `rc` | Reverse-complement each sequence. IUPAC-aware; case preserved. |
+| `rna` | Convert T → U (case preserved). |
+| `dna` | Convert U → T (case preserved). |
+| `dup` | Repeat each input sequence N times. Names get `-1`…`-N` suffixes. Requires `-n`. |
+| `subset` | Extract substrings defined by BED ranges. Col-4 = output name; col-6 `-` → RC. Requires `-x`. |
+| `mask` | Soft-mask (lowercase) BED regions in place; `-N` flag switches to hard mask (replace with `N`). Requires `-x`. |
+
+### Usage
+
+```
+yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk seq -a <action> [options] -i seqs.fa[.gz]
+
+ -i <str>   Input FASTA/FASTQ ('-' = stdin).
+ -o <str>   Output (default: stdout).
+ -x <str>   BED file (subset/mask only). Can be gzipped.
+ -n <int>   Repeat count for dup.
+ -N         Hard-mask (replace with N) instead of soft-mask. mask only.
+ -r         Do not trim sequence names to the first word.
+ -g         Show progress bar.
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Examples
+
+```sh
+# Per-sequence stats
+yamtk seq -a stats -i genome.fa
+
+# Reverse-complement
+yamtk seq -a rc -i seqs.fa > rc.fa
+
+# Make 10 copies of each input sequence (e.g. for replicate benchmarking)
+yamtk seq -a dup -n 10 -i template.fa > replicated.fa
+
+# Extract regions defined by a BED file (strand-aware)
+yamtk seq -a subset -x peaks.bed -i genome.fa > peaks.fa
+
+# Soft-mask repeats in place
+yamtk seq -a mask -x repeats.bed -i genome.fa > masked.fa
+# ... or hard-mask
+yamtk seq -a mask -N -x repeats.bed -i genome.fa > hardmasked.fa
+```
 
 ## yamshuf
 

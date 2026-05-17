@@ -1,7 +1,8 @@
 ## Todo
 
-- yamseq: sequence manipulation (subsetting, masking, insertion, duplication,
-  rna/dna conversion, reverse complement, seq sizes)
+- add -1 to yamseed
+- yamseq: future actions — insert (overwrite-at-BED, overlaps with yamseed -x;
+  decide whether to ship)
 - yamshuf: DNA/RNA shuffler
   + streme paper says it preserves positions of separator characters; I should do this too
 - yame: motif elicitation
