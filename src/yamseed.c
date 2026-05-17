@@ -48,6 +48,43 @@ KSEQ_INIT(gzFile, gzread)
 #define VEC_DIV(VEC, X, VEC_LEN) \
   do { for (uint64_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] /= X; } while (0)
 
+#define ROTL(x, k) (((x) << (k)) | ((x) >> (64 - (k))))
+
+static const char index2dna[6] = "ACGTN";
+
+/* ---- PRNG (xoroshiro128++, seeded via splitmix64) ---- */
+
+typedef struct { uint64_t s[2]; } xrng_t;
+
+static inline uint64_t splitmix64(uint64_t x) {
+  uint64_t z = (x += 0x9e3779b97f4a7c15);
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+  return z ^ (z >> 31);
+}
+
+static inline uint64_t xrand_r(xrng_t *r) {
+  const uint64_t s0 = r->s[0];
+  uint64_t s1 = r->s[1];
+  const uint64_t result = ROTL(s0 + s1, 17) + s0;
+  s1 ^= s0;
+  r->s[0] = ROTL(s0, 49) ^ s1 ^ (s1 << 21);
+  r->s[1] = ROTL(s1, 28);
+  return result;
+}
+
+static inline void sxrand_r(xrng_t *r, uint64_t seed) {
+  r->s[0] = splitmix64(seed);
+  r->s[1] = splitmix64(r->s[0]);
+}
+
+/* Uniform double in [0, 1). 53-bit mantissa precision. */
+static inline double xrand_double(xrng_t *r) {
+  return (xrand_r(r) >> 11) * (1.0 / (double)(1ULL << 53));
+}
+
+static xrng_t xrng;
+
 /* ---- Motif struct (slim — no PWM scoring; PPM-only) ---- */
 
 typedef struct motif_t {
@@ -761,6 +798,64 @@ static void write_seq(const unsigned char *seq, const uint64_t size, const char 
   }
 }
 
+/* ---- Sampling + random-mode seeding ---- */
+
+static unsigned char sample_base(const double probs[4], xrng_t *r) {
+  double u = xrand_double(r);
+  double c = probs[0]; if (u < c) return 0;
+  c += probs[1];       if (u < c) return 1;
+  c += probs[2];       if (u < c) return 2;
+  return 3;
+}
+
+static void overwrite_motif(unsigned char *seq, const uint64_t pos, const motif_t *m,
+                            const int rc, xrng_t *r) {
+  /* rc handling deferred to step 6; forward-strand only for now. */
+  (void) rc;
+  for (uint64_t i = 0; i < m->size; i++) {
+    seq[pos + i] = (unsigned char) index2dna[sample_base(m->pwm_probs[i], r)];
+  }
+}
+
+/* Poisson sample. Knuth's method below ~30; normal approximation above. */
+static uint64_t poisson_sample(const double lambda, xrng_t *r) {
+  if (lambda <= 0.0) return 0;
+  if (lambda < 30.0) {
+    double L = exp(-lambda);
+    double p = 1.0;
+    uint64_t k = 0;
+    do {
+      k++;
+      p *= xrand_double(r);
+    } while (p > L);
+    return k - 1;
+  } else {
+    double u1 = xrand_double(r);
+    double u2 = xrand_double(r);
+    if (u1 < 1e-300) u1 = 1e-300;
+    double z = sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+    double x = lambda + sqrt(lambda) * z;
+    if (x < 0.0) return 0;
+    return (uint64_t) (x + 0.5);
+  }
+}
+
+/* Per-sequence random mode (step 3: no overlap tracking, forward strand). */
+static void do_random_mode(unsigned char *seq, const uint64_t L, const char *name, xrng_t *r) {
+  const uint64_t N = poisson_sample(args.lambda * (double)L, r);
+  for (uint64_t k = 0; k < N; k++) {
+    motif_t *m = motifs[xrand_r(r) % motif_info.n];
+    if (m->size == 0 || m->size > L) continue;
+    const uint64_t pos = xrand_r(r) % (L - m->size + 1);
+    const int rc = 0;  /* step 6 wires in RC + -R toggle */
+    overwrite_motif(seq, pos, m, rc, r);
+    if (files.O_open) {
+      fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
+        name, pos, pos + m->size, m->name, rc ? '-' : '+');
+    }
+  }
+}
+
 /* ---- Usage ---- */
 
 static void usage(void) {
@@ -912,7 +1007,10 @@ int main_seed(int argc, char **argv) {
   /* Parse motifs */
   load_motifs();
 
-  /* Stream sequences (no-op overwrite for now) */
+  /* Seed the PRNG */
+  sxrand_r(&xrng, (uint64_t) args.seed);
+
+  /* Stream sequences */
   kseq = kseq_init(files.i);
   int ret_val;
   uint64_t n_seqs = 0;
@@ -921,9 +1019,11 @@ int main_seed(int argc, char **argv) {
     unsigned char *seq = (unsigned char *) kseq->seq.s;
     uint64_t L = kseq->seq.l;
     const char *name = kseq->name.s;
-    /* TODO: seeding happens here in subsequent commits */
-    (void) seq; (void) L;
-    write_seq((const unsigned char *) kseq->seq.s, kseq->seq.l, name);
+    if (args.use_random) {
+      do_random_mode(seq, L, name, &xrng);
+    }
+    /* BED mode wired in step 5 */
+    write_seq(seq, L, name);
   }
   if (ret_val < -1) {
     fprintf(stderr, "Error: Failed to read input FASTA (kseq_read returned %d).\n", ret_val);
