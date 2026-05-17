@@ -406,6 +406,14 @@ int main_seq(int argc, char **argv) {
         toggle_u_to_t(seq, L);
         write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
         break;
+      case ACTION_DUP: {
+        char dup_name[1024];
+        for (uint64_t i = 1; i <= args.dup_n; i++) {
+          snprintf(dup_name, sizeof(dup_name), "%s-%" PRIu64, name, i);
+          write_seq(seq, L, dup_name, NULL, 0);
+        }
+        break;
+      }
       default:
         /* Other actions wired in subsequent commits */
         break;
