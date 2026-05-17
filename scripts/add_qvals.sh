@@ -43,7 +43,7 @@ awk '/^##/ { print ; next }
           exit 1
         }
         print
-      } else if ($0 ~ /##seqname/ && NF == 9) {
+      } else if ($0 ~ /##seq_name/ && NF == 9) {
         print $1,$2,$3,$4,$5,$6,$7,$8,$9,"qvalue"
       } else {
         print

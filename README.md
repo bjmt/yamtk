@@ -679,22 +679,24 @@ to move around, thus increasing the speed of the shuffling.)
 
 ## Extra scripts
 
-A few extra utilities are included in the `scripts/` folder. These take the
-yamscan results via `stdin` and output their results to `stdout`.
+A few extra utilities are included in the `scripts/` folder. Most take `yamtk
+scan` output via `stdin` and write results to `stdout`; `std_kmers.sh` is the
+exception (it consumes `yamtk shuf -p` output). The format converters and sort
+scripts work with both regular and `-x`-restricted scan output.
 
 ### Utilities requiring the `sort` program
 
 - `add_qvals.sh`: Calculate Benjamini-Hochberg adjusted P-values (or Q-values)
   and add them as a tenth column. (Note: Do *not* deduplicate/remove
   overlapping hits before calculating Q-values.) Currently not compatible with
-  yamscan run using the `-x` flag. (Generally I find it doesn't make much
+  `yamtk scan` run using the `-x` flag. (Generally I find it doesn't make much
   sense to calculate Q-values when scanning for motifs.) Be warned that this can
   be quite slow for big inputs, since it has to sort everything twice.
 - `dedup_hits.sh`: Remove lower-scoring overlapping hits (of the same motif).
-  Currently not compatible with yamscan run using the `-x` flag. This should
-  only be used for very small inputs (eg <100,000 rows) unless you are willing
-  to wait a while. *Note: As of yamscan v1.4 this scripts has been deprecated
-  in favour of the yamdedup program.*
+  Currently not compatible with `yamtk scan` run using the `-x` flag. This
+  should only be used for very small inputs (eg <100,000 rows) unless you are
+  willing to wait a while. *Note: As of yamscan v1.4 this script has been
+  deprecated in favour of the yamdedup program.*
 - `sort_coord.sh`: Sort the results by coordinate.
 - `sort_motif.sh`: Sort the results by motif name.
 - `sort_pval.sh`: Sort the results by P-value.
@@ -722,17 +724,17 @@ See the scripts for a description of the output formats.
 
 ### Example
 
-In this example, the output of yamscan is first piped to `flip_rc.sh` to
+In this example, the output of `yamtk scan` is first piped to `flip_rc.sh` to
 reverse complement the reverse strand motif matches, then to `add_qvals.sh`
-to calculate Q-values, to `dedup_hits.sh` to remove overlapping hits,
+to calculate Q-values, to `yamtk dedup` to remove overlapping hits,
 coordinate sorted with `sort_coord.sh`, and finally converted to BED with
 `to_bed.sh`:
 
 ```sh
-yamscan -t 0.05 -m test/motif.homer -s test/dna.fa \
+yamtk scan -t 0.05 -m test/motif.homer -s test/dna.fa \
   | scripts/flip_rc.sh \
   | scripts/add_qvals.sh \
-  | scripts/dedup_hits.sh \
+  | yamtk dedup -i- \
   | scripts/sort_coord.sh \
   | scripts/to_bed.sh \
   > res.clean.txt
