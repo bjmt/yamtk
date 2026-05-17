@@ -54,6 +54,11 @@ KSEQ_INIT(gzFile, gzread)
 #define ALLOC_CHUNK_SIZE        ((uint64_t) 256)
 #define DEFAULT_PSEUDOCOUNT                    1
 #define DEFAULT_NSITES                      1000
+#define DEFAULT_HIT_PVAL                     1e-3
+#define DEFAULT_R_PASSES                       2
+#define PROGRESS_BAR_WIDTH                    60
+#define PROGRESS_BAR_STRING \
+  "============================================================"
 
 #define VEC_ADD(VEC, X, VEC_LEN) \
   do { for (uint64_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] += X; } while (0)
@@ -121,16 +126,17 @@ typedef struct {
   int      scan_rc;
   int      mask;
   int      use_user_bkg;
+  int      progress;
   int      v;
   int      w;
 } args_t;
 
 static args_t args = {
   .bkg          = {0.25, 0.25, 0.25, 0.25},
-  .hit_pval     = 1e-3,
+  .hit_pval     = DEFAULT_HIT_PVAL,
   .pseudocount  = DEFAULT_PSEUDOCOUNT,
   .nsites       = DEFAULT_NSITES,
-  .r_passes     = 2,
+  .r_passes     = DEFAULT_R_PASSES,
   .extend       = 0,
   .auto_extend  = 0,
   .ic_trim      = 0,
@@ -139,9 +145,18 @@ static args_t args = {
   .scan_rc      = 1,
   .mask         = 0,
   .use_user_bkg = 0,
+  .progress     = 0,
   .v            = 0,
   .w            = 0
 };
+
+static void print_pb(const double prog) {
+  const int left = prog * PROGRESS_BAR_WIDTH;
+  const int right = PROGRESS_BAR_WIDTH - left;
+  fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
+      (int)(prog * 100.0));
+  fflush(stderr);
+}
 
 /* ---- Files ---- */
 
@@ -1548,20 +1563,22 @@ static void usage(void) {
     " -1 <str>   Seed from a single IUPAC consensus string (e.g. CACGTG).\n"
     " -i <str>   Positives FASTA/FASTQ ('-' = stdin, can be gzipped).\n"
     " -o <str>   MEME output file (default: stdout).\n"
-    " -P <dbl>   Hit-scoring p-value (default: 1e-3).\n"
-    " -r <int>   Refinement passes (default: 2; 0 = trim/extend only).\n"
+    " -t <dbl>   Hit-scoring p-value (default: %g).\n"
+    " -r <int>   Refinement passes (default: %d; 0 = trim/extend only).\n"
     " -e <int>   Extend by N flanking positions per side on pass 1 (default: 0).\n"
     " -E         Auto-extend: grow flanks 1 column at a time until both sides'\n"
     "            new column IC falls below -I. Implies -T.\n"
     " -T         IC-trim flanks after refinement.\n"
     " -I <dbl>   IC threshold for -E stopping and -T trimming (default: %.2g).\n"
     " -Q         Drop motifs whose refined total IC < seed total IC.\n"
-    " -b <A,C,G,T>  Background (default: from MEME bkg or uniform).\n"
+    " -b A,C,G,T Background (default: from MEME bkg or uniform).\n"
     " -p <int>   PWM pseudocount (default: %d).\n"
     " -R         Disable reverse-strand scoring.\n"
     " -M         Mask lower-case bases (skip scanning at those positions).\n"
+    " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
-    , YAMTK_VERSION, YAMTK_YEAR, MIN_IC_BITS, DEFAULT_PSEUDOCOUNT
+    , YAMTK_VERSION, YAMTK_YEAR,
+    DEFAULT_HIT_PVAL, DEFAULT_R_PASSES, MIN_IC_BITS, DEFAULT_PSEUDOCOUNT
   );
 }
 
@@ -1576,7 +1593,7 @@ int main_ref(int argc, char **argv) {
   struct timespec ts_program;
   clock_gettime(CLOCK_MONOTONIC, &ts_program);
 
-  while ((opt = getopt(argc, argv, "m:1:i:o:P:r:e:ETI:Qb:p:RMvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:t:r:e:ETI:Qb:p:RMgvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1609,9 +1626,9 @@ int main_ref(int argc, char **argv) {
       case 'o':
         out_path = optarg;
         break;
-      case 'P':
-        if (str_to_double(optarg, &args.hit_pval)) badexit("Error: Failed to parse -P value.");
-        if (args.hit_pval <= 0.0 || args.hit_pval > 1.0) badexit("Error: -P must be in (0,1].");
+      case 't':
+        if (str_to_double(optarg, &args.hit_pval)) badexit("Error: Failed to parse -t value.");
+        if (args.hit_pval <= 0.0 || args.hit_pval > 1.0) badexit("Error: -t must be in (0,1].");
         break;
       case 'r':
         if (str_to_int(optarg, &args.r_passes)) badexit("Error: Failed to parse -r value.");
@@ -1642,6 +1659,8 @@ int main_ref(int argc, char **argv) {
         args.scan_rc = 0; break;
       case 'M':
         args.mask = 1; break;
+      case 'g':
+        args.progress = 1; break;
       case 'v':
         args.v = 1; break;
       case 'w':
@@ -1708,9 +1727,11 @@ int main_ref(int argc, char **argv) {
 
   /* Refine each motif */
   uint64_t n_kept = 0;
+  if (args.progress) print_pb(0.0);
   for (uint64_t i = 0; i < motif_info.n; i++) {
     motif_t *m = motifs[i];
-    if (args.v) fprintf(stderr, "[%s] width=%" PRIu64 ", refining ...\n", m->name, m->size);
+    if (args.v && !args.progress)
+      fprintf(stderr, "[%s] width=%" PRIu64 ", refining ...\n", m->name, m->size);
 
     /* Build initial CDF/threshold from seed probs. This is required before any
        scan (refine_motif_ext expects motif->threshold set). */
@@ -1830,20 +1851,24 @@ int main_ref(int argc, char **argv) {
     /* Refinement summary */
     double   refined_ic  = motif_total_ic(m);
     uint64_t refined_hit = m->nsites_actual;
-    fprintf(stderr,
-      "[%s] w: %" PRIu64 "->%" PRIu64 " | IC: %.2f->%.2f bits | hits: %"
-      PRIu64 "->%" PRIu64 "\n",
-      m->name, seed_w, m->size, seed_ic, refined_ic, seed_hit, refined_hit);
+    if (!args.progress)
+      fprintf(stderr,
+        "[%s] w: %" PRIu64 "->%" PRIu64 " | IC: %.2f->%.2f bits | hits: %"
+        PRIu64 "->%" PRIu64 "\n",
+        m->name, seed_w, m->size, seed_ic, refined_ic, seed_hit, refined_hit);
 
     if (args.quality_gate && refined_ic < seed_ic) {
-      fprintf(stderr,
-        "  (refined IC < seed IC; dropping under -Q)\n");
+      if (!args.progress)
+        fprintf(stderr, "  (refined IC < seed IC; dropping under -Q)\n");
       m->dropped = 1;
+      if (args.progress) print_pb((double)(i + 1) / (double)motif_info.n);
       continue;
     }
 
     n_kept++;
+    if (args.progress) print_pb((double)(i + 1) / (double)motif_info.n);
   }
+  if (args.progress) fprintf(stderr, "\n");
 
   if (args.v) fprintf(stderr, "Refined %" PRIu64 "/%" PRIu64 " motif(s).\n",
                        n_kept, motif_info.n);

@@ -55,8 +55,12 @@ KHASH_SET_INIT_STR(motif_str_h);
 #define DEFAULT_PVALUE                    0.0001
 #define DEFAULT_PSEUDOCOUNT                    1
 #define DEFAULT_SHUFFLE_K                      2
+#define DEFAULT_QVALUE_FILTER                0.1
 #define MAX_K                                  9
 #define FASTA_LINE_LEN                        60
+#define PROGRESS_BAR_WIDTH                    60
+#define PROGRESS_BAR_STRING \
+  "============================================================"
 
 #define VEC_ADD(VEC, X, VEC_LEN) \
   do { for (uint64_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] += X; } while (0)
@@ -138,6 +142,7 @@ typedef struct args_t {
   int      use_seed;
   int      dedup;
   int      test_mode;
+  int      progress;
   int      v;
   int      w;
 } args_t;
@@ -145,7 +150,7 @@ typedef struct args_t {
 static args_t args = {
   .bkg          = {0.25, 0.25, 0.25, 0.25},
   .pvalue       = DEFAULT_PVALUE,
-  .qvalue_filter = 1.0,
+  .qvalue_filter = DEFAULT_QVALUE_FILTER,
   .nsites       = DEFAULT_NSITES,
   .pseudocount  = DEFAULT_PSEUDOCOUNT,
   .nthreads     = 1,
@@ -158,9 +163,21 @@ static args_t args = {
   .use_seed     = 0,
   .dedup        = 0,
   .test_mode    = TEST_SEQS,
+  .progress     = 0,
   .v            = 0,
   .w            = 0
 };
+
+static pthread_mutex_t pb_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t pb_counter = 0;
+
+static void print_pb(const double prog) {
+  const int left = prog * PROGRESS_BAR_WIDTH;
+  const int right = PROGRESS_BAR_WIDTH - left;
+  fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
+      (int)(prog * 100.0));
+  fflush(stderr);
+}
 
 /* ---- Files ---- */
 
@@ -1518,7 +1535,7 @@ static void *enr_sub_process(void *arg) {
   for (uint64_t mi=0; mi<motif_info.n; mi++) {
     motif_t *motif = motifs[mi];
     if (motif->thread != thread_i) continue;
-    if (args.w) fprintf(stderr, "    Scoring motif: %s\n", motif->name);
+    if (args.w && !args.progress) fprintf(stderr, "    Scoring motif: %s\n", motif->name);
     fill_cdf(motif);
     set_threshold(motif);
     uint64_t sp=0, sn=0, hp=0, hn=0;
@@ -1542,6 +1559,12 @@ static void *enr_sub_process(void *arg) {
     seq_hits_neg[mi]  = hn;
     site_hits_pos[mi] = sp;
     site_hits_neg[mi] = sn;
+    if (args.progress) {
+      pthread_mutex_lock(&pb_lock);
+      pb_counter++;
+      print_pb((double)pb_counter / (double)motif_info.n);
+      pthread_mutex_unlock(&pb_lock);
+    }
   }
   return NULL;
 }
@@ -1551,32 +1574,33 @@ static void *enr_sub_process(void *arg) {
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk enr [options] -i positives.fa -m motifs.txt\n"
+    "Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt\n"
     "\n"
     " -i <str>   Positives FASTA. Can be gzipped. Use '-' for stdin (requires -n).\n"
     " -n <str>   Negatives FASTA. If omitted, positives are shuffled (see -k, -s).\n"
-    " -m <str>   Motif file (MEME, JASPAR, HOMER, HOCOMOCO PCM).\n"
-    " -o <str>   Output TSV file. Default: stdout.\n"
-    " -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T. Default: from\n"
-    "            motif file (MEME only) or uniform.\n"
-    " -p <int>   Pseudocount for PWM generation. Default: %d.\n"
-    " -N <int>   Motif sites for PPM->PCM conversion. Default: %d.\n"
+    " -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).\n"
+    " -o <str>   Output TSV file (default: stdout).\n"
+    " -b A,C,G,T Background (default: from MEME bkg or uniform).\n"
+    " -p <int>   Pseudocount for PWM generation (default: %d).\n"
+    " -N <int>   Motif sites for PPM->PCM conversion (default: %d).\n"
     " -d         Deduplicate motif names (default: abort on duplicates).\n"
     " -r         Do not trim motif names to the first word.\n"
-    " -t <dbl>   P-value threshold for a hit. Default: %g.\n"
+    " -t <dbl>   P-value threshold for a hit (default: %g).\n"
     " -T <str>   Test mode: 'seqs' (default), 'sites', or 'ranksum'.\n"
     "            seqs    = Fisher's exact on per-sequence hit presence.\n"
     "            sites   = Fisher's exact on per-position hit rate.\n"
     "            ranksum = Threshold-free Mann-Whitney U on max PWM score.\n"
-    " -f         Only scan the forward strand.\n"
+    " -R         Disable reverse-strand scoring.\n"
     " -M         Mask lower-case bases (skip scanning at those positions).\n"
-    " -k <int>   Shuffle k-mer size when -n is absent. Default: %d.\n"
-    " -s <uint>  RNG seed for shuffling. Default: time-seeded.\n"
-    " -q <dbl>   Only report rows with q-value <= this. Default: 1.0.\n"
-    " -j <int>   Threads. Default: 1.\n"
+    " -k <int>   Shuffle k-mer size when -n is absent (default: %d).\n"
+    " -s <uint>  RNG seed for shuffling (default: time-seeded).\n"
+    " -q <dbl>   Only report rows with q-value <= this (default: %g).\n"
+    " -j <int>   Threads (default: 1).\n"
+    " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR,
-    DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES, DEFAULT_PVALUE, DEFAULT_SHUFFLE_K
+    DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES, DEFAULT_PVALUE, DEFAULT_SHUFFLE_K,
+    DEFAULT_QVALUE_FILTER
   );
 }
 
@@ -1620,7 +1644,7 @@ int main_enr(int argc, char **argv) {
   char *seed_str = NULL;
   char neg_source_str[512]; neg_source_str[0]='\0';
 
-  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:fMdrk:s:q:j:vwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:RMdrk:s:q:j:gvwh")) != -1) {
     switch (opt) {
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1700,7 +1724,7 @@ int main_enr(int argc, char **argv) {
       case 'T':
         test_mode_str = optarg;
         break;
-      case 'f':
+      case 'R':
         args.scan_rc = 0;
         break;
       case 'M':
@@ -1722,6 +1746,9 @@ int main_enr(int argc, char **argv) {
       case 'j':
         if (str_to_int(optarg, &args.nthreads)) badexit("Error: Failed to parse -j value.");
         if (args.nthreads < 1) badexit("Error: -j must be >= 1.");
+        break;
+      case 'g':
+        args.progress = 1;
         break;
       case 'w':
         args.w=1;
@@ -1859,6 +1886,7 @@ int main_enr(int argc, char **argv) {
   /* Scan */
   if (args.v) fprintf(stderr, "Scanning ...\n");
   t0 = time(NULL);
+  if (args.progress) print_pb(0.0);
   for (uint64_t t=0; t<(uint64_t)args.nthreads; t++) {
     uint64_t *ti = malloc(sizeof(*ti));
     if (!ti) badexit("Error: Failed to alloc thread index.");
@@ -1867,6 +1895,7 @@ int main_enr(int argc, char **argv) {
   }
   for (uint64_t t=0; t<(uint64_t)args.nthreads; t++)
     pthread_join(threads[t], NULL);
+  if (args.progress) fprintf(stderr, "\n");
   free_cdf();
   if (args.v) {
     print_time((uint64_t)difftime(time(NULL),t0), "scan");

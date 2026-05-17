@@ -5,8 +5,8 @@
 # best hit.
 source "${TESTDIR}/lib.sh"
 
-OUT=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
-                   -t "${TESTDIR}/fixtures/cmp_targets.meme" -Q 1 2>/dev/null \
+OUT=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
+                   -t "${TESTDIR}/fixtures/cmp_targets.meme" -q 1 2>/dev/null \
       | grep -v '^##\|^Query_ID')
 
 # gata vs gata_rc_db row: must have orientation '-' and best-tier q-value.
@@ -21,8 +21,8 @@ fi
 PASS "rc-match: gata vs gata_rc_db is orientation '-'"
 
 # With -R (forward only), gata_rc_db should NOT be a strong hit.
-OUT_FWD=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
-                       -t "${TESTDIR}/fixtures/cmp_targets.meme" -R -Q 1 2>/dev/null \
+OUT_FWD=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
+                       -t "${TESTDIR}/fixtures/cmp_targets.meme" -R -q 1 2>/dev/null \
           | grep -v '^##\|^Query_ID')
 
 GATA_RC_FWD_QVAL=$(echo "$OUT_FWD" | awk -F'\t' '$1=="gata" && $2=="gata_rc_db" {print $5}')

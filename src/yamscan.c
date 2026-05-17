@@ -258,24 +258,23 @@ static void print_time(const uint64_t s, const char *what) {
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa\n"
+    "Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa[.gz]\n"
     "\n"
-    " -m <str>   Motif file (MEME, JASPAR, HOMER, HOCOMOCO PCM). 1-%" PRIu64 " bases wide.\n"
+    " -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO). 1-%" PRIu64 " bases wide.\n"
     " -1 <str>   Scan a single consensus sequence (ambiguity letters allowed).\n"
-    "            1-%" PRIu64 " bases wide. Ignores -b, -t, -0, -p, -n.\n"
+    "            1-%" PRIu64 " bases wide. Ignores -b, -t, -0, -p, -N.\n"
     " -s <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.\n"
     "            Omit -s to print parsed motifs; omit -m/-1 to print sequence stats.\n"
     "            Non-ACGTU characters are treated as gaps during scanning.\n"
     " -x <str>   BED file of ranges to restrict scanning to. Col 4 = range name,\n"
-    "            col 6 = strand. Can be gzipped. Disables -f.\n"
-    " -o <str>   Output file. Default: stdout.\n"
-    " -b <dbl,dbl,dbl,dbl>  Background probabilities for A,C,G,T. Default: from\n"
-    "            motif file (MEME only) or uniform.\n"
-    " -f         Only scan the forward strand.\n"
-    " -t <dbl>   P-value threshold. Default: %g.\n"
+    "            col 6 = strand. Can be gzipped. Disables -R.\n"
+    " -o <str>   Output file (default: stdout).\n"
+    " -b A,C,G,T Background (default: from MEME bkg or uniform).\n"
+    " -R         Disable reverse-strand scoring.\n"
+    " -t <dbl>   P-value threshold (default: %g).\n"
     " -0         Report all hits with score >= 0 (no p-value threshold).\n"
-    " -p <int>   Pseudocount for PWM generation. Default: %d.\n"
-    " -n <int>   Motif sites for PPM->PCM conversion. Default: %d.\n"
+    " -p <int>   Pseudocount for PWM generation (default: %d).\n"
+    " -N <int>   Motif sites for PPM->PCM conversion (default: %d).\n"
     " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -d         Deduplicate motif/sequence names (default: abort on duplicates).\n"
     "            Incompatible with -x.\n"
@@ -283,7 +282,7 @@ static void usage(void) {
     "            first word.\n"
     " -l         Load all sequences into memory (default: one at a time). Auto-set\n"
     "            with stdin or -j > 1.\n"
-    " -j <int>   Threads. Default: 1. Capped at number of input motifs.\n"
+    " -j <int>   Threads (default: 1, capped at number of input motifs).\n"
     " -g         Show progress bar (only useful with multiple motifs).\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR, MAX_MOTIF_SIZE / 5, MAX_MOTIF_SIZE / 5,
@@ -3021,7 +3020,7 @@ int main_scan(int argc, char **argv) {
 
   int opt;
 
-  while ((opt = getopt(argc, argv, "m:1:s:o:b:flt:p:n:j:x:dgrMvwh0")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:s:o:b:Rlt:p:N:j:x:dgrMvwh0")) != -1) {
     switch (opt) {
       case 'm':
         if (has_consensus) {
@@ -3080,7 +3079,7 @@ int main_scan(int argc, char **argv) {
         args.use_user_bkg = 1;
         user_bkg = optarg;
         break;
-      case 'f':
+      case 'R':
         args.scan_rc = 0;
         break;
       case 't':
@@ -3100,12 +3099,12 @@ int main_scan(int argc, char **argv) {
           badexit("Error: -p must be a positive integer.");
         }
         break;
-      case 'n':
+      case 'N':
         if (str_to_int(optarg, &args.nsites)) {
-          badexit("Error: Failed to parse -n value.");
+          badexit("Error: Failed to parse -N value.");
         }
         if (!args.nsites) {
-          badexit("Error: -n must be a positive integer.");
+          badexit("Error: -N must be a positive integer.");
         }
         break;
       case 'j':

@@ -3,7 +3,7 @@ source "$TESTDIR/lib.sh"
 
 # Default (no -d): duplicate motif name should abort with an error message.
 assert_exit_nonzero "enr aborts on duplicate motif name by default" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_dup_motif.meme" \
@@ -11,7 +11,7 @@ assert_exit_nonzero "enr aborts on duplicate motif name by default" \
 
 assert_stderr_contains "enr stderr mentions 'duplicate motif name'" \
     "duplicate motif name" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_dup_motif.meme" \
@@ -19,14 +19,14 @@ assert_stderr_contains "enr stderr mentions 'duplicate motif name'" \
 
 # With -d: exits 0 and emits two rows; second name gets __N2 suffix.
 assert_exit0 "enr -d deduplicates and exits 0" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_dup_motif.meme" \
         -t 5e-4 \
         -d
 
-out=$("$YAMTK" enr \
+out=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_dup_motif.meme" \

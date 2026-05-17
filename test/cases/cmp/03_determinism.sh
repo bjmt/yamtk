@@ -3,10 +3,10 @@
 # byte-identical output (no RNG anywhere).
 source "${TESTDIR}/lib.sh"
 
-OUT1=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
+OUT1=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
                     -t "${TESTDIR}/fixtures/cmp_targets.meme" 2>/dev/null \
        | grep -v '^##yamcmp ')
-OUT2=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
+OUT2=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
                     -t "${TESTDIR}/fixtures/cmp_targets.meme" 2>/dev/null \
        | grep -v '^##yamcmp ')
 
@@ -16,10 +16,10 @@ fi
 PASS "determinism: repeat runs (empirical mode) produce identical output"
 
 # Same check under -e (enum mode).
-OUT3=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
+OUT3=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
                     -t "${TESTDIR}/fixtures/cmp_targets.meme" -e 2>/dev/null \
        | grep -v '^##yamcmp ')
-OUT4=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
+OUT4=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
                     -t "${TESTDIR}/fixtures/cmp_targets.meme" -e 2>/dev/null \
        | grep -v '^##yamcmp ')
 if [ "$OUT3" != "$OUT4" ]; then

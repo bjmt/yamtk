@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source "$TESTDIR/lib.sh"
 # Threading can reorder output; sort data rows before diffing.
-actual=$("$YAMTK" enr \
+actual=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \

@@ -3,8 +3,8 @@
 # target file is at offset 0, orientation +, with overlap == motif width.
 source "${TESTDIR}/lib.sh"
 
-OUT=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
-                   -t "${TESTDIR}/fixtures/cmp_query.meme" -Q 1 2>/dev/null \
+OUT=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
+                   -t "${TESTDIR}/fixtures/cmp_query.meme" -q 1 2>/dev/null \
       | grep -v '^##\|^Query_ID')
 
 # Group by query, take first row per query (sorted by q-value ascending in output).

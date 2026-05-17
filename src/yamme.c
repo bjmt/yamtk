@@ -79,8 +79,18 @@ KHASH_SET_INIT_INT64(seed_set_h)
 #define ALLOC_CHUNK_SIZE        ((uint64_t) 256)
 #define DEFAULT_PSEUDOCOUNT                    1
 #define DEFAULT_SHUFFLE_K                      2
+#define DEFAULT_QVALUE_FILTER                1e-3
+#define DEFAULT_HIT_PVAL                     1e-3
+#define DEFAULT_STOP_PVAL                    1e-3
+#define DEFAULT_MIN_W                          6
+#define DEFAULT_MAX_W                         15
+#define DEFAULT_N_MOTIFS                      10
+#define DEFAULT_DEDUP_OVERLAP                0.5
 #define MAX_K                                  9
 #define FASTA_LINE_LEN                        60
+#define PROGRESS_BAR_WIDTH                    60
+#define PROGRESS_BAR_STRING \
+  "============================================================"
 
 #define VEC_ADD(VEC, X, VEC_LEN) \
   do { for (uint64_t Xi = 0; Xi < VEC_LEN; Xi++) VEC[Xi] += X; } while (0)
@@ -142,14 +152,15 @@ typedef struct {
   int      n_motifs;
   double   dedup_overlap;
   double   qvalue_filter;
+  int      progress;
   int      v;
   int      w;
 } args_t;
 
 static args_t args = {
   .bkg           = {0.25, 0.25, 0.25, 0.25},
-  .hit_pval      = 1e-3,
-  .stop_pval     = 1e-3,
+  .hit_pval      = DEFAULT_HIT_PVAL,
+  .stop_pval     = DEFAULT_STOP_PVAL,
   .pseudocount   = DEFAULT_PSEUDOCOUNT,
   .nthreads      = 1,
   .scan_rc       = 1,
@@ -159,14 +170,26 @@ static args_t args = {
   .shuffle_k     = DEFAULT_SHUFFLE_K,
   .seed          = 0,
   .use_seed      = 0,
-  .min_w         = 6,
-  .max_w         = 15,
-  .n_motifs      = 10,
-  .dedup_overlap = 0.5,
-  .qvalue_filter = 1e-3,
+  .min_w         = DEFAULT_MIN_W,
+  .max_w         = DEFAULT_MAX_W,
+  .n_motifs      = DEFAULT_N_MOTIFS,
+  .dedup_overlap = DEFAULT_DEDUP_OVERLAP,
+  .qvalue_filter = DEFAULT_QVALUE_FILTER,
+  .progress      = 0,
   .v             = 0,
   .w             = 0
 };
+
+static pthread_mutex_t pb_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t pb_counter = 0;
+
+static void print_pb(const double prog) {
+  const int left = prog * PROGRESS_BAR_WIDTH;
+  const int right = PROGRESS_BAR_WIDTH - left;
+  fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
+      (int)(prog * 100.0));
+  fflush(stderr);
+}
 
 /* ---- Files ---- */
 
@@ -1604,6 +1627,12 @@ static void *worker(void *arg) {
     w = wa->q->widths[wa->q->head++];
     pthread_mutex_unlock(&wa->q->mu);
     discover_for_width(wa->ctx, w);
+    if (args.progress) {
+      pthread_mutex_lock(&pb_lock);
+      pb_counter++;
+      print_pb((double)pb_counter / (double)(args.max_w - args.min_w + 1));
+      pthread_mutex_unlock(&pb_lock);
+    }
   }
   return NULL;
 }
@@ -1611,6 +1640,7 @@ static void *worker(void *arg) {
 static void discover_all(void) {
   /* Build width queue */
   uint64_t n_widths = (uint64_t)(args.max_w - args.min_w + 1);
+  if (args.progress) print_pb(0.0);
   width_queue_t q;
   q.widths = malloc(sizeof(uint64_t) * n_widths);
   if (!q.widths) badexit("Error: Failed to alloc width queue.");
@@ -1638,6 +1668,7 @@ static void discover_all(void) {
 
   pthread_mutex_destroy(&q.mu);
   free(q.widths);
+  if (args.progress) fprintf(stderr, "\n");
 
   merge_thread_results();
 }
@@ -1869,23 +1900,26 @@ static void usage(void) {
     " -n <str>   Negatives FASTA (default: shuffle of positives).\n"
     " -o <str>   TSV output file (default: motifs.tsv; '-' = stdout).\n"
     " -O <str>   MEME motif output (default: motifs.meme; '-' = stdout).\n"
-    " -k <int>   Min motif width (default 6, min 3).\n"
-    " -K <int>   Max motif width (default 15, max %d).\n"
-    " -N <int>   Max motifs to discover (default 10).\n"
-    " -t <dbl>   Per-motif stopping p-value at discovery (default 1e-3).\n"
-    " -P <dbl>   Hit-scoring p-value threshold (default 1e-3).\n"
-    " -D <dbl>   Cross-width dedup overlap threshold (default 0.5).\n"
-    " -q <dbl>   BH q-value filter on surviving motifs (default 1e-3).\n"
-    " -S <int>   Shuffle k-mer size for default negatives (default 2, max 9).\n"
-    " -b <A,C,G,T>  Background (default: computed from positives).\n"
-    " -p <int>   PWM pseudocount (default %d).\n"
+    " -k <int>   Min motif width (default: %d, min 3).\n"
+    " -K <int>   Max motif width (default: %d, max %d).\n"
+    " -N <int>   Max motifs to discover (default: %d).\n"
+    " -t <dbl>   Per-motif stopping p-value at discovery (default: %g).\n"
+    " -P <dbl>   Hit-scoring p-value threshold (default: %g).\n"
+    " -D <dbl>   Cross-width dedup overlap threshold (default: %g).\n"
+    " -q <dbl>   BH q-value filter on surviving motifs (default: %g).\n"
+    " -S <int>   Shuffle k-mer size for default negatives (default: %d, max %d).\n"
+    " -b A,C,G,T Background (default: computed from positives).\n"
+    " -p <int>   PWM pseudocount (default: %d).\n"
     " -R         Disable reverse-strand scoring.\n"
     " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -s <uint>  RNG seed (default: time-seeded).\n"
-    " -j <int>   Worker threads for discovery (default 1).\n"
+    " -j <int>   Threads (default: 1).\n"
+    " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR,
-    MAX_MOTIF_WIDTH, DEFAULT_PSEUDOCOUNT
+    DEFAULT_MIN_W, DEFAULT_MAX_W, MAX_MOTIF_WIDTH, DEFAULT_N_MOTIFS,
+    DEFAULT_STOP_PVAL, DEFAULT_HIT_PVAL, DEFAULT_DEDUP_OVERLAP,
+    DEFAULT_QVALUE_FILTER, DEFAULT_SHUFFLE_K, MAX_K, DEFAULT_PSEUDOCOUNT
   );
 }
 
@@ -1901,7 +1935,7 @@ int main_me(int argc, char **argv) {
   struct timespec ts_program;
   clock_gettime(CLOCK_MONOTONIC, &ts_program);
 
-  while ((opt = getopt(argc, argv, "i:n:o:O:k:K:N:t:P:D:S:b:p:q:RMs:j:vwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:n:o:O:k:K:N:t:P:D:S:b:p:q:RMs:j:gvwh")) != -1) {
     switch (opt) {
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1987,6 +2021,9 @@ int main_me(int argc, char **argv) {
       case 'j':
         if (str_to_int(optarg, &args.nthreads)) badexit("Error: Failed to parse -j value.");
         if (args.nthreads < 1) badexit("Error: -j must be >= 1.");
+        break;
+      case 'g':
+        args.progress = 1;
         break;
       case 'w':
         args.w = 1;

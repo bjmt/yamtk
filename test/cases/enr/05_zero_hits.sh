@@ -2,7 +2,7 @@
 source "$TESTDIR/lib.sh"
 # Use an extremely stringent threshold so no motif can produce any hit.
 # Verifies zero-hit behavior: all count columns = 0, pvalue=1, qvalue=1, no crash.
-out=$("$YAMTK" enr \
+out=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \

@@ -2,7 +2,7 @@
 source "$TESTDIR/lib.sh"
 assert_enr_golden "enr shuffled null k=2 seed=42" \
     "$TESTDIR/expected/enr_shuffled.txt" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -m "$TESTDIR/fixtures/enr_motifs.meme" \
         -t 5e-4 \

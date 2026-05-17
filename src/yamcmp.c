@@ -46,6 +46,9 @@
 #define DEFAULT_PSEUDOCOUNT                  0.0
 #define DEFAULT_NSITES                ((uint64_t) 20)  /* TOMTOM default when MEME has no nsites= */
 #define PCC_BINS                              51   /* PCC discretization, step = 0.04 */
+#define PROGRESS_BAR_WIDTH                    60
+#define PROGRESS_BAR_STRING \
+  "============================================================"
 
 /* Null mode is runtime-selectable via -e:
      default = empirical (TOMTOM-style; pools actual target-database columns)
@@ -124,6 +127,7 @@ typedef struct args_t {
   int      trim_names;
   int      use_user_bkg;
   int      enum_null;        /* 0 = empirical (default), 1 = enum */
+  int      progress;         /* show progress bar (-g) */
   int      v;
   int      w;
   int      metric_idx;
@@ -140,6 +144,7 @@ static args_t args = {
   .trim_names     = 1,
   .use_user_bkg   = 0,
   .enum_null      = 0,
+  .progress       = 0,
   .v              = 0,
   .w              = 0,
   .metric_idx     = 0
@@ -1371,6 +1376,16 @@ static void bh_qvalues(const double *p, uint64_t n, double *q) {
 /* ---- Per-query worker output storage ---- */
 
 static pair_result_t **query_results = NULL;   /* [q_i] -> array of length target_set.n */
+static pthread_mutex_t pb_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t pb_counter = 0;                /* progress: completed queries */
+
+static void print_pb(const double prog) {
+  const int left = prog * PROGRESS_BAR_WIDTH;
+  const int right = PROGRESS_BAR_WIDTH - left;
+  fprintf(stderr, "\r[%.*s%*s] %3d%%", left, PROGRESS_BAR_STRING, right, "",
+      (int) (prog * 100.0));
+  fflush(stderr);
+}
 
 /* ---- Thread worker ---- */
 
@@ -1381,7 +1396,8 @@ static void *cmp_sub_process(void *arg) {
   for (uint64_t qi = 0; qi < query_set.n; qi++) {
     motif_t *q = query_set.motifs[qi];
     if (q->thread != thread_i) continue;
-    if (args.w) fprintf(stderr, "    Building null PMFs for query: %s\n", q->name);
+    if (args.w && !args.progress)
+      fprintf(stderr, "    Building null PMFs for query: %s\n", q->name);
     if (build_query_pmfs(q)) {
       fprintf(stderr, "Error: Failed to build PMFs for query %s.", q->name);
       exit(EXIT_FAILURE);
@@ -1429,6 +1445,12 @@ static void *cmp_sub_process(void *arg) {
     free_pmf_cache(q->pmf_fwd, q->pmf_wq); q->pmf_fwd = NULL;
     free_pmf_cache(q->pmf_rc,  q->pmf_wq); q->pmf_rc  = NULL;
     q->pmf_wq = 0;
+    if (args.progress) {
+      pthread_mutex_lock(&pb_lock);
+      pb_counter++;
+      print_pb((double)pb_counter / (double)query_set.n);
+      pthread_mutex_unlock(&pb_lock);
+    }
   }
   return NULL;
 }
@@ -1474,27 +1496,25 @@ static void write_results(FILE *o, int argc, char **argv) {
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk cmp [options] -q queries.meme -t targets.meme\n"
+    "Usage:  yamtk cmp [options] -m queries.meme -t targets.meme\n"
     "\n"
-    " -q <str>   Query motif file (MEME/JASPAR/HOMER/HOCOMOCO).\n"
+    " -m <str>   Query motif file (MEME/JASPAR/HOMER/HOCOMOCO).\n"
     " -t <str>   Target motif database (same formats).\n"
-    " -o <str>   Output TSV (default: stdout).\n"
-    " -d <str>   Column-similarity metric: pcc. (default: pcc).\n"
+    " -o <str>   Output TSV file (default: stdout).\n"
+    " -d <str>   Column-similarity metric: pcc (default: pcc).\n"
     " -n <int>   Minimum overlap columns (default: %d).\n"
-    " -R         Disable reverse-strand query orientation.\n"
-    " -Q <dbl>   Only report rows with q-value <= this (default: %g).\n"
+    " -R         Disable reverse-strand scoring.\n"
+    " -q <dbl>   Only report rows with q-value <= this (default: %g).\n"
     " -b A,C,G,T Background (default: from query MEME or uniform).\n"
-    " -p <dbl>   Pseudocount added to query+target PPMs before scoring,\n"
-    "            mixed in proportion to the background (default: %g; TOMTOM\n"
-    "            uses 0.1). Only matters together with -p > 0.\n"
-    " -N <int>   Override every motif's nsites with this value (default: use\n"
-    "            parsed nsites= from MEME, or column total from JASPAR PCM,\n"
-    "            falling back to %" PRIu64 " when neither is available).\n"
-    " -r         Don't trim motif names to first word.\n"
-    " -e         Use parametric enumeration null (Dirichlet-Multinomial over a\n"
-    "            56-column grid) instead of the default empirical null pooled\n"
-    "            from the target database. Useful when the target db is small.\n"
-    " -j <int>   Worker threads (default: 1).\n"
+    " -p <dbl>   Pseudocount added to PPMs before scoring (default: %g).\n"
+    " -N <int>   Override every motif's nsites (default: parsed nsites,\n"
+    "            falling back to %" PRIu64 ").\n"
+    " -r         Do not trim motif names to the first word.\n"
+    " -e         Use parametric enumeration null (Dirichlet-Multinomial over\n"
+    "            a 56-column grid) instead of the empirical null. Use when\n"
+    "            the target db is small (< ~500 columns).\n"
+    " -j <int>   Threads (default: 1).\n"
+    " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR,
     DEFAULT_MIN_OVERLAP, DEFAULT_QVALUE_FILTER, DEFAULT_PSEUDOCOUNT, DEFAULT_NSITES
@@ -1516,14 +1536,14 @@ int main_cmp(int argc, char **argv) {
   struct timespec ts_program;
   clock_gettime(CLOCK_MONOTONIC, &ts_program);
 
-  while ((opt = getopt(argc, argv, "q:t:o:d:n:RQ:b:p:N:rej:vwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:t:o:d:n:Rq:b:p:N:rej:gvwh")) != -1) {
     switch (opt) {
-      case 'q':
-        if (files.q_open) badexit("Error: -q specified more than once.");
+      case 'm':
+        if (files.q_open) badexit("Error: -m specified more than once.");
         has_q = 1;
         files.q = fopen(optarg, "r");
         if (!files.q) {
-          fprintf(stderr, "Error: Cannot open -q file: %s [%s]", optarg, strerror(errno));
+          fprintf(stderr, "Error: Cannot open -m file: %s [%s]", optarg, strerror(errno));
           badexit("");
         }
         files.q_open = 1;
@@ -1558,10 +1578,10 @@ int main_cmp(int argc, char **argv) {
       case 'R':
         args.scan_rc = 0;
         break;
-      case 'Q':
-        if (str_to_double(optarg, &args.qvalue_filter)) badexit("Error: Failed to parse -Q value.");
+      case 'q':
+        if (str_to_double(optarg, &args.qvalue_filter)) badexit("Error: Failed to parse -q value.");
         if (args.qvalue_filter < 0.0 || args.qvalue_filter > 1.0)
-          badexit("Error: -Q must be in [0,1].");
+          badexit("Error: -q must be in [0,1].");
         break;
       case 'b':
         if (user_bkg) badexit("Error: -b specified more than once.");
@@ -1585,6 +1605,9 @@ int main_cmp(int argc, char **argv) {
       case 'e':
         args.enum_null = 1;
         break;
+      case 'g':
+        args.progress = 1;
+        break;
       case 'j':
         if (str_to_int(optarg, &args.nthreads)) badexit("Error: Failed to parse -j value.");
         if (args.nthreads < 1) badexit("Error: -j must be >= 1.");
@@ -1605,7 +1628,7 @@ int main_cmp(int argc, char **argv) {
     }
   }
 
-  if (!has_q) badexit("Error: Missing -q (query motifs).");
+  if (!has_q) badexit("Error: Missing -m (query motifs).");
   if (!has_t) badexit("Error: Missing -t (target motifs).");
 
   if (metric_name) {
@@ -1674,6 +1697,7 @@ int main_cmp(int argc, char **argv) {
     query_set.n, target_set.n);
   t0 = time(NULL);
 
+  if (args.progress) print_pb(0.0);
   for (uint64_t i = 0; i < (uint64_t)args.nthreads; i++) {
     uint64_t *ti = malloc(sizeof(*ti));
     if (!ti) badexit("Error: Failed to alloc thread index.");
@@ -1681,6 +1705,7 @@ int main_cmp(int argc, char **argv) {
     pthread_create(&threads[i], NULL, cmp_sub_process, ti);
   }
   for (uint64_t i = 0; i < (uint64_t)args.nthreads; i++) pthread_join(threads[i], NULL);
+  if (args.progress) fprintf(stderr, "\n");
 
   if (args.v) print_time((uint64_t)difftime(time(NULL), t0), "compare");
   free(threads);

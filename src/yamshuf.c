@@ -197,14 +197,14 @@ static void print_time(const uint64_t s, const char *what) {
 static void usage(void) {
   printf(
     "yamtk v%s  Copyright (C) %s  Benjamin Jean-Marie Tremblay\n"
-    "Usage:  yamtk shuf [options] -i sequences.fa\n"
+    "Usage:  yamtk shuf [options] -i sequences.fa[.gz]\n"
     "\n"
     " -i <str>   Input FASTA/FASTQ. Can be gzipped. Use '-' for stdin.\n"
     "            Non-ACGTU characters are treated as N (except with -l or -k 1).\n"
-    " -k <int>   k-mer size for shuffling. Default: %d. k=1 uses Fisher-Yates;\n"
+    " -k <int>   k-mer size for shuffling (default: %d). k=1 uses Fisher-Yates;\n"
     "            max k for Euler/Markov: %d.\n"
-    " -o <str>   Output file. Default: stdout.\n"
-    " -s <int>   RNG seed. Default: %d.\n"
+    " -o <str>   Output file (default: stdout).\n"
+    " -s <int>   RNG seed (default: %d).\n"
     " -m         Markov shuffling: generates sequences with similar k-mer\n"
     "            frequencies. Best for large sequences.\n"
     " -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).\n"

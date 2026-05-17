@@ -2,7 +2,7 @@
 source "$TESTDIR/lib.sh"
 assert_enr_golden "enr basic external neg" \
     "$TESTDIR/expected/enr_basic.txt" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_motifs.meme" \

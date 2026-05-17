@@ -2,7 +2,7 @@
 source "$TESTDIR/lib.sh"
 assert_enr_golden "enr -T sites mode" \
     "$TESTDIR/expected/enr_sites.txt" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_motifs.meme" \
@@ -11,13 +11,13 @@ assert_enr_golden "enr -T sites mode" \
 
 # Verify seq_hits and site_hits columns are identical to seqs-mode output
 # (counts don't depend on test mode, only effect/pvalue/qvalue differ).
-seqs_out=$("$YAMTK" enr \
+seqs_out=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
     -t 5e-4 2>/dev/null | grep -v '^#')
 
-sites_out=$("$YAMTK" enr \
+sites_out=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \

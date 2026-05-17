@@ -2,7 +2,7 @@
 source "$TESTDIR/lib.sh"
 assert_enr_golden "enr -T ranksum mode" \
     "$TESTDIR/expected/enr_ranksum.txt" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_motifs.meme" \
@@ -10,13 +10,13 @@ assert_enr_golden "enr -T ranksum mode" \
         -T ranksum
 
 # Verify count columns are identical to seqs-mode output (counts are mode-independent).
-seqs_out=$("$YAMTK" enr \
+seqs_out=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
     -t 5e-4 2>/dev/null | grep -v '^#')
 
-ranksum_out=$("$YAMTK" enr \
+ranksum_out=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
@@ -32,7 +32,7 @@ fi
 PASS "enr ranksum: count columns identical to seqs mode"
 
 # Spiked motif (ebox) should have AUC > 0.7
-ebox_auc=$("$YAMTK" enr \
+ebox_auc=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \

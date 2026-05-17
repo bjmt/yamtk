@@ -4,10 +4,10 @@
 # emit one warning per repeated header type, and produce both motifs as targets.
 source "${TESTDIR}/lib.sh"
 
-# Run capturing stderr separately. Use -Q 1 so the test only checks parsing,
+# Run capturing stderr separately. Use -q 1 so the test only checks parsing,
 # not the (db-dependent) p-values from such a tiny target file.
-OUT=$("$YAMTK" cmp -q "${TESTDIR}/fixtures/cmp_query.meme" \
-                   -t "${TESTDIR}/fixtures/concat_meme.meme" -Q 1 2>/tmp/yamtk_cmp_06.err)
+OUT=$("$YAMTK" cmp -m "${TESTDIR}/fixtures/cmp_query.meme" \
+                   -t "${TESTDIR}/fixtures/concat_meme.meme" -q 1 2>/tmp/yamtk_cmp_06.err)
 STDERR=$(cat /tmp/yamtk_cmp_06.err); rm -f /tmp/yamtk_cmp_06.err
 
 # Both motifs from the concatenated file should appear as targets.

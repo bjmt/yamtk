@@ -2,7 +2,7 @@
 source "$TESTDIR/lib.sh"
 
 # Default: JASPAR motif name "ebox extra_info" trimmed to "ebox" at first whitespace.
-trimmed=$("$YAMTK" enr \
+trimmed=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_jaspar_spacedname.jaspar" \
@@ -15,7 +15,7 @@ fi
 PASS "enr default trims name to first word"
 
 # With -r: full name including space is preserved.
-full=$("$YAMTK" enr \
+full=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_jaspar_spacedname.jaspar" \
@@ -29,7 +29,7 @@ PASS "enr -r preserves full name with space"
 
 # Verify -r -r (duplicate) exits non-zero.
 assert_exit_nonzero "enr -r twice exits non-zero" \
-    "$YAMTK" enr \
+    "$YAMTK" enr -q 1.0 \
         -i "$TESTDIR/fixtures/enr_pos.fa" \
         -n "$TESTDIR/fixtures/enr_neg.fa" \
         -m "$TESTDIR/fixtures/enr_jaspar_spacedname.jaspar" \

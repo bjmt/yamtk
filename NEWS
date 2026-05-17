@@ -1,6 +1,31 @@
 UNRELEASED
 ----------
 
+* Cross-subcommand flag harmonization. Same letter for the same concept
+  across scan/enr/me/ref/cmp wherever possible:
+    -R   disable reverse-strand scoring (was -f in scan and enr).
+    -N   motif sites / nsites override (was -n in scan).
+    -t   hit-scoring p-value threshold (was -P in ref).
+    -m   query motif file in cmp (was -q); -q now means q-value filter
+         to match enr/me. yamenr's default q-value is now 0.1 (was 1.0)
+         and is a compile-time DEFAULT_QVALUE_FILTER constant.
+  All numeric defaults across scan/shuf/enr/me/ref/cmp are now #defines
+  (added DEFAULT_HIT_PVAL, DEFAULT_STOP_PVAL, DEFAULT_MIN_W, DEFAULT_MAX_W,
+  DEFAULT_N_MOTIFS, DEFAULT_DEDUP_OVERLAP in yamme; DEFAULT_HIT_PVAL,
+  DEFAULT_R_PASSES in yamref).
+
+* New -g flag in cmp/enr/me/ref: show a progress bar like yamscan's.
+  Per-motif (enr/ref), per-query (cmp), per-width (me). Thread-safe via
+  pthread mutex, suppresses per-motif -v/-w chatter while active.
+
+* Help-text cleanup. Standardized on the "(default: X)" form across all
+  subcommands. yamdedup's help condensed (dropped the column-aligned
+  trailing whitespace and the overlong prose). yamscan's "-b <dbl,dbl,
+  dbl,dbl>" shortened to "-b A,C,G,T" to match others.
+
+* Total runtime printed under -v in every subcommand, with millisecond
+  resolution via clock_gettime(CLOCK_MONOTONIC).
+
 * yamtk scan/enr/cmp: -r (don't trim motif names) now also applies to MEME
   files. Previously the MEME name parser stopped at the first whitespace
   after "MOTIF", silently discarding the alt-name (e.g. "Arnt" in
