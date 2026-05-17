@@ -33,6 +33,19 @@ KSEQ_INIT(gzFile, gzread)
 
 #define FASTA_LINE_LEN  60
 
+/* ---- Character classification ----
+   0=A 1=C 2=G 3=T/U 4=N or other. Recognises both cases. */
+static const unsigned char char2index[256] = {
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,0,4,1,4,4,4,2,4,4,4,4,4,4,4,4, 4,4,4,4,3,3,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,
+  4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+};
+
 /* ---- Action enum ---- */
 
 typedef enum {
@@ -158,6 +171,30 @@ static void usage(void) {
   );
 }
 
+/* ---- Action: stats ---- */
+
+static void emit_stats_header(void) {
+  fprintf(files.o, "##seq_num\tseq_name\tsize\tgc_pct\tn_count\n");
+}
+
+static void emit_stats_row(const unsigned char *seq, const uint64_t L, const char *name,
+                           const uint64_t idx) {
+  uint64_t n_a = 0, n_c = 0, n_g = 0, n_t = 0, n_n = 0;
+  for (uint64_t i = 0; i < L; i++) {
+    switch (char2index[seq[i]]) {
+      case 0: n_a++; break;
+      case 1: n_c++; break;
+      case 2: n_g++; break;
+      case 3: n_t++; break;
+      default: n_n++; break;
+    }
+  }
+  const uint64_t known = n_a + n_c + n_g + n_t;
+  const double gc_pct = known ? ((double)(n_c + n_g) / (double)known) * 100.0 : 0.0;
+  fprintf(files.o, "%" PRIu64 "\t%s\t%" PRIu64 "\t%.2f\t%" PRIu64 "\n",
+    idx, name, L, gc_pct, n_n);
+}
+
 /* ---- Validation of action + flag combos ---- */
 
 static void validate_args(void) {
@@ -279,8 +316,36 @@ int main_seq(int argc, char **argv) {
   validate_args();
   if (use_stdout) files.o = stdout;
 
-  fprintf(stderr, "yamtk seq: action '%s' not implemented yet (skeleton).\n",
-    action_name(args.action));
+  /* Per-action one-time header */
+  if (args.action == ACTION_STATS) emit_stats_header();
+
+  /* Stream sequences */
+  kseq_t *kseq = kseq_init(files.i);
+  int ret_val;
+  uint64_t idx = 0;
+  while ((ret_val = kseq_read(kseq)) >= 0) {
+    idx++;
+    const unsigned char *seq = (const unsigned char *) kseq->seq.s;
+    const uint64_t L = kseq->seq.l;
+    const char *name = kseq->name.s;
+
+    switch (args.action) {
+      case ACTION_STATS:
+        emit_stats_row(seq, L, name, idx);
+        break;
+      default:
+        /* Other actions wired in subsequent commits */
+        break;
+    }
+  }
+  if (ret_val < -1) {
+    fprintf(stderr, "Error: Failed to read input FASTA (kseq_read returned %d).\n", ret_val);
+    kseq_destroy(kseq);
+    badexit("");
+  }
+  kseq_destroy(kseq);
+
+  if (args.v) fprintf(stderr, "Processed %" PRIu64 " sequence(s).\n", idx);
 
   close_files();
   return EXIT_SUCCESS;
