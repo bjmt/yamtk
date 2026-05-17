@@ -720,12 +720,21 @@ static int get_meme_bkg(const char *line, const uint64_t ln) {
 }
 
 static void parse_meme_name(const char *line, const uint64_t mi) {
-  uint64_t i=5, j=0, read=0;
+  /* Capture identifier AND any altname; trim_motif_name (run when args.trim_names)
+     truncates at the first space later, so default behavior is unchanged. */
+  uint64_t i=5, j=0;
+  int prev_space=1;
   while (line[i]&&line[i]!='\r'&&line[i]!='\n'&&j<MAX_NAME_SIZE-1) {
-    if (line[i]==' '&&read) break;
-    else if (line[i]==' ') { i++; continue; }
-    read=1; motifs[mi]->name[j++]=line[i++];
+    if (line[i]==' '||line[i]=='\t') {
+      if (!prev_space && j>0 && j<MAX_NAME_SIZE-1) motifs[mi]->name[j++]=' ';
+      prev_space=1;
+    } else {
+      motifs[mi]->name[j++]=line[i];
+      prev_space=0;
+    }
+    i++;
   }
+  if (j>0 && motifs[mi]->name[j-1]==' ') j--;
   motifs[mi]->name[j]='\0';
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[mi]->name);
 }
@@ -1553,8 +1562,7 @@ static void usage(void) {
     " -p <int>   Pseudocount for PWM generation. Default: %d.\n"
     " -N <int>   Motif sites for PPM->PCM conversion. Default: %d.\n"
     " -d         Deduplicate motif names (default: abort on duplicates).\n"
-    " -r         Do not trim motif (HOCOMOCO/JASPAR) and sequence names to the\n"
-    "            first word.\n"
+    " -r         Do not trim motif names to the first word.\n"
     " -t <dbl>   P-value threshold for a hit. Default: %g.\n"
     " -T <str>   Test mode: 'seqs' (default), 'sites', or 'ranksum'.\n"
     "            seqs    = Fisher's exact on per-sequence hit presence.\n"

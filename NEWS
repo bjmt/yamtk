@@ -1,6 +1,18 @@
 UNRELEASED
 ----------
 
+* yamtk scan/enr/cmp: -r (don't trim motif names) now also applies to MEME
+  files. Previously the MEME name parser stopped at the first whitespace
+  after "MOTIF", silently discarding the alt-name (e.g. "Arnt" in
+  "MOTIF MA0004.1 Arnt"). The parser now captures the full
+  "identifier altname" string; trim_motif_name (called when -r is not set)
+  then truncates at the first space, preserving default behavior.
+
+* yamtk ref: no longer trims motif names at all. MEME's "MOTIF id altname"
+  is kept end-to-end, both in the [name] stderr summary lines and in the
+  output MEME's MOTIF header. ref has no no-trim flag (its -r is taken
+  by refinement passes).
+
 * New subcommand: yamtk cmp — TOMTOM-equivalent query-vs-target motif
   comparison. Takes a query motif file (-q) and target motif database
   (-t), both in MEME/JASPAR/HOMER/HOCOMOCO. For each query x target it

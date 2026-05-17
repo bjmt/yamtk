@@ -1288,17 +1288,23 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
 }
 
 static void parse_meme_name(const char *line, const uint64_t motif_i) {
-  uint64_t i = 5, j = 0, name_read = 0;
+  /* Capture identifier AND any altname after it ("MOTIF id altname [...]"),
+     collapsing whitespace runs to single spaces. trim_motif_name (called
+     when args.trim_names) will later truncate at the first space, so the
+     default behavior (id only) is preserved; with -r the full name is kept. */
+  uint64_t i = 5, j = 0;
+  int prev_space = 1;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n' && j < MAX_NAME_SIZE - 1) {
-    if (line[i] == ' ' && name_read) break;
-    else if (line[i] == ' ') {
-      i++;
-      continue;
+    if (line[i] == ' ' || line[i] == '\t') {
+      if (!prev_space && j > 0 && j < MAX_NAME_SIZE - 1) motifs[motif_i]->name[j++] = ' ';
+      prev_space = 1;
+    } else {
+      motifs[motif_i]->name[j++] = line[i];
+      prev_space = 0;
     }
-    name_read = 1;
-    motifs[motif_i]->name[j] = line[i];
-    j++; i++;
+    i++;
   }
+  if (j > 0 && motifs[motif_i]->name[j - 1] == ' ') j--;
   motifs[motif_i]->name[j] = '\0';
   if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
 }

@@ -7,7 +7,7 @@ strands: + -
 Background letter frequencies:
 A 0.262500 C 0.242000 G 0.251000 T 0.244500
 
-MOTIF motif_1 ACGTACG
+MOTIF motif_1 ACGTACG ACGTACG
 
 letter-probability matrix: alength= 4 w= 7 nsites= 39
  0.981250 0.006250 0.006250 0.006250

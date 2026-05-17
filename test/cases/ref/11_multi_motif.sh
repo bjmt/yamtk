@@ -12,11 +12,11 @@ assert_exit0 "multi-motif input completes" \
   "$YAMTK" ref -m "${TESTDIR}/fixtures/enr_motifs.meme" \
   -i "${TESTDIR}/fixtures/enr_pos.fa" -o "$tmp/out.meme"
 
-assert_stderr_contains "ebox summary printed" "\\[ebox\\]" \
+assert_stderr_contains "ebox summary printed" "\\[ebox CACGTG\\]" \
   "$YAMTK" ref -m "${TESTDIR}/fixtures/enr_motifs.meme" \
   -i "${TESTDIR}/fixtures/enr_pos.fa" -o /dev/null
 
-assert_stderr_contains "gcbox drop warning printed" "\\[gcbox\\] dropped" \
+assert_stderr_contains "gcbox drop warning printed" "\\[gcbox GGGCGG\\] dropped" \
   "$YAMTK" ref -m "${TESTDIR}/fixtures/enr_motifs.meme" \
   -i "${TESTDIR}/fixtures/enr_pos.fa" -o /dev/null
 

@@ -573,15 +573,22 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
 }
 
 static void parse_meme_name(const char *line, const uint64_t motif_i) {
-  uint64_t i = 5, j = 0, name_read = 0;
+  /* Capture identifier AND any altname; trim_motif_name (run when args.trim_names)
+     truncates at the first space later, so default behavior is unchanged. */
+  uint64_t i = 5, j = 0;
+  int prev_space = 1;
   motif_t *m = cur_set->motifs[motif_i];
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n' && j < MAX_NAME_SIZE - 1) {
-    if (line[i] == ' ' && name_read) break;
-    else if (line[i] == ' ') { i++; continue; }
-    name_read = 1;
-    m->name[j] = line[i];
-    j++; i++;
+    if (line[i] == ' ' || line[i] == '\t') {
+      if (!prev_space && j > 0 && j < MAX_NAME_SIZE - 1) m->name[j++] = ' ';
+      prev_space = 1;
+    } else {
+      m->name[j++] = line[i];
+      prev_space = 0;
+    }
+    i++;
   }
+  if (j > 0 && m->name[j - 1] == ' ') j--;
   m->name[j] = '\0';
 }
 

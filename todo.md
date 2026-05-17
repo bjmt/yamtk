@@ -1,6 +1,5 @@
 ## Todo
 
-- add high resolution time to all subcommands
 - make sure yamcmp and tomtom give similar results
 
 - yamenr:
