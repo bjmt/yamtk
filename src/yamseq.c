@@ -202,6 +202,22 @@ static void reverse_complement(unsigned char *seq, const uint64_t L) {
   if (L % 2 == 1) seq[L / 2] = iupac_comp(seq[L / 2]);
 }
 
+/* ---- T<->U toggle ---- */
+
+static void toggle_t_to_u(unsigned char *seq, const uint64_t L) {
+  for (uint64_t i = 0; i < L; i++) {
+    if      (seq[i] == 'T') seq[i] = 'U';
+    else if (seq[i] == 't') seq[i] = 'u';
+  }
+}
+
+static void toggle_u_to_t(unsigned char *seq, const uint64_t L) {
+  for (uint64_t i = 0; i < L; i++) {
+    if      (seq[i] == 'U') seq[i] = 'T';
+    else if (seq[i] == 'u') seq[i] = 't';
+  }
+}
+
 /* ---- FASTA output ---- */
 
 static void write_seq(const unsigned char *seq, const uint64_t L, const char *name,
@@ -380,6 +396,14 @@ int main_seq(int argc, char **argv) {
         break;
       case ACTION_RC:
         reverse_complement(seq, L);
+        write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
+        break;
+      case ACTION_RNA:
+        toggle_t_to_u(seq, L);
+        write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
+        break;
+      case ACTION_DNA:
+        toggle_u_to_t(seq, L);
         write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
         break;
       default:
