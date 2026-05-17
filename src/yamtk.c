@@ -27,6 +27,7 @@
 #include "yamme.h"
 #include "yamref.h"
 #include "yamcmp.h"
+#include "yamseed.h"
 #include "version.h"
 
 static void help(void) {
@@ -41,6 +42,7 @@ static void help(void) {
         "    me         De novo motif elicitation\n"
         "    ref        Refine a PWM against positive sequences\n"
         "    cmp        Compare query motifs against a target database\n"
+        "    seed       Insert motif samples into sequences (FASTA + truth BED)\n"
         "    version    Print the version number and exit\n"
         "    help       Print this message and exit\n"
         "For subcommand usage, try: yamtk <subcommand> -h\n"
@@ -74,6 +76,8 @@ int main(int argc, char **argv) {
         return main_ref(argc - 1, argv + 1);
     } else if (strcmp(argv[1], "cmp") == 0) {
         return main_cmp(argc - 1, argv + 1);
+    } else if (strcmp(argv[1], "seed") == 0) {
+        return main_seed(argc - 1, argv + 1);
     } else {
         fprintf(stderr, "Error: Unknown subcommand '%s'; try 'help' for usage\n", argv[1]);
         return EXIT_FAILURE;
