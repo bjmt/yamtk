@@ -821,10 +821,18 @@ static unsigned char sample_base(const double probs[4], xrng_t *r) {
 
 static void overwrite_motif(unsigned char *seq, const uint64_t pos, const motif_t *m,
                             const int rc, xrng_t *r) {
-  /* rc handling deferred to step 6; forward-strand only for now. */
-  (void) rc;
-  for (uint64_t i = 0; i < m->size; i++) {
-    seq[pos + i] = (unsigned char) index2dna[sample_base(m->pwm_probs[i], r)];
+  if (rc) {
+    /* RC PWM: output position i samples from forward column (size-1-i) with
+       indices complemented (A↔T, C↔G). */
+    for (uint64_t i = 0; i < m->size; i++) {
+      const double *fwd = m->pwm_probs[m->size - 1 - i];
+      const double rc_col[4] = { fwd[3], fwd[2], fwd[1], fwd[0] };
+      seq[pos + i] = (unsigned char) index2dna[sample_base(rc_col, r)];
+    }
+  } else {
+    for (uint64_t i = 0; i < m->size; i++) {
+      seq[pos + i] = (unsigned char) index2dna[sample_base(m->pwm_probs[i], r)];
+    }
   }
 }
 
@@ -884,7 +892,7 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
       const uint64_t pos = xrand_r(r) % (L - m->size + 1);
       const uint64_t end = pos + m->size;
       if (overlaps_any(ivls, n_ivls, pos, end, args.min_spacing)) continue;
-      const int rc = 0;  /* step 6 wires in RC + -R toggle */
+      const int rc = (!args.no_rc) && (xrand_r(r) & 1);
       overwrite_motif(seq, pos, m, rc, r);
       if (files.O_open) {
         fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
