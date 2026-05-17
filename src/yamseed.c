@@ -43,6 +43,7 @@ KSEQ_INIT(gzFile, gzread)
 #define DEFAULT_SEED                           4
 #define DEFAULT_NSITES                      1000
 #define DEFAULT_PSEUDOCOUNT                    1
+#define MAX_RETRIES                          100
 
 #define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 #define VEC_DIV(VEC, X, VEC_LEN) \
@@ -840,20 +841,50 @@ static uint64_t poisson_sample(const double lambda, xrng_t *r) {
   }
 }
 
-/* Per-sequence random mode (step 3: no overlap tracking, forward strand). */
+typedef struct { uint64_t s, e; } ivl_t;
+
+/* True iff [s, e) lies within `gap` of any existing interval. */
+static int overlaps_any(const ivl_t *ivls, const uint64_t n_ivls,
+                        const uint64_t s, const uint64_t e, const uint64_t gap) {
+  for (uint64_t k = 0; k < n_ivls; k++) {
+    /* clear iff existing ends ≥ gap before s, OR existing starts ≥ gap after e. */
+    const int left_clear  = (ivls[k].e + gap <= s);
+    const int right_clear = (e + gap <= ivls[k].s);
+    if (!(left_clear || right_clear)) return 1;
+  }
+  return 0;
+}
+
+/* Per-sequence random mode. Tracks placed intervals; retries up to MAX_RETRIES
+   per insertion on collision (collision = overlap or within args.min_spacing). */
 static void do_random_mode(unsigned char *seq, const uint64_t L, const char *name, xrng_t *r) {
   const uint64_t N = poisson_sample(args.lambda * (double)L, r);
+  if (N == 0) return;
+  ivl_t *ivls = malloc(N * sizeof(*ivls));
+  if (!ivls) {
+    fprintf(stderr, "Error: Failed to allocate interval tracker for [%s].\n", name);
+    badexit("");
+  }
+  uint64_t n_ivls = 0;
   for (uint64_t k = 0; k < N; k++) {
-    motif_t *m = motifs[xrand_r(r) % motif_info.n];
-    if (m->size == 0 || m->size > L) continue;
-    const uint64_t pos = xrand_r(r) % (L - m->size + 1);
-    const int rc = 0;  /* step 6 wires in RC + -R toggle */
-    overwrite_motif(seq, pos, m, rc, r);
-    if (files.O_open) {
-      fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
-        name, pos, pos + m->size, m->name, rc ? '-' : '+');
+    int placed = 0;
+    for (int attempt = 0; attempt < MAX_RETRIES && !placed; attempt++) {
+      motif_t *m = motifs[xrand_r(r) % motif_info.n];
+      if (m->size == 0 || m->size > L) break;
+      const uint64_t pos = xrand_r(r) % (L - m->size + 1);
+      const uint64_t end = pos + m->size;
+      if (overlaps_any(ivls, n_ivls, pos, end, args.min_spacing)) continue;
+      const int rc = 0;  /* step 6 wires in RC + -R toggle */
+      overwrite_motif(seq, pos, m, rc, r);
+      if (files.O_open) {
+        fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
+          name, pos, end, m->name, rc ? '-' : '+');
+      }
+      ivls[n_ivls++] = (ivl_t){pos, end};
+      placed = 1;
     }
   }
+  free(ivls);
 }
 
 /* ---- Usage ---- */
