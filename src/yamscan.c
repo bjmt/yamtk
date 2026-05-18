@@ -2779,13 +2779,59 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
   }
 }
 
+/* Per-thread output buffer: each worker formats hit lines into its own buffer
+   and flushes (under mutex) when nearly full. Reduces FILE-lock contention
+   in dense multi-threaded scans. */
+#define OUT_BUF_CAP        ((uint64_t) 65536)
+#define OUT_LINE_RESERVE   ((uint64_t) 1024)
+
+static char           **out_bufs       = NULL;  /* [nthreads][OUT_BUF_CAP] */
+static uint64_t        *out_buf_lens   = NULL;  /* [nthreads] current fill */
+static pthread_mutex_t  out_lock       = PTHREAD_MUTEX_INITIALIZER;
+
+static int out_bufs_init(int n) {
+  out_bufs     = calloc((size_t) n, sizeof(*out_bufs));
+  out_buf_lens = calloc((size_t) n, sizeof(*out_buf_lens));
+  if (!out_bufs || !out_buf_lens) return 1;
+  for (int i = 0; i < n; i++) {
+    out_bufs[i] = malloc(OUT_BUF_CAP);
+    if (!out_bufs[i]) return 1;
+  }
+  return 0;
+}
+
+static void out_buf_flush(uint64_t thread_i) {
+  if (out_buf_lens[thread_i] == 0) return;
+  pthread_mutex_lock(&out_lock);
+  fwrite(out_bufs[thread_i], 1, out_buf_lens[thread_i], files.o);
+  pthread_mutex_unlock(&out_lock);
+  out_buf_lens[thread_i] = 0;
+}
+
+static void out_bufs_flush_all(int n) {
+  for (int i = 0; i < n; i++) out_buf_flush((uint64_t) i);
+}
+
+static void out_bufs_free(int n) {
+  if (out_bufs) for (int i = 0; i < n; i++) free(out_bufs[i]);
+  free(out_bufs);     out_bufs     = NULL;
+  free(out_buf_lens); out_buf_lens = NULL;
+}
+
 #define PRINT_RES_BED(BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, \
   BED_RANGE1_STRAND, BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, \
   PVALUE8, SCORE9, SCORE_PCT10, MATCH11_SIZE, MATCH11) \
-    fprintf(files.o, "%s:%" PRIu64 "-%" PRIu64 "(%c)\t%s\t%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
-      BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, BED_RANGE1_STRAND, \
-      BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, PVALUE8, SCORE9, \
-      SCORE_PCT10, MATCH11_SIZE, MATCH11)
+    do { \
+      const uint64_t _ti = motif->thread; \
+      if (out_buf_lens[_ti] + OUT_LINE_RESERVE > OUT_BUF_CAP) out_buf_flush(_ti); \
+      int _n = snprintf(out_bufs[_ti] + out_buf_lens[_ti], \
+        OUT_BUF_CAP - out_buf_lens[_ti], \
+        "%s:%" PRIu64 "-%" PRIu64 "(%c)\t%s\t%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
+        BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, BED_RANGE1_STRAND, \
+        BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, PVALUE8, SCORE9, \
+        SCORE_PCT10, MATCH11_SIZE, MATCH11); \
+      if (_n > 0) out_buf_lens[_ti] += (uint64_t) _n; \
+    } while (0)
 
 static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64_t bed_i) {
   const unsigned char *char2Xindex = args.mask ? char2maskindex : char2index;
@@ -2837,9 +2883,16 @@ static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const
 
 #define PRINT_RES(SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, \
   SCORE_PCT8, MATCH9_SIZE, MATCH9) \
-    fprintf(files.o, "%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
-      SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, SCORE_PCT8, \
-      MATCH9_SIZE, MATCH9)
+    do { \
+      const uint64_t _ti = motif->thread; \
+      if (out_buf_lens[_ti] + OUT_LINE_RESERVE > OUT_BUF_CAP) out_buf_flush(_ti); \
+      int _n = snprintf(out_bufs[_ti] + out_buf_lens[_ti], \
+        OUT_BUF_CAP - out_buf_lens[_ti], \
+        "%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
+        SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, SCORE_PCT8, \
+        MATCH9_SIZE, MATCH9); \
+      if (_n > 0) out_buf_lens[_ti] += (uint64_t) _n; \
+    } while (0)
 
 static void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_loc) {
   const unsigned char *char2Xindex = args.mask ? char2maskindex : char2index;
@@ -3362,6 +3415,7 @@ int main_scan(int argc, char **argv) {
     if (args.v) fprintf(stderr, "Scanning ...\n");
     time_t time1 = time(NULL);
     if (alloc_cdf()) badexit("");
+    if (out_bufs_init(args.nthreads)) badexit("Error: Failed to alloc output buffers.");
     if (args.low_mem) {
       if (args.progress) print_pb(0.0);
       for (uint64_t i = 0; i < motif_info.n; i++) {
@@ -3414,6 +3468,8 @@ int main_scan(int argc, char **argv) {
       }
       if (args.progress) fprintf(stderr, "\n");
     }
+    out_bufs_flush_all(args.nthreads);
+    out_bufs_free(args.nthreads);
     free_cdf();
     time_t time2 = time(NULL);
     time_t time3 = difftime(time2, time1);
