@@ -1,5 +1,47 @@
-UNRELEASED
-----------
+CHANGES IN VERSION 2.2.0 (2026-05-18)
+--------------------------------------
+
+* New subcommand: yamtk seed — generate synthetic benchmark FASTA by
+  inserting motif samples into input sequences. Two placement modes:
+  -f <lambda> draws Poisson(lambda * seqlen) insertions per sequence at
+  uniform random positions; -x <bed> inserts one motif per BED row
+  (col-4 = motif name, col-6 = strand; width-mismatched ranges are
+  centered on the BED midpoint with a warning). For each insertion,
+  bases are sampled column-by-column from the motif's pseudocount-
+  adjusted PPM, so a column with [A=0.8, C=0.1, G=0.05, T=0.05]
+  yields 'A' 80% of the time. Sequence length is preserved (overwrite
+  in place, never extend). -O <bed> writes a ground-truth BED of every
+  committed insertion (useful for benchmarking scanners against known
+  truth). -M sets a minimum spacing (bp) between random insertions
+  with retry-on-collision up to 100 attempts; -R disables reverse-
+  strand sampling; -s seeds the xoroshiro128++ PRNG. -1 <CONSENSUS>
+  uses a single IUPAC consensus string (e.g. CACGTG, NNRWS) as the
+  motif, with ambiguity letters expanding to uniform probabilities
+  over their constituent bases; mutually exclusive with -m.
+  -X seqname:start-end[:strand] is a single-range shortcut that skips
+  the BED file entirely (most useful with -1); requires exactly one
+  motif loaded.
+
+* New subcommand: yamtk seq — common FASTA manipulation utilities
+  behind a single -a <action> selector. Supported actions:
+    stats    Per-sequence TSV (seq_num, seq_name, size, gc_pct,
+             n_count); byte-identical to 'yamtk scan -s'.
+    rc       Reverse-complement each sequence. IUPAC-aware (R<->Y,
+             K<->M, B<->V, D<->H, W/S/N self-complement); case
+             preserved.
+    rna      Convert T -> U (case preserved).
+    dna      Convert U -> T (case preserved).
+    dup      -n N emits each input sequence N times with names
+             suffixed '-1' through '-N'.
+    subset   -x bed extracts BED-defined substrings as new FASTA
+             records. Col-4 is the output name (fallback
+             seq:start-end); col-6 '-' yields the reverse complement
+             of the slice.
+    mask     -x bed soft-masks BED regions in place (lowercase);
+             -N switches to hard mask (replace with 'N'). Strand
+             ignored.
+  All actions stream one sequence at a time. -r preserves the FASTA
+  comment after the name (useful for rc round-tripping).
 
 * Cross-subcommand flag harmonization. Same letter for the same concept
   across scan/enr/me/ref/cmp wherever possible:

@@ -46,7 +46,7 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa[.gz]
 
  -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO). 1-50 bases wide.
@@ -87,7 +87,7 @@ coordinates are 1-based.
 Example output:
 
 ```
-##yamscan v2.1.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.2.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -145,7 +145,7 @@ speed-ups to the runtime proportional to the fraction of the input sequences
 being scanned. Example output:
 
 ```
-##yamscan v2.1.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
+##yamscan v2.2.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa -x test/dna.bed ]
 ##MotifCount=1 MotifSize=5 BedCount=2 BedSize=73 SeqCount=3 SeqSize=158 GC=45.57% Ns=0
 ##bed_range	bed_name	seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1:1-35(+)	A	1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
@@ -176,7 +176,7 @@ motif		3	28	32	+	3.69903	0.0195		GTCTA
 yamscan (also manually setting the nsites value found in the motif file):
 ```sh
 $ yamtk scan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
-##yamscan v2.1.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+##yamscan v2.2.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
@@ -267,7 +267,7 @@ memory at a time.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk dedup [options] -i [ results.txt[.gz] | ranges.bed[.gz] ]
 
  -i <str>   yamscan TSV output or a BED file ('-' = stdin; >=6 columns:
@@ -293,7 +293,7 @@ Let us consider the following basic scenario:
 
 ```sh
 $ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6
-##yamscan v2.1.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.2.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
@@ -306,7 +306,7 @@ a much worse score. yamdedup will recognize this and simply remove only that hit
 
 ```sh
 $ yamtk scan -t 0.2 -m test/motif.jaspar -s test/dna.fa | head -n6 | yamtk dedup -i-
-##yamscan v2.1.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
+##yamscan v2.2.0 [ -t 0.2 -m test/motif.jaspar -s test/dna.fa ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	3	7	+	1-motifA	0.060546875	1.459	22.0	GCTGA
@@ -350,7 +350,7 @@ Benjamini-Hochberg FDR-corrected q-values.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt
 
  -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).
@@ -404,7 +404,7 @@ Tab-separated with three comment header lines followed by one row per motif,
 sorted ascending by q-value:
 
 ```
-##yamenr v2.1.0 [ ... ]
+##yamenr v2.2.0 [ ... ]
 ##MotifCount=N PosSeqs=N NegSeqs=N NegSource=... TestMode=seqs Effect=seq_fold
 ##motif  motif_id  pos_n  pos_seq_hits  pos_site_hits  neg_n  neg_seq_hits  neg_site_hits  effect  log2_effect  pvalue  qvalue
 ```
@@ -422,7 +422,7 @@ hits, and iterates. Outputs a TSV table and a MEME probability-matrix file.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk me [options] -i positives.fa[.gz]
 
  -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).
@@ -480,7 +480,7 @@ Output is a MEME motif file containing the refined PWM(s).
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk ref [options] [ -m motifs.txt | -1 CONSENSUS ] -i positives.fa[.gz]
 
  -m <str>   Seed motif file (MEME/JASPAR/HOMER/HOCOMOCO).
@@ -529,7 +529,7 @@ q-values; one row per query-target pair passing the q-value filter.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk cmp [options] -m queries.meme -t targets.meme
 
  -m <str>   Query motif file (MEME/JASPAR/HOMER/HOCOMOCO).
@@ -579,7 +579,7 @@ in place, never extend). Two placement modes are supported.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
 
  -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).
@@ -684,7 +684,7 @@ subcommand with an `-a <action>` selector. The supported actions are:
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk seq -a <action> [options] -i seqs.fa[.gz]
 
  -i <str>   Input FASTA/FASTQ ('-' = stdin).
@@ -725,7 +725,7 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.1.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk shuf [options] -i sequences.fa[.gz]
 
  -i <str>   Input FASTA/FASTQ ('-' = stdin). Non-ACGTU chars become N
