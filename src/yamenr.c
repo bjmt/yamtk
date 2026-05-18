@@ -1944,7 +1944,7 @@ int main_enr(int argc, char **argv) {
     kseq_destroy(kseq_pos);
     if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+score positives");
 
-    /* Negatives: stream + score (-n only for now; shuffle wired in step 5) */
+    /* Negatives: stream + score */
     if (has_neg) {
       if (args.v) fprintf(stderr, "Streaming negatives ...\n");
       t0 = time(NULL);
@@ -1954,7 +1954,98 @@ int main_enr(int argc, char **argv) {
       if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+score negatives");
       snprintf(neg_source_str, sizeof(neg_source_str), "%s", "fasta");
     } else {
-      badexit("Error: -l shuffled-negatives not yet implemented (use -n).");
+      /* Shuffled negatives: re-open positives, shuffle each seq in place into
+         a reusable scratch buffer, score the shuffled bases. */
+      if (!args.pos_path) badexit("Error: -l with shuffled negatives requires a file -i (no stdin).");
+      uint64_t seed = args.use_seed ? args.seed : (uint64_t) time(NULL);
+      sxrand_r(&xrng, seed);
+      if (args.v) {
+        fprintf(stderr, "Streaming + shuffling negatives (seed=%" PRIu64 ", k=%d) ...\n",
+          seed, args.shuffle_k);
+      }
+      gzFile fi2 = gzopen(args.pos_path, "r");
+      if (!fi2) {
+        fprintf(stderr, "Error: Failed to re-open positives file \"%s\" [%s]\n",
+          args.pos_path, strerror(errno));
+        badexit("");
+      }
+      kseq_t *kseq_neg = kseq_init(fi2);
+
+      /* Euler-only scratch (k > 1) */
+      const uint64_t ksz = (uint64_t) args.shuffle_k;
+      uint64_t      *kmer_tab   = NULL;
+      unsigned char *inv_vtx    = NULL;
+      uint64_t      *euler_path = NULL;
+      uint64_t      *next_idx   = NULL;
+      if (ksz > 1) {
+        kmer_tab   = calloc(pow5[ksz],   sizeof(uint64_t));
+        inv_vtx    = calloc(pow5[ksz-1], sizeof(unsigned char));
+        euler_path = calloc(pow5[ksz-1], sizeof(uint64_t));
+        next_idx   = calloc(pow5[ksz-1], sizeof(uint64_t));
+        if (!kmer_tab||!inv_vtx||!euler_path||!next_idx)
+          badexit("Error: Failed to allocate Euler shuffle scratch.");
+      }
+
+      /* Growable per-seq scratch */
+      uint64_t       scratch_cap = 64 * 1024;
+      unsigned char *scratch     = malloc(scratch_cap);
+      if (!scratch) badexit("Error: Failed to allocate streaming shuffle scratch.");
+
+      t0 = time(NULL);
+      ERASE_ARRAY(char_counts, 256);
+      neg_set.n = 0;
+      neg_set.total_bases = 0;
+      neg_set.unknowns = 0;
+      neg_set.gc_pct = 0.0;
+      int ret_neg;
+      while ((ret_neg = kseq_read(kseq_neg)) >= 0) {
+        const uint64_t L = kseq_neg->seq.l;
+        if (L == 0) continue;
+        if (L > scratch_cap) {
+          uint64_t new_cap = scratch_cap;
+          while (new_cap < L) new_cap *= 2;
+          unsigned char *tmp = realloc(scratch, new_cap);
+          if (!tmp) badexit("Error: Failed to grow streaming shuffle scratch.");
+          scratch = tmp;
+          scratch_cap = new_cap;
+        }
+        memcpy(scratch, kseq_neg->seq.s, L);
+        if (ksz == 1) {
+          if (L > 1) shuffle_fisher_yates(scratch, L);
+        } else if (L >= ksz) {
+          memset(kmer_tab,   0, sizeof(uint64_t)      * pow5[ksz]);
+          memset(inv_vtx,    0, sizeof(unsigned char) * pow5[ksz-1]);
+          memset(euler_path, 0, sizeof(uint64_t)      * pow5[ksz-1]);
+          memset(next_idx,   0, sizeof(uint64_t)      * pow5[ksz-1]);
+          count_kmers(scratch, L, kmer_tab, ksz);
+          shuffle_euler(scratch, L, ksz, kmer_tab, inv_vtx, euler_path, next_idx);
+        }
+        neg_set.n++;
+        for (uint64_t j = 0; j < L; j++) char_counts[scratch[j]]++;
+        score_one_seq_all_motifs(scratch, L, /*is_pos=*/0);
+      }
+      if (ret_neg == -2) badexit("Error: Failed to parse FASTQ qualities (shuffled negatives).");
+      if (ret_neg < -2)  badexit("Error: Failed to read positives for shuffling.");
+
+      kseq_destroy(kseq_neg);
+      gzclose(fi2);
+      free(scratch);
+      free(kmer_tab); free(inv_vtx); free(euler_path); free(next_idx);
+
+      uint64_t total = 0;
+      for (uint64_t c = 0; c < 256; c++) total += char_counts[c];
+      neg_set.total_bases = total;
+      if (total) {
+        neg_set.unknowns = total - standard_base_count();
+        neg_set.gc_pct   = calc_gc() * 100.0;
+      }
+      if (args.v)
+        fprintf(stderr, "Negative (shuffled) set: %'" PRIu64 " seq(s), %'" PRIu64 " bp\n",
+          neg_set.n, neg_set.total_bases);
+      if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+shuffle+score negatives");
+      snprintf(neg_source_str, sizeof(neg_source_str),
+        "shuffle k=%d seed=%" PRIu64,
+        args.shuffle_k, args.use_seed ? args.seed : (uint64_t) 0);
     }
     free_cdf();
     /* Fall through to the existing stats / output block. */
