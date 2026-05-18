@@ -1999,9 +1999,11 @@ static uint64_t peek_through_seqs(kseq_t *kseq) {
     }
     seq_sizes[seq_info.n - 1] = kseq->seq.l;
     max_kseq_mem = MAX(max_kseq_mem, kseq->seq.m);
-    /* TODO: Don't allocate name.l+comment.l if trim_names */
-    seq_names[seq_info.n - 1] = malloc(sizeof(char) * kseq->name.l + sizeof(char) * kseq->comment.l + 2);
-    name_sizes += kseq->name.l + kseq->comment.l + 2;
+    const size_t name_alloc = (args.trim_names || !kseq->comment.l)
+      ? (kseq->name.l + 1)
+      : (kseq->name.l + kseq->comment.l + 2);
+    seq_names[seq_info.n - 1] = malloc(name_alloc);
+    name_sizes += name_alloc;
     if (seq_names[seq_info.n - 1] == NULL) {
       kseq_destroy(kseq);
       badexit("Error: Failed to allocate memory for sequence name.");
@@ -2107,8 +2109,11 @@ static void load_seqs(kseq_t *kseq) {
     kseq->seq.s = NULL;
     total_kseq_mem += kseq->seq.m;
     seq_sizes[seq_info.n - 1] = kseq->seq.l;
-    seq_names[seq_info.n - 1] = malloc(sizeof(char) * kseq->name.l + sizeof(char) * kseq->comment.l + 2);
-    name_sizes += kseq->name.l + kseq->comment.l + 2;
+    const size_t name_alloc = (args.trim_names || !kseq->comment.l)
+      ? (kseq->name.l + 1)
+      : (kseq->name.l + kseq->comment.l + 2);
+    seq_names[seq_info.n - 1] = malloc(name_alloc);
+    name_sizes += name_alloc;
     if (seq_names[seq_info.n - 1] == NULL) {
       kseq_destroy(kseq);
       badexit("Error: Failed to allocate memory for sequence name.");
