@@ -1905,10 +1905,32 @@ static void score_range_scan(const motif_t *motif, const unsigned char *seq,
 }
 
 /* Count hits and track max PWM score for one (motif, full sequence) pair.
-   Wrapper around score_range_scan using args.scan_rc as the strand mask. */
+   Kept as a separate, specialised function (not a wrapper around
+   score_range_scan) because this is the hot path when -x is not in use,
+   and indirection + per-call strand-mask branching measurably regress
+   the non-BED case otherwise. */
 static void score_seq_scan(const motif_t *motif, const unsigned char *seq,
                             const uint64_t seq_size, uint64_t *out_hits, int *out_max) {
-  score_range_scan(motif, seq, 0, seq_size, 1, args.scan_rc, out_hits, out_max);
+  if (seq_size < motif->size) return;
+  const int mot_size = (int)motif->size;
+  const int threshold = motif->threshold - 1;
+  const unsigned char *tbl = args.mask ? char2maskindex : char2index;
+  int score, score_rc;
+  if (args.scan_rc) {
+    for (uint64_t i=0; i<=seq_size-mot_size; i++) {
+      score_subseq_rc(motif, seq, i, &score, &score_rc, tbl);
+      if (UNLIKELY(score    > threshold)) (*out_hits)++;
+      if (UNLIKELY(score_rc > threshold)) (*out_hits)++;
+      if (score    > *out_max) *out_max = score;
+      if (score_rc > *out_max) *out_max = score_rc;
+    }
+  } else {
+    for (uint64_t i=0; i<=seq_size-mot_size; i++) {
+      score_subseq(motif, seq, i, &score, tbl);
+      if (UNLIKELY(score > threshold)) (*out_hits)++;
+      if (score > *out_max) *out_max = score;
+    }
+  }
 }
 
 /* Decide do_fwd / do_rc for a BED region given its strand char and -R setting. */
