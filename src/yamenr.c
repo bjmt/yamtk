@@ -1078,6 +1078,11 @@ static void load_motifs(void) {
   else if (empty) fprintf(stderr, "Warning: %'" PRIu64 " empty motif(s).\n", empty);
 }
 
+/* ---- Low-memory streaming state ---- */
+
+static uint64_t *stream_pos_positions = NULL;
+static uint64_t *stream_neg_positions = NULL;
+
 /* ---- Sequence loading ---- */
 
 static inline uint64_t standard_base_count(void) {
@@ -1530,6 +1535,86 @@ static void score_seq_scan(const motif_t *motif, const unsigned char *seq,
   }
 }
 
+/* ---- Low-memory streaming scoring (single-threaded) ---- */
+
+/* Set up CDF + threshold for every motif on thread 0. Called once before
+   any streaming scoring. */
+static void setup_motifs_low_mem(void) {
+  for (uint64_t mi = 0; mi < motif_info.n; mi++) {
+    motifs[mi]->thread = 0;
+    fill_cdf(motifs[mi]);
+    set_threshold(motifs[mi]);
+  }
+}
+
+/* Score one sequence against every loaded motif, updating per-motif counters.
+   `is_pos` selects which accumulators get updated. */
+static void score_one_seq_all_motifs(const unsigned char *seq, const uint64_t L,
+                                     const int is_pos) {
+  const int strands = args.scan_rc ? 2 : 1;
+  uint64_t *seq_hits  = is_pos ? seq_hits_pos  : seq_hits_neg;
+  uint64_t *site_hits = is_pos ? site_hits_pos : site_hits_neg;
+  uint64_t *positions = is_pos ? stream_pos_positions : stream_neg_positions;
+  for (uint64_t mi = 0; mi < motif_info.n; mi++) {
+    motif_t *m = motifs[mi];
+    uint64_t hits = 0; int mx = INT_MIN;
+    score_seq_scan(m, seq, L, &hits, &mx);
+    site_hits[mi] += hits;
+    if (hits > 0) seq_hits[mi]++;
+    if (positions && L >= m->size)
+      positions[mi] += (L - m->size + 1) * (uint64_t) strands;
+  }
+}
+
+/* Walk pos / neg FASTA via kseq, calling score_one_seq_all_motifs per record
+   and accumulating set-level GC / total_bases / unknowns. */
+static void stream_score_set(kseq_t *kseq, seq_set_t *set, const int is_pos,
+                             const char *label) {
+  ERASE_ARRAY(char_counts, 256);
+  set->n = 0;
+  set->total_bases = 0;
+  set->unknowns = 0;
+  set->gc_pct = 0.0;
+  int ret;
+  while ((ret = kseq_read(kseq)) >= 0) {
+    if (kseq->seq.l == 0) continue;
+    set->n++;
+    const unsigned char *seq = (const unsigned char *) kseq->seq.s;
+    const uint64_t L = kseq->seq.l;
+    for (uint64_t j = 0; j < L; j++) char_counts[seq[j]]++;
+    score_one_seq_all_motifs(seq, L, is_pos);
+    if (args.progress && (set->n % 100) == 0) {
+      fprintf(stderr, "\r%s seqs streamed: %" PRIu64, label, set->n);
+      fflush(stderr);
+    }
+  }
+  if (args.progress) fprintf(stderr, "\r%s seqs streamed: %" PRIu64 "\n", label, set->n);
+  if (ret == -2) badexit("Error: Failed to parse FASTQ qualities.");
+  if (ret < -2)  badexit("Error: Failed to read input.");
+  if (!set->n)   { fprintf(stderr, "Error: No sequences read from %s input.\n", label); badexit(""); }
+
+  uint64_t total = 0;
+  for (uint64_t c = 0; c < 256; c++) total += char_counts[c];
+  if (!total) { fprintf(stderr, "Error: All %s sequences are empty.\n", label); badexit(""); }
+  set->total_bases = total;
+  set->unknowns = total - standard_base_count();
+  set->gc_pct = calc_gc() * 100.0;
+  if (set->unknowns == total) {
+    fprintf(stderr, "Error: No standard DNA/RNA bases found in %s set.\n", label);
+    badexit("");
+  }
+  double unk_pct = 100.0 * (double) set->unknowns / (double) total;
+  if (unk_pct >= 90.0)
+    fprintf(stderr, "!!! Warning: Non-standard base count extremely high in %s set (%.2f%%).\n",
+      label, unk_pct);
+  else if (unk_pct >= 50.0 && args.v)
+    fprintf(stderr, "Warning: Non-standard base count very high in %s set (%.2f%%).\n",
+      label, unk_pct);
+  if (args.v)
+    fprintf(stderr, "%s set: %'" PRIu64 " seq(s), %'" PRIu64 " bp, GC=%.2f%%\n",
+      label, set->n, total, set->gc_pct);
+}
+
 /* ---- Thread worker ---- */
 
 static void *enr_sub_process(void *arg) {
@@ -1836,7 +1921,44 @@ int main_enr(int argc, char **argv) {
   if (alloc_cdf()) badexit("Error: alloc_cdf failed.");
 
   if (args.low_mem) {
-    badexit("Error: -l is not yet implemented (wiring in progress).");
+    /* Allocate per-motif accumulators */
+    seq_hits_pos  = calloc(motif_info.n, sizeof(uint64_t));
+    seq_hits_neg  = calloc(motif_info.n, sizeof(uint64_t));
+    site_hits_pos = calloc(motif_info.n, sizeof(uint64_t));
+    site_hits_neg = calloc(motif_info.n, sizeof(uint64_t));
+    if (!seq_hits_pos||!seq_hits_neg||!site_hits_pos||!site_hits_neg)
+      badexit("Error: Failed to alloc result arrays.");
+    if (args.test_mode == TEST_SITES) {
+      stream_pos_positions = calloc(motif_info.n, sizeof(uint64_t));
+      stream_neg_positions = calloc(motif_info.n, sizeof(uint64_t));
+      if (!stream_pos_positions||!stream_neg_positions)
+        badexit("Error: Failed to alloc streaming position counts.");
+    }
+    setup_motifs_low_mem();
+
+    /* Positives: stream + score */
+    if (args.v) fprintf(stderr, "Streaming positives ...\n");
+    t0 = time(NULL);
+    kseq_t *kseq_pos = kseq_init(files.i);
+    stream_score_set(kseq_pos, &pos_set, /*is_pos=*/1, "Positive");
+    kseq_destroy(kseq_pos);
+    if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+score positives");
+
+    /* Negatives: stream + score (-n only for now; shuffle wired in step 5) */
+    if (has_neg) {
+      if (args.v) fprintf(stderr, "Streaming negatives ...\n");
+      t0 = time(NULL);
+      kseq_t *kseq_neg = kseq_init(files.n);
+      stream_score_set(kseq_neg, &neg_set, /*is_pos=*/0, "Negative");
+      kseq_destroy(kseq_neg);
+      if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+score negatives");
+      snprintf(neg_source_str, sizeof(neg_source_str), "%s", "fasta");
+    } else {
+      badexit("Error: -l shuffled-negatives not yet implemented (use -n).");
+    }
+    free_cdf();
+    /* Fall through to the existing stats / output block. */
+    goto compute_stats;
   }
 
   /* Load positives */
@@ -1941,25 +2063,33 @@ int main_enr(int argc, char **argv) {
     print_time((uint64_t)difftime(time(NULL),t0), "scan");
   }
 
+compute_stats:
   /* Compute statistics */
   if (args.v) fprintf(stderr, "Computing statistics ...\n");
 
   /* Precompute per-motif total scoring positions for -T sites */
   uint64_t *pos_positions = NULL, *neg_positions = NULL;
+  int positions_borrowed = 0;
   if (args.test_mode == TEST_SITES) {
-    pos_positions = malloc(sizeof(uint64_t)*motif_info.n);
-    neg_positions = malloc(sizeof(uint64_t)*motif_info.n);
-    if (!pos_positions||!neg_positions) badexit("Error: Failed to alloc positions.");
-    int strands = args.scan_rc ? 2 : 1;
-    for (uint64_t mi=0; mi<motif_info.n; mi++) {
-      uint64_t sz = motifs[mi]->size;
-      pos_positions[mi]=0; neg_positions[mi]=0;
-      for (uint64_t si=0; si<pos_set.n; si++)
-        if (pos_set.sizes[si] >= sz)
-          pos_positions[mi] += (pos_set.sizes[si]-sz+1) * strands;
-      for (uint64_t si=0; si<neg_set.n; si++)
-        if (neg_set.sizes[si] >= sz)
-          neg_positions[mi] += (neg_set.sizes[si]-sz+1) * strands;
+    if (args.low_mem) {
+      pos_positions = stream_pos_positions;
+      neg_positions = stream_neg_positions;
+      positions_borrowed = 1;
+    } else {
+      pos_positions = malloc(sizeof(uint64_t)*motif_info.n);
+      neg_positions = malloc(sizeof(uint64_t)*motif_info.n);
+      if (!pos_positions||!neg_positions) badexit("Error: Failed to alloc positions.");
+      int strands = args.scan_rc ? 2 : 1;
+      for (uint64_t mi=0; mi<motif_info.n; mi++) {
+        uint64_t sz = motifs[mi]->size;
+        pos_positions[mi]=0; neg_positions[mi]=0;
+        for (uint64_t si=0; si<pos_set.n; si++)
+          if (pos_set.sizes[si] >= sz)
+            pos_positions[mi] += (pos_set.sizes[si]-sz+1) * strands;
+        for (uint64_t si=0; si<neg_set.n; si++)
+          if (neg_set.sizes[si] >= sz)
+            neg_positions[mi] += (neg_set.sizes[si]-sz+1) * strands;
+      }
     }
   }
 
@@ -2012,7 +2142,9 @@ int main_enr(int argc, char **argv) {
 
   bh_qvalues(pvalues, motif_info.n, qvalues);
 
-  free(pos_positions); free(neg_positions);
+  if (!positions_borrowed) { free(pos_positions); free(neg_positions); }
+  free(stream_pos_positions); stream_pos_positions = NULL;
+  free(stream_neg_positions); stream_neg_positions = NULL;
 
   /* Sort results */
   result_t *results = malloc(sizeof(result_t)*motif_info.n);
