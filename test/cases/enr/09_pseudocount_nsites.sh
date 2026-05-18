@@ -21,7 +21,7 @@ enr_hits=$("$YAMTK" enr -q 1.0 \
     -i "$TESTDIR/fixtures/enr_pos.fa" \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
-    -t 5e-4 -p 10 2>/dev/null | awk '$1=="ebox"{print $5}')
+    -t 5e-4 -p 10 2>/dev/null | awk '$1=="ebox"{print $6}')
 
 scan_hits=$("$YAMTK" scan \
     -s "$TESTDIR/fixtures/enr_pos.fa" \

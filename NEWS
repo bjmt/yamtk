@@ -1,3 +1,35 @@
+CHANGES IN VERSION UNRELEASED
+-----------------------------
+
+* yamtk enr: new 'consensus' column in TSV output (position 3, between
+  motif_id and pos_n), giving the per-motif IUPAC consensus using the
+  75% cumulative-probability rule. Computed at ingest time for all four
+  motif formats (MEME, HOMER, JASPAR, HOCOMOCO).
+
+* yamtk me: motif names in the output TSV and MEME files are now always
+  sequential (motif_1, motif_2, ...). Previously, dedup and the BH
+  q-value filter could leave gaps (e.g. motif_1, motif_4, motif_10) since
+  names were assigned before filtering. Survivors are renamed after the
+  final filter.
+
+* yamtk me: progress bar (-g) no longer interleaves with -v / -w / -j
+  per-thread chatter. Per-width / per-seed / per-refinement log lines
+  are suppressed while -g is active (yamref's pattern); outer summary
+  lines still print.
+
+* yamtk me: DEFAULT_HIT_PVAL changed from 1e-3 to 1e-4. Empirically gives
+  results closer to STREME on standard benchmarks.
+
+* yamtk ref: output MEME no longer emits two altnames when the input
+  motif had an altname (e.g. "MOTIF MA0004.1 Arnt" no longer produced
+  "MOTIF MA0004.1 Arnt CACGTG"). The original altname is dropped and the
+  refined consensus is emitted as the sole altname.
+
+* yamtk ref: -v refinement log prints the current IUPAC consensus at each
+  step (per refine pass, per auto-extend step, per extend-only pass, and
+  in the final summary), so the consensus can be watched evolving.
+
+
 CHANGES IN VERSION 2.2.0 (2026-05-18)
 --------------------------------------
 

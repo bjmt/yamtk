@@ -23,9 +23,10 @@ sites_out=$("$YAMTK" enr -q 1.0 \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
     -t 5e-4 -T sites 2>/dev/null | grep -v '^#')
 
-# Columns 3-8 (counts) should be identical between modes
-seqs_counts=$(echo "$seqs_out"  | awk '{print $3,$4,$5,$6,$7,$8}')
-sites_counts=$(echo "$sites_out" | awk '{print $3,$4,$5,$6,$7,$8}')
+# Count columns (pos_n..neg_site_hits, indices 4-9 after consensus at 3)
+# should be identical between modes.
+seqs_counts=$(echo "$seqs_out"  | awk '{print $4,$5,$6,$7,$8,$9}')
+sites_counts=$(echo "$sites_out" | awk '{print $4,$5,$6,$7,$8,$9}')
 if [ "$seqs_counts" != "$sites_counts" ]; then
     echo "Count columns differ between seqs and sites modes:" >&2
     diff <(echo "$seqs_counts") <(echo "$sites_counts") >&2 || true

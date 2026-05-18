@@ -80,7 +80,7 @@ KHASH_SET_INIT_INT64(seed_set_h)
 #define DEFAULT_PSEUDOCOUNT                    1
 #define DEFAULT_SHUFFLE_K                      2
 #define DEFAULT_QVALUE_FILTER                1e-3
-#define DEFAULT_HIT_PVAL                     1e-3
+#define DEFAULT_HIT_PVAL                     1e-4
 #define DEFAULT_STOP_PVAL                    1e-3
 #define DEFAULT_MIN_W                          6
 #define DEFAULT_MAX_W                         15
@@ -627,7 +627,7 @@ static void fill_cdf(thread_ctx_t *ctx, motif_t *motif, const char *phase) {
   }
   for (uint64_t i = motif->cdf_size-2; i < (uint64_t)-1; i--)
     motif->cdf[i] += motif->cdf[i+1];
-  if (args.w) {
+  if (args.w && !args.progress) {
     char pre[16]; w_prefix(ctx, pre, sizeof(pre));
     fprintf(stderr, "        %sCDF [%s | %s] (n=%'" PRIu64 ") done.\n",
       pre, motif->name, phase, motif->cdf_size);
@@ -1238,7 +1238,7 @@ static void convert_ppm_to_motif(thread_ctx_t *ctx, motif_t *motif, int ppm[][4]
 
   if (motif->threshold == INT_MAX) {
     /* Fallback: relax to top 1% */
-    if (args.w) {
+    if (args.w && !args.progress) {
       char pre[16]; w_prefix(ctx, pre, sizeof(pre));
       fprintf(stderr, "        %s  (threshold@p=%g unreachable; retrying at p=0.01)\n",
               pre, args.hit_pval);
@@ -1300,13 +1300,13 @@ static int refine_motif(thread_ctx_t *ctx, motif_t *motif, const uint64_t w,
     }
   }
 
-  if (args.w) {
+  if (args.w && !args.progress) {
     char pre[16]; w_prefix(ctx, pre, sizeof(pre));
     fprintf(stderr, "        %sRefinement %d/%d: %d hits\n",
             pre, pass_idx, REFINE_PASSES, nsites);
   }
   if (nsites < MIN_REFINE_HITS) {
-    if (args.w) {
+    if (args.w && !args.progress) {
       char pre[16]; w_prefix(ctx, pre, sizeof(pre));
       fprintf(stderr, "        %s  (below MIN_REFINE_HITS=%d; bailing)\n",
               pre, MIN_REFINE_HITS);
@@ -1456,7 +1456,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
   for (uint64_t si = 0; si < pos_set.n; si++)
     memcpy(ctx->seqs[si], pos_set.seqs[si], pos_set.sizes[si]);
 
-  if (args.v) {
+  if (args.v && !args.progress) {
     char pre[16]; w_prefix(ctx, pre, sizeof(pre));
     fprintf(stderr, "  %sWidth %'" PRIu64 " ...\n", pre, w);
   }
@@ -1466,7 +1466,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
     seed_t *seeds = NULL; uint64_t n_seeds = 0;
     if (enumerate_seeds(ctx, w, &seeds, &n_seeds)) badexit("Error: enumerate_seeds failed.");
     if (n_seeds == 0) { free(seeds); break; }
-    if (args.w) {
+    if (args.w && !args.progress) {
       char pre[16]; w_prefix(ctx, pre, sizeof(pre));
       fprintf(stderr, "    %sIteration %d/%d (w=%" PRIu64 "): trying %"
               PRIu64 " seed(s)\n", pre, ki + 1, args.n_motifs, w, n_seeds);
@@ -1475,7 +1475,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
     int accepted = 0;
     for (uint64_t si = 0; si < n_seeds && !accepted; si++) {
       char kbuf[64]; kmer_to_string(seeds[si].kmer, w, kbuf);
-      if (args.w) {
+      if (args.w && !args.progress) {
         char pre[16]; w_prefix(ctx, pre, sizeof(pre));
         fprintf(stderr, "      %sSeed %" PRIu64 "/%" PRIu64
                 " kmer=%s fisher_log_p=%.3g\n",
@@ -1484,14 +1484,14 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
       int ppm[50][4]; memset(ppm, 0, sizeof(ppm));
       int nsites = build_ppm_from_seed(ctx, seeds[si].kmer, w, ppm);
       if (nsites < MIN_REFINE_HITS) {
-        if (args.w) {
+        if (args.w && !args.progress) {
           char pre[16]; w_prefix(ctx, pre, sizeof(pre));
           fprintf(stderr, "        %sPPM sites=%d (< MIN_REFINE_HITS=%d); skipping seed\n",
                   pre, nsites, MIN_REFINE_HITS);
         }
         continue;
       }
-      if (args.w) {
+      if (args.w && !args.progress) {
         char pre[16]; w_prefix(ctx, pre, sizeof(pre));
         fprintf(stderr, "        %sInitial PPM sites=%d\n", pre, nsites);
       }
@@ -1501,7 +1501,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
       snprintf(motif.name, MAX_NAME_SIZE, "w%" PRIu64 "_%" PRIu64, w, intra);
       convert_ppm_to_motif(ctx, &motif, ppm, w, nsites, "initial");
       if (motif.threshold == INT_MAX) {
-        if (args.w) {
+        if (args.w && !args.progress) {
           char pre[16]; w_prefix(ctx, pre, sizeof(pre));
           fprintf(stderr, "        %sThreshold unreachable; skipping seed\n", pre);
         }
@@ -1532,7 +1532,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
       double pval = evaluate_motif(ctx, &motif, w, &sp, &sn, &ep, &en, covered);
 
       if (pval > args.stop_pval) {
-        if (args.w) {
+        if (args.w && !args.progress) {
           char pre[16]; w_prefix(ctx, pre, sizeof(pre));
           fprintf(stderr, "        %sRejected: p=%.3g > stop_pval=%.3g\n",
                   pre, pval, args.stop_pval);
@@ -1552,7 +1552,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
       accepted = 1;
       intra++;
 
-      if (args.v) {
+      if (args.v && !args.progress) {
         char pre[16]; w_prefix(ctx, pre, sizeof(pre));
         fprintf(stderr, "    %sAccepted %s  w=%" PRIu64 "  p=%.3g  sites=%" PRIu64 "  seqs_pos=%" PRIu64 "/%" PRIu64 "\n",
           pre, motif.name, w, pval, sp, ep, pos_set.n);
@@ -1560,7 +1560,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
     }
     free(seeds);
     if (!accepted) {
-      if (args.w) {
+      if (args.w && !args.progress) {
         char pre[16]; w_prefix(ctx, pre, sizeof(pre));
         fprintf(stderr, "    %sNo seed accepted; ending iterations for width %" PRIu64 "\n",
                 pre, w);
@@ -2203,6 +2203,16 @@ int main_me(int argc, char **argv) {
     if (args.v) fprintf(stderr,
       "%'" PRIu64 " motif(s) survive q-value filter (-q %.3g).\n",
       n_kept, args.qvalue_filter);
+  }
+
+  /* Renumber survivors so motif names are sequential (motif_1, motif_2, ...)
+     instead of preserving gaps left by dedup / q-value drops. */
+  {
+    uint64_t out_i = 0;
+    for (uint64_t ri = 0; ri < n_results; ri++) {
+      if (results[ri].dropped) continue;
+      snprintf(results[ri].motif.name, MAX_NAME_SIZE, "motif_%" PRIu64, ++out_i);
+    }
   }
 
   /* IC-trim low-information flanking columns before writing output */

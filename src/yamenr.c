@@ -251,6 +251,7 @@ typedef struct motif_t {
   int         cdf_max;
   int         cdf_offset;
   char        name[MAX_NAME_SIZE];
+  char        consensus[MAX_MOTIF_SIZE/5 + 1];
   double     *tmp_pdf;
 } motif_t;
 
@@ -468,6 +469,7 @@ static void init_motif(motif_t *motif) {
   ERASE_ARRAY(motif->name, MAX_NAME_SIZE);
   motif->name[0]='m'; motif->name[1]='o'; motif->name[2]='t';
   motif->name[3]='i'; motif->name[4]='f'; motif->name[5]='\0';
+  for (uint64_t i = 0; i < sizeof(motif->consensus); i++) motif->consensus[i] = '\0';
   motif->size=0; motif->threshold=0; motif->max_score=0;
   motif->min=0; motif->max=0; motif->cdf_size=0; motif->file_line_num=0;
   motif->min_score=0; motif->cdf_max=0; motif->thread=0;
@@ -554,10 +556,46 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
   return 0;
 }
 
+/* IUPAC consensus from a single column's ACGT probability vector.
+   Sort bases by descending probability and emit the smallest IUPAC code
+   whose cumulative probability reaches CONSENSUS_THRESHOLD. */
+#define CONSENSUS_THRESHOLD 0.75
+static char iupac_from_mask(int mask) {
+  switch (mask) {
+    case 0x1: return 'A'; case 0x2: return 'C';
+    case 0x4: return 'G'; case 0x8: return 'T';
+    case 0x3: return 'M'; case 0x5: return 'R';
+    case 0x9: return 'W'; case 0x6: return 'S';
+    case 0xA: return 'Y'; case 0xC: return 'K';
+    case 0x7: return 'V'; case 0xB: return 'H';
+    case 0xD: return 'D'; case 0xE: return 'B';
+    default:  return 'N';
+  }
+}
+static char consensus_char(const double probs[4]) {
+  int order[4] = {0, 1, 2, 3};
+  for (int i = 1; i < 4; i++) {
+    int j = i;
+    while (j > 0 && probs[order[j]] > probs[order[j-1]]) {
+      int t = order[j]; order[j] = order[j-1]; order[j-1] = t;
+      j--;
+    }
+  }
+  double cum = 0.0;
+  int mask = 0;
+  for (int k = 0; k < 4; k++) {
+    cum += probs[order[k]];
+    mask |= 1 << order[k];
+    if (cum >= CONSENSUS_THRESHOLD) break;
+  }
+  return iupac_from_mask(mask);
+}
+
 static int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t pos) {
   double probs[4] = {-1.0,-1.0,-1.0,-1.0};
   if (get_line_probs(motif, line, probs, 4)) return 1;
   if (normalize_probs(probs, motif->name)) return 1;
+  if (pos < sizeof(motif->consensus) - 1) motif->consensus[pos] = consensus_char(probs);
   set_score(motif, 'A', pos, calc_score(probs[0], args.bkg[0]));
   set_score(motif, 'C', pos, calc_score(probs[1], args.bkg[1]));
   set_score(motif, 'G', pos, calc_score(probs[2], args.bkg[2]));
@@ -933,6 +971,15 @@ static void pcm_to_pwm(motif_t *motif) {
       fprintf(stderr,"Error: Column sums differ for motif [%s].",motif->name); badexit("");
     }
   }
+  /* Compute consensus from raw counts before they're overwritten with scores. */
+  for (uint64_t j = 0; j < motif->size && j < sizeof(motif->consensus) - 1; j++) {
+    double probs[4];
+    double col = 0;
+    for (int i = 0; i < 4; i++) col += (double)get_score_i(motif, i, j);
+    if (col <= 0) col = 1;
+    for (int i = 0; i < 4; i++) probs[i] = (double)get_score_i(motif, i, j) / col;
+    motif->consensus[j] = consensus_char(probs);
+  }
   const char lets[4]={'A','C','G','T'};
   for (uint64_t j=0;j<motif->size;j++)
     for (int i=0;i<4;i++)
@@ -977,6 +1024,10 @@ static int add_motif_pcm_column(motif_t *motif, const char *line, const uint64_t
   if (get_line_probs(motif,line,probs,4)) return 1;
   double pcm_sum=probs[0]+probs[1]+probs[2]+probs[3];
   if (pcm_sum<0.99) { fprintf(stderr,"Error: PCM row sums < 1 for [%s].",motif->name); return 1; }
+  if (pos < sizeof(motif->consensus) - 1) {
+    double cprobs[4] = { probs[0]/pcm_sum, probs[1]/pcm_sum, probs[2]/pcm_sum, probs[3]/pcm_sum };
+    motif->consensus[pos] = consensus_char(cprobs);
+  }
   VEC_ADD(probs, args.pseudocount/4.0, 4);
   set_score(motif,'A',pos,calc_score(probs[0]/pcm_sum,args.bkg[0]));
   set_score(motif,'C',pos,calc_score(probs[1]/pcm_sum,args.bkg[1]));
@@ -2263,17 +2314,17 @@ compute_stats:
     " NegSource=%s TestMode=%s Effect=%s\n",
     motif_info.n, pos_set.n, neg_set.n, neg_source_str, test_label, effect_label);
   fprintf(files.o,
-    "##motif\tmotif_id\tpos_n\tpos_seq_hits\tpos_site_hits"
+    "##motif\tmotif_id\tconsensus\tpos_n\tpos_seq_hits\tpos_site_hits"
     "\tneg_n\tneg_seq_hits\tneg_site_hits\teffect\tlog2_effect\tpvalue\tqvalue\n");
 
   for (uint64_t ri=0; ri<motif_info.n; ri++) {
     uint64_t mi = results[ri].motif_i;
     if (results[ri].qvalue > args.qvalue_filter) continue;
     fprintf(files.o,
-      "%s\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64
+      "%s\t%" PRIu64 "\t%s\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64
       "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64
       "\t%.6g\t%.6g\t%.9g\t%.9g\n",
-      motifs[mi]->name, mi+1,
+      motifs[mi]->name, mi+1, motifs[mi]->consensus,
       pos_set.n, seq_hits_pos[mi], site_hits_pos[mi],
       neg_set.n, seq_hits_neg[mi], site_hits_neg[mi],
       results[ri].effect, results[ri].log2_effect,

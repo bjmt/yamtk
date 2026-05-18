@@ -1,3 +1,3 @@
-##motif	motif_id	pos_n	pos_seq_hits	pos_site_hits	neg_n	neg_seq_hits	neg_site_hits	effect	log2_effect	pvalue	qvalue
-ebox	1	50	50	104	50	0	0	1	29.8974	1.2635691e-20	2.5271382e-20
-gcbox	2	50	2	2	50	4	4	0.4556	-0.256899	0.779817287	0.779817287
+##motif	motif_id	consensus	pos_n	pos_seq_hits	pos_site_hits	neg_n	neg_seq_hits	neg_site_hits	effect	log2_effect	pvalue	qvalue
+ebox	1	CACGTG	50	50	104	50	0	0	1	29.8974	1.2635691e-20	2.5271382e-20
+gcbox	2	GGGCGG	50	2	2	50	4	4	0.4556	-0.256899	0.779817287	0.779817287

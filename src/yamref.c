@@ -1572,7 +1572,10 @@ static void write_meme(int argc, char **argv) {
     motif_t *m = motifs[ri];
     if (m->dropped) continue;
     build_consensus(m, cons);
-    fprintf(f, "MOTIF %s %s\n\n", m->name, cons);
+    /* m->name captures identifier AND any altname (space-joined); print only
+       the identifier so the refined consensus serves as the sole altname. */
+    size_t id_len = strcspn(m->name, " \t");
+    fprintf(f, "MOTIF %.*s %s\n\n", (int)id_len, m->name, cons);
     fprintf(f, "letter-probability matrix: alength= 4 w= %" PRIu64 " nsites= %" PRIu64 "\n",
       m->size, m->nsites_actual ? m->nsites_actual : (uint64_t)args.nsites);
     for (uint64_t j = 0; j < m->size; j++) {
@@ -1764,11 +1767,15 @@ int main_ref(int argc, char **argv) {
 
   /* Refine each motif */
   uint64_t n_kept = 0;
+  char cons[MAX_MOTIF_WIDTH + 2];
   if (args.progress) print_pb(0.0);
   for (uint64_t i = 0; i < motif_info.n; i++) {
     motif_t *m = motifs[i];
-    if (args.v && !args.progress)
-      fprintf(stderr, "[%s] width=%" PRIu64 ", refining ...\n", m->name, m->size);
+    if (args.v && !args.progress) {
+      build_consensus(m, cons);
+      fprintf(stderr, "[%s] width=%" PRIu64 " consensus=%s, refining ...\n",
+              m->name, m->size, cons);
+    }
 
     /* Build initial CDF/threshold from seed probs. This is required before any
        scan (refine_motif_ext expects motif->threshold set). */
@@ -1805,10 +1812,12 @@ int main_ref(int argc, char **argv) {
         if (hits == 0) { *m = saved; break; }
         double left_ic  = column_ic(m->pwm_probs[0]);
         double right_ic = column_ic(m->pwm_probs[m->size - 1]);
-        if (args.v)
+        if (args.v) {
+          build_consensus(m, cons);
           fprintf(stderr, "  auto-extend step %d: w=%" PRIu64
-                          " hits=%d leftIC=%.2f rightIC=%.2f\n",
-                  ++steps, m->size, hits, left_ic, right_ic);
+                          " hits=%d leftIC=%.2f rightIC=%.2f consensus=%s\n",
+                  ++steps, m->size, hits, left_ic, right_ic, cons);
+        }
         if (left_ic < args.ic_min && right_ic < args.ic_min) {
           *m = saved;
           if (args.v) fprintf(stderr, "  (both flanks < %.2g bits; reverting last step)\n",
@@ -1822,9 +1831,11 @@ int main_ref(int argc, char **argv) {
       /* Additional refinement passes at the final width */
       for (int pass = 1; pass <= args.r_passes; pass++) {
         hits = refine_motif_ext(m, 0);
-        if (args.w)
-          fprintf(stderr, "  refine pass %d/%d [%s] flank=0: %d hits\n",
-                  pass, args.r_passes, m->name, hits);
+        if (args.w) {
+          build_consensus(m, cons);
+          fprintf(stderr, "  refine pass %d/%d [%s] flank=0: %d hits consensus=%s\n",
+                  pass, args.r_passes, m->name, hits, cons);
+        }
         if (hits == 0) {
           fprintf(stderr, "Warning: [%s] dropped (insufficient hits at refine pass %d).\n",
             m->name, pass);
@@ -1846,9 +1857,11 @@ int main_ref(int argc, char **argv) {
       for (int pass = 1; pass <= args.r_passes; pass++) {
         int flank = (pass == 1) ? args.extend : 0;
         hits = refine_motif_ext(m, flank);
-        if (args.v)
-          fprintf(stderr, "  refine pass %d/%d [%s] flank=%d: %d hits\n",
-                  pass, args.r_passes, m->name, flank, hits);
+        if (args.v) {
+          build_consensus(m, cons);
+          fprintf(stderr, "  refine pass %d/%d [%s] flank=%d: %d hits consensus=%s\n",
+                  pass, args.r_passes, m->name, flank, hits, cons);
+        }
         if (hits == 0) {
           fprintf(stderr, "Warning: [%s] dropped (insufficient hits at pass %d).\n",
             m->name, pass);
@@ -1871,9 +1884,11 @@ int main_ref(int argc, char **argv) {
       /* If -r 0 -e N>0: refresh PPM by gathering counts once without scoring. */
       if (args.r_passes == 0 && args.extend > 0) {
         hits = refine_motif_ext(m, args.extend);
-        if (args.v)
-          fprintf(stderr, "  extend-only [%s] flank=%d: %d hits\n",
-                  m->name, args.extend, hits);
+        if (args.v) {
+          build_consensus(m, cons);
+          fprintf(stderr, "  extend-only [%s] flank=%d: %d hits consensus=%s\n",
+                  m->name, args.extend, hits, cons);
+        }
         if (hits == 0) {
           fprintf(stderr, "Warning: [%s] dropped (insufficient hits during extend-only).\n",
             m->name);
@@ -1888,11 +1903,13 @@ int main_ref(int argc, char **argv) {
     /* Refinement summary */
     double   refined_ic  = motif_total_ic(m);
     uint64_t refined_hit = m->nsites_actual;
-    if (!args.progress)
+    if (!args.progress) {
+      build_consensus(m, cons);
       fprintf(stderr,
         "[%s] w: %" PRIu64 "->%" PRIu64 " | IC: %.2f->%.2f bits | hits: %"
-        PRIu64 "->%" PRIu64 "\n",
-        m->name, seed_w, m->size, seed_ic, refined_ic, seed_hit, refined_hit);
+        PRIu64 "->%" PRIu64 " | consensus=%s\n",
+        m->name, seed_w, m->size, seed_ic, refined_ic, seed_hit, refined_hit, cons);
+    }
 
     if (args.quality_gate && refined_ic < seed_ic) {
       if (!args.progress)

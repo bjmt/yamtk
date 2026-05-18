@@ -7,7 +7,7 @@ assert_ref_golden "auto-extend recovers full implant from narrow seed" \
   "$YAMTK" ref -E -m "${TESTDIR}/fixtures/ref_seed_narrow.meme" \
   -i "${TESTDIR}/fixtures/me_implanted.fa" -o -
 
-assert_stdout_contains "final consensus is full 8bp implant" "MOTIF narrow_seed CGTACG ACGTACGT" \
+assert_stdout_contains "final consensus is full 8bp implant" "MOTIF narrow_seed ACGTACGT" \
   "$YAMTK" ref -E -m "${TESTDIR}/fixtures/ref_seed_narrow.meme" \
   -i "${TESTDIR}/fixtures/me_implanted.fa" -o -
 

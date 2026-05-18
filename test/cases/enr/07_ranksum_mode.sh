@@ -22,8 +22,8 @@ ranksum_out=$("$YAMTK" enr -q 1.0 \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
     -t 5e-4 -T ranksum 2>/dev/null | grep -v '^#')
 
-seqs_counts=$(echo "$seqs_out"    | awk '{print $3,$4,$5,$6,$7,$8}')
-ranks_counts=$(echo "$ranksum_out" | awk '{print $3,$4,$5,$6,$7,$8}')
+seqs_counts=$(echo "$seqs_out"    | awk '{print $4,$5,$6,$7,$8,$9}')
+ranks_counts=$(echo "$ranksum_out" | awk '{print $4,$5,$6,$7,$8,$9}')
 if [ "$seqs_counts" != "$ranks_counts" ]; then
     echo "Count columns differ between seqs and ranksum modes:" >&2
     diff <(echo "$seqs_counts") <(echo "$ranks_counts") >&2 || true
@@ -37,7 +37,7 @@ ebox_auc=$("$YAMTK" enr -q 1.0 \
     -n "$TESTDIR/fixtures/enr_neg.fa" \
     -m "$TESTDIR/fixtures/enr_motifs.meme" \
     -t 5e-4 -T ranksum 2>/dev/null \
-    | awk '$1=="ebox"{print $9}')
+    | awk '$1=="ebox"{print $10}')
 ebox_ok=$(echo "$ebox_auc" | awk '{print ($1+0 > 0.7) ? "yes" : "no"}')
 if [ "$ebox_ok" != "yes" ]; then
     echo "ebox AUC=$ebox_auc, expected > 0.7" >&2
