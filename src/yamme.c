@@ -868,7 +868,7 @@ static void make_shuffled_negatives(void) {
   neg_set.names = NULL;
   uint64_t seed = args.use_seed ? args.seed : (uint64_t)time(NULL);
   sxrand_r(&xrng, seed);
-  if (args.v) fprintf(stderr, "Shuffle seed: %" PRIu64 "\n", seed);
+  if (args.v) fprintf(stderr, "RNG seed: %" PRIu64 "\n", seed);
   if (args.shuffle_k == 1) {
     for (uint64_t i=0; i<pos_set.n; i++) {
       neg_set.sizes[i] = pos_set.sizes[i];

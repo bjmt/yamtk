@@ -615,7 +615,7 @@ Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
             Requires exactly one motif loaded. Excludes -f/-x.
  -M <int>   Minimum spacing (bp) between -f insertions (default: 0).
  -R         Disable reverse-strand sampling (always insert '+').
- -s <int>   RNG seed (default: 4).
+ -s <int>   RNG seed (default: time-seeded).
  -r         Do not trim motif/sequence names to the first word.
  -g         Show progress bar.
  -v / -w / -h   Verbose / very-verbose / help.
@@ -749,7 +749,7 @@ Usage:  yamtk shuf [options] -i sequences.fa[.gz]
  -k <int>   k-mer size for shuffling (default: 3). k=1 uses Fisher-Yates;
             max k for Euler/Markov: 9.
  -o <str>   Output file (default: stdout).
- -s <int>   RNG seed (default: 4).
+ -s <int>   RNG seed (default: time-seeded).
  -m         Markov shuffling: generates sequences with similar k-mer
             frequencies. Best for large sequences.
  -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).

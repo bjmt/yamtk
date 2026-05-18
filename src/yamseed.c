@@ -175,6 +175,7 @@ typedef struct args_t {
   int         progress;      /* -g */
   int         v;
   int         w;
+  int         use_seed;      /* 1 if -s was provided */
   const char *consensus;     /* -1, single-motif IUPAC string */
   const char *single_range;  /* -X, "seqname:start-end[:strand]" */
 } args_t;
@@ -190,6 +191,7 @@ static args_t args = {
   .progress    = 0,
   .v           = 0,
   .w           = 0,
+  .use_seed    = 0,
   .consensus   = NULL,
   .single_range = NULL
 };
@@ -1494,11 +1496,11 @@ static void usage(void) {
     "            Requires exactly one motif loaded. Excludes -f/-x.\n"
     " -M <int>   Minimum spacing (bp) between -f insertions (default: 0).\n"
     " -R         Disable reverse-strand sampling (always insert '+').\n"
-    " -s <int>   RNG seed (default: %d).\n"
+    " -s <int>   RNG seed (default: time-seeded).\n"
     " -r         Do not trim motif/sequence names to the first word.\n"
     " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
-    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_SEED
+    , YAMTK_VERSION, YAMTK_YEAR
   );
 }
 
@@ -1603,6 +1605,7 @@ int main_seed(int argc, char **argv) {
         if (args.seed <= 0) {
           badexit("Error: -s must be a positive integer.");
         }
+        args.use_seed = 1;
         break;
       case 'g':
         args.progress = 1;
@@ -1659,7 +1662,11 @@ int main_seed(int argc, char **argv) {
   }
 
   /* Seed the PRNG */
-  sxrand_r(&xrng, (uint64_t) args.seed);
+  const uint64_t actual_seed = args.use_seed
+    ? (uint64_t) args.seed : (uint64_t) time(NULL);
+  sxrand_r(&xrng, actual_seed);
+  if (args.v)
+    fprintf(stderr, "RNG seed: %" PRIu64 "\n", actual_seed);
 
   /* Stream sequences */
   kseq = kseq_init(files.i);

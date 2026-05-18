@@ -1295,7 +1295,7 @@ static void make_shuffled_negatives(void) {
   uint64_t seed = args.use_seed ? args.seed : (uint64_t)time(NULL);
   sxrand_r(&xrng, seed);
   if (args.v)
-    fprintf(stderr, "Shuffle seed: %" PRIu64 "\n", seed);
+    fprintf(stderr, "RNG seed: %" PRIu64 "\n", seed);
   if (args.shuffle_k == 1) {
     for (uint64_t i=0; i<pos_set.n; i++) {
       neg_set.sizes[i] = pos_set.sizes[i];
@@ -1960,8 +1960,8 @@ int main_enr(int argc, char **argv) {
       uint64_t seed = args.use_seed ? args.seed : (uint64_t) time(NULL);
       sxrand_r(&xrng, seed);
       if (args.v) {
-        fprintf(stderr, "Streaming + shuffling negatives (seed=%" PRIu64 ", k=%d) ...\n",
-          seed, args.shuffle_k);
+        fprintf(stderr, "RNG seed: %" PRIu64 "\n", seed);
+        fprintf(stderr, "Streaming + shuffling negatives (k=%d) ...\n", args.shuffle_k);
       }
       gzFile fi2 = gzopen(args.pos_path, "r");
       if (!fi2) {

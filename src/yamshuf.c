@@ -204,7 +204,7 @@ static void usage(void) {
     " -k <int>   k-mer size for shuffling (default: %d). k=1 uses Fisher-Yates;\n"
     "            max k for Euler/Markov: %d.\n"
     " -o <str>   Output file (default: stdout).\n"
-    " -s <int>   RNG seed (default: %d).\n"
+    " -s <int>   RNG seed (default: time-seeded).\n"
     " -m         Markov shuffling: generates sequences with similar k-mer\n"
     "            frequencies. Best for large sequences.\n"
     " -l         Linear k-mer shuffle (fast Fisher-Yates over k-mer blocks).\n"
@@ -217,7 +217,7 @@ static void usage(void) {
     "            is not used.\n"
     " -p         Print k-mer counts instead of shuffling (-i, -k, -o only).\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
-    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_K, MAX_K, DEFAULT_SEED
+    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_K, MAX_K
   );
 }
 
@@ -227,6 +227,7 @@ typedef struct args_t {
   int      k;
   int      seed;
   int      reset_seed;
+  int      use_seed;
   int      use_markov;
   int      use_linear;
   /* int      leave_gaps; */
@@ -244,6 +245,7 @@ static args_t args = {
   .k              = DEFAULT_K,
   .seed           = DEFAULT_SEED,
   .reset_seed     = 0,
+  .use_seed       = 0,
   .use_markov     = 0,
   .use_linear     = 0,
   /* .leave_gaps     = 0, */
@@ -1036,6 +1038,7 @@ int main_shuf(int argc, char **argv) {
         if (args.seed <= 0) {
           badexit("Error: -s must be a positive integer.");
         }
+        args.use_seed = 1;
         break;
       case 'r':
         if (str_to_int(optarg, &args.shuf_repeats)) {
@@ -1162,7 +1165,11 @@ int main_shuf(int argc, char **argv) {
   uint64_t scratch_size = 0;
   uint8_t *bed_range_seen = NULL;
   kseq = kseq_init(files.s);
-  sxrand_r(&xrng, args.seed);
+  const uint64_t actual_seed = args.use_seed
+    ? (uint64_t) args.seed : (uint64_t) time(NULL);
+  sxrand_r(&xrng, actual_seed);
+  if (args.v)
+    fprintf(stderr, "RNG seed: %" PRIu64 "\n", actual_seed);
 
   if (args.use_bed) {
     read_bed();
@@ -1244,7 +1251,7 @@ int main_shuf(int argc, char **argv) {
     }
 
     if (args.reset_seed) {
-      sxrand_r(&xrng, args.seed);
+      sxrand_r(&xrng, actual_seed);
     }
 
     if (args.print_kmers) {
