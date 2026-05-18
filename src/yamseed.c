@@ -943,16 +943,38 @@ static uint64_t poisson_sample(const double lambda, xrng_t *r) {
 
 typedef struct { uint64_t s, e; } ivl_t;
 
-/* True iff [s, e) lies within `gap` of any existing interval. */
+/* True iff [s, e) lies within `gap` of any existing interval.
+   Assumes ivls is sorted ascending by .s (which by construction implies
+   sorted ascending by .e as well, since intervals are non-overlapping). */
 static int overlaps_any(const ivl_t *ivls, const uint64_t n_ivls,
                         const uint64_t s, const uint64_t e, const uint64_t gap) {
-  for (uint64_t k = 0; k < n_ivls; k++) {
-    /* clear iff existing ends ≥ gap before s, OR existing starts ≥ gap after e. */
-    const int left_clear  = (ivls[k].e + gap <= s);
-    const int right_clear = (e + gap <= ivls[k].s);
-    if (!(left_clear || right_clear)) return 1;
+  if (n_ivls == 0) return 0;
+  /* Smallest k such that ivls[k].s >= s. */
+  uint64_t lo = 0, hi = n_ivls;
+  while (lo < hi) {
+    const uint64_t mid = (lo + hi) >> 1;
+    if (ivls[mid].s >= s) hi = mid;
+    else                  lo = mid + 1;
   }
+  /* Right neighbor: ivls[lo].s >= s. Collision iff its start lands inside
+     [s, e + gap) — i.e. ivls[lo].s < e + gap (equivalently e + gap > .s). */
+  if (lo < n_ivls && e + gap > ivls[lo].s) return 1;
+  /* Left neighbor: ivls[lo-1].s < s and (by non-overlap invariant) its .e
+     is the largest end below s. Collision iff its end is within gap of s. */
+  if (lo > 0 && ivls[lo - 1].e + gap > s) return 1;
   return 0;
+}
+
+/* Insert (s, e) into sorted ivls; ivls capacity must accommodate one more. */
+static inline void insert_sorted(ivl_t *ivls, uint64_t *n_ivls,
+                                 const uint64_t s, const uint64_t e) {
+  uint64_t k = *n_ivls;
+  while (k > 0 && ivls[k - 1].s > s) {
+    ivls[k] = ivls[k - 1];
+    k--;
+  }
+  ivls[k].s = s; ivls[k].e = e;
+  (*n_ivls)++;
 }
 
 /* Per-sequence random mode. Tracks placed intervals; retries up to MAX_RETRIES
@@ -981,7 +1003,7 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
         fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
           name, pos, end, m->name, rc ? '-' : '+');
       }
-      ivls[n_ivls++] = (ivl_t){pos, end};
+      insert_sorted(ivls, &n_ivls, pos, end);
       total_insertions++;
       per_motif_count[mi]++;
       placed = 1;
