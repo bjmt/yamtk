@@ -145,6 +145,8 @@ typedef struct args_t {
   int      progress;
   int      v;
   int      w;
+  int      low_mem;       /* -l: streaming, no all-seqs-in-memory */
+  const char *pos_path;   /* retained for -l shuffled re-open */
 } args_t;
 
 static args_t args = {
@@ -165,7 +167,9 @@ static args_t args = {
   .test_mode    = TEST_SEQS,
   .progress     = 0,
   .v            = 0,
-  .w            = 0
+  .w            = 0,
+  .low_mem      = 0,
+  .pos_path     = NULL
 };
 
 static pthread_mutex_t pb_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -1596,6 +1600,8 @@ static void usage(void) {
     " -s <uint>  RNG seed for shuffling (default: time-seeded).\n"
     " -q <dbl>   Only report rows with q-value <= this (default: %g).\n"
     " -j <int>   Threads (default: 1).\n"
+    " -l         Low-memory streaming mode (one seq at a time). Incompatible\n"
+    "            with -T ranksum, stdin (-i -), and forces -j 1.\n"
     " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR,
@@ -1644,7 +1650,7 @@ int main_enr(int argc, char **argv) {
   char *seed_str = NULL;
   char neg_source_str[512]; neg_source_str[0]='\0';
 
-  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:RMdrk:s:q:j:gvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:RMdrk:s:q:j:lgvwh")) != -1) {
     switch (opt) {
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1659,6 +1665,7 @@ int main_enr(int argc, char **argv) {
               optarg, strerror(errno));
             badexit("");
           }
+          args.pos_path = optarg;
         }
         files.i_open=1;
         break;
@@ -1750,6 +1757,9 @@ int main_enr(int argc, char **argv) {
       case 'g':
         args.progress = 1;
         break;
+      case 'l':
+        args.low_mem = 1;
+        break;
       case 'w':
         args.w=1;
         /* fall through */
@@ -1776,6 +1786,18 @@ int main_enr(int argc, char **argv) {
     else if (strcmp(test_mode_str,"sites")==0)   args.test_mode=TEST_SITES;
     else if (strcmp(test_mode_str,"ranksum")==0) args.test_mode=TEST_RANKSUM;
     else badexit("Error: -T must be one of: seqs, sites, ranksum.");
+  }
+
+  if (args.low_mem) {
+    if (args.test_mode == TEST_RANKSUM)
+      badexit("Error: -l is incompatible with -T ranksum. Use -T seqs or -T sites.");
+    if (use_stdin_pos)
+      badexit("Error: -l is incompatible with stdin input (cannot rewind for shuffle).");
+    if (args.nthreads > 1) {
+      if (args.v)
+        fprintf(stderr, "Warning: -l forces -j 1 (ignoring -j %d).\n", args.nthreads);
+      args.nthreads = 1;
+    }
   }
 
   if (args.use_seed && seed_str) {
@@ -1812,6 +1834,10 @@ int main_enr(int argc, char **argv) {
     motifs[i]->thread = (uint64_t)(((double)i/motif_info.n)*args.nthreads);
 
   if (alloc_cdf()) badexit("Error: alloc_cdf failed.");
+
+  if (args.low_mem) {
+    badexit("Error: -l is not yet implemented (wiring in progress).");
+  }
 
   /* Load positives */
   if (args.v) fprintf(stderr, "Loading positives ...\n");
