@@ -129,6 +129,19 @@ static inline double xrand_double(xrng_t *r) {
   return (xrand_r(r) >> 11) * (1.0 / (double)(1ULL << 53));
 }
 
+/* Centre-biased start position in [0, range_max] via Irwin-Hall N: the
+   mean of n Uniform[0,1) draws. n == 1 collapses to the uniform path of
+   the caller and is not routed through here (so existing -s seeds stay
+   byte-identical when -c is not passed). */
+static inline uint64_t xrand_centred(xrng_t *r, uint64_t range_max, int n) {
+  double sum = 0.0;
+  for (int j = 0; j < n; j++) sum += xrand_double(r);
+  double mean = sum / (double)n;            /* in [0, 1) */
+  uint64_t pos = (uint64_t)(mean * (double)(range_max + 1));
+  if (pos > range_max) pos = range_max;     /* guard double->int rounding */
+  return pos;
+}
+
 static xrng_t xrng;
 
 /* ---- Insertion counters (for -v / -w summary) ---- */
@@ -167,6 +180,8 @@ static motif_t **motifs = NULL;
 typedef struct args_t {
   double      lambda;        /* -f, per-bp Poisson rate (random mode) */
   uint64_t    min_spacing;   /* -M */
+  int         centre_n;      /* -c, Irwin-Hall N for centre bias (random mode);
+                                1 = uniform (default) */
   int         seed;          /* -s */
   int         trim_names;    /* 1 = trim (default); -r sets to 0 */
   int         use_random;    /* set by -f */
@@ -183,6 +198,7 @@ typedef struct args_t {
 static args_t args = {
   .lambda      = 0.0,
   .min_spacing = 0,
+  .centre_n    = 1,
   .seed        = DEFAULT_SEED,
   .trim_names  = 1,
   .use_random  = 0,
@@ -996,7 +1012,9 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
       const uint64_t mi = xrand_r(r) % motif_info.n;
       motif_t *m = motifs[mi];
       if (m->size == 0 || m->size > L) break;
-      const uint64_t pos = xrand_r(r) % (L - m->size + 1);
+      const uint64_t pos = (args.centre_n == 1)
+        ? xrand_r(r) % (L - m->size + 1)
+        : xrand_centred(r, L - m->size, args.centre_n);
       const uint64_t end = pos + m->size;
       if (overlaps_any(ivls, n_ivls, pos, end, args.min_spacing)) continue;
       const int rc = (!args.no_rc) && (xrand_r(r) & 1);
@@ -1495,6 +1513,10 @@ static void usage(void) {
     " -X <str>   Single-range shortcut: seqname:start-end[:strand].\n"
     "            Requires exactly one motif loaded. Excludes -f/-x.\n"
     " -M <int>   Minimum spacing (bp) between -f insertions (default: 0).\n"
+    " -c <int>   Random mode: centre-bias strength (Irwin-Hall N draws\n"
+    "            averaged). 1 = uniform (default), 2 = triangular, larger\n"
+    "            = more concentrated around the sequence midpoint. Only\n"
+    "            applies to -f.\n"
     " -R         Disable reverse-strand sampling (always insert '+').\n"
     " -s <int>   RNG seed (default: time-seeded).\n"
     " -r         Do not trim motif/sequence names to the first word.\n"
@@ -1512,7 +1534,7 @@ int main_seed(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:x:X:M:Rrs:gvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:x:X:M:c:Rrs:gvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1592,6 +1614,14 @@ int main_seed(int argc, char **argv) {
           badexit("Error: Failed to parse -M value.");
         }
         break;
+      case 'c':
+        if (str_to_int(optarg, &args.centre_n))
+          badexit("Error: Failed to parse -c value.");
+        if (args.centre_n < 1)
+          badexit("Error: -c must be >= 1.");
+        if (args.centre_n > 64)
+          badexit("Error: -c must be <= 64.");
+        break;
       case 'R':
         args.no_rc = 1;
         break;
@@ -1637,6 +1667,8 @@ int main_seed(int argc, char **argv) {
     if (n_modes > 1) badexit("Error: -f, -x, and -X are mutually exclusive.");
     if (n_modes == 0) badexit("Error: one of -f, -x, or -X must be specified.");
   }
+  if (args.centre_n > 1 && !args.use_random)
+    badexit("Error: -c requires -f (random mode).");
   if (use_stdout) files.o = stdout;
 
   /* Load motifs */
@@ -1665,8 +1697,11 @@ int main_seed(int argc, char **argv) {
   const uint64_t actual_seed = args.use_seed
     ? (uint64_t) args.seed : (uint64_t) time(NULL);
   sxrand_r(&xrng, actual_seed);
-  if (args.v)
+  if (args.v) {
     fprintf(stderr, "RNG seed: %" PRIu64 "\n", actual_seed);
+    if (args.centre_n > 1)
+      fprintf(stderr, "Centre-bias N: %d\n", args.centre_n);
+  }
 
   /* Stream sequences */
   kseq = kseq_init(files.i);

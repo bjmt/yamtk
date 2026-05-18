@@ -1,6 +1,14 @@
 CHANGES IN VERSION UNRELEASED
 -----------------------------
 
+* yamtk seed: new -c <int> flag for centre-biased random placement.
+  Controls how strongly -f insertions cluster around each sequence's
+  midpoint using an Irwin-Hall N draw (mean of N Uniform[0,1) samples):
+  1 = uniform (default; byte-identical to the pre-flag output for any
+  given seed), 2 = triangular, larger = more peaked. Applies to -f mode
+  only; BED (-x) and single-range (-X) placement are unchanged. -c with
+  a non-random mode is a usage error.
+
 * yamtk enr: new -x / -X flags for BED-restricted enrichment. -x narrows
   scoring in positives to the BED-defined regions; -X does the same for
   the -n negatives (requires -n and -x together). Each BED region is one

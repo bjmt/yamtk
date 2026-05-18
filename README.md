@@ -657,6 +657,10 @@ Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
  -X <str>   Single-range shortcut: seqname:start-end[:strand].
             Requires exactly one motif loaded. Excludes -f/-x.
  -M <int>   Minimum spacing (bp) between -f insertions (default: 0).
+ -c <int>   Random mode: centre-bias strength (Irwin-Hall N draws
+            averaged). 1 = uniform (default), 2 = triangular, larger
+            = more concentrated around the sequence midpoint. Only
+            applies to -f.
  -R         Disable reverse-strand sampling (always insert '+').
  -s <int>   RNG seed (default: time-seeded).
  -r         Do not trim motif/sequence names to the first word.
@@ -682,6 +686,20 @@ yamtk scan -m motifs.meme -s seeded.fa -t 0.001 \
 comm -12 <(sort truth.bed) scanned.bed | wc -l
 # How many planted instances does the scanner recover?
 ```
+
+Real TF peaks usually cluster around the peak summit rather than being
+uniformly scattered across the window. `-c <int>` biases random
+insertions toward each sequence's midpoint by averaging *N* uniform
+draws (the Irwin–Hall distribution). `-c 1` (default) is uniform, `-c 2`
+is triangular, `-c 5` is bell-shaped, `-c 20+` is tightly centred:
+
+```sh
+# Simulate peak-summit-style insertions (most motifs near sequence centre)
+yamtk seed -m motifs.meme -i peaks.fa -f 0.01 -c 10 -s 42 -O truth.bed > seeded.fa
+```
+
+`-c 1` produces output that's byte-identical to omitting `-c`, so existing
+seeds and fixtures keep reproducing the same insertions.
 
 ### BED mode
 
