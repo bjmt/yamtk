@@ -373,9 +373,25 @@ Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt
  -s <uint>  RNG seed for shuffling (default: time-seeded).
  -q <dbl>   Only report rows with q-value <= this (default: 0.1).
  -j <int>   Threads (default: 1).
+ -l         Low-memory streaming mode (one seq at a time). Incompatible
+            with -T ranksum, stdin (-i -), and forces -j 1.
  -g         Show progress bar.
  -v / -w / -h   Verbose / very-verbose / help.
 ```
+
+### Low-memory mode (`-l`)
+
+For large positive/negative FASTAs (Gbp scale), `-l` streams sequences
+one at a time instead of loading them all into memory. Per-motif counters
+remain resident; sequence buffers are reused. Output is byte-identical
+to the default mode for the same input + seed.
+
+Restrictions: `-T ranksum` is rejected (it needs the full per-(motif x seq)
+max-score matrix), stdin input (`-i -`) is rejected (positives must be
+re-readable for shuffled negatives), and `-j > 1` auto-downgrades to 1.
+
+Measured on a synthetic 100k-seq positives FASTA (~32 MB), `-k 2 -s 42`,
+two motifs: peak RSS drops from ~64 MB (default) to ~2.4 MB (`-l`).
 
 ### Examples
 
