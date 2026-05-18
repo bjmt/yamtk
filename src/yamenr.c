@@ -1874,6 +1874,20 @@ int main_enr(int argc, char **argv) {
   if (args.test_mode == TEST_RANKSUM) {
     uint64_t n_total = pos_set.n + neg_set.n;
     uint64_t ranksum_bytes = motif_info.n * n_total * sizeof(int);
+    /* Hard cap: refuse rather than OOM-crash. 4 GB matches the practical
+       single-allocation ceiling on most 64-bit systems and is plenty for
+       any realistic enrichment run. */
+    static const uint64_t RANKSUM_MAX_BYTES = (uint64_t) 4 * 1024 * 1024 * 1024;
+    if (ranksum_bytes > RANKSUM_MAX_BYTES) {
+      fprintf(stderr,
+        "Error: ranksum max-score matrix would need %.2f GB (%" PRIu64 " motifs x %" PRIu64
+        " sequences); cap is %.0f GB.\n"
+        "Use -T seqs or -T sites for inputs this large.\n",
+        (double) ranksum_bytes / (1024.0 * 1024.0 * 1024.0),
+        motif_info.n, n_total,
+        (double) RANKSUM_MAX_BYTES / (1024.0 * 1024.0 * 1024.0));
+      badexit("");
+    }
     if (args.v)
       fprintf(stderr, "Allocating %.2f MB for ranksum max-score matrix.\n",
         (double)ranksum_bytes / (1024.0*1024.0));
