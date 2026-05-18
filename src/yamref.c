@@ -260,6 +260,38 @@ static double  *cdf_scratch     = NULL;
 static double  *tmp_pdf_scratch = NULL;
 static uint64_t cdf_scratch_size = 0;
 
+static int get_pwm_min(const motif_t *m);
+static int get_pwm_max(const motif_t *m);
+
+/* Pre-allocate cdf_scratch / tmp_pdf_scratch sized to the max cdf_size
+   across loaded motifs (with headroom for -e flank extension). fill_cdf is
+   called once per motif per refinement pass; this avoids incremental
+   realloc thrash on each first encounter of a larger motif. */
+static void preallocate_cdf_scratch(void) {
+  uint64_t max_cdf_size = 0;
+  for (uint64_t i = 0; i < motif_info.n; i++) {
+    motif_t *m = motifs[i];
+    if (!m || !m->size) continue;
+    const int mn = get_pwm_min(m);
+    const int mx = get_pwm_max(m);
+    const uint64_t cmax = (uint64_t)(mx - mn);
+    if (cmax == 0) continue;
+    /* Worst case after -e flank extension: width grows by 2*args.extend. */
+    const uint64_t w_max = m->size + (uint64_t)(2 * args.extend);
+    const uint64_t cdf_sz = w_max * cmax + 1;
+    if (cdf_sz > max_cdf_size) max_cdf_size = cdf_sz;
+  }
+  if (max_cdf_size == 0 || max_cdf_size > MAX_CDF_SIZE) return;
+  cdf_scratch     = malloc(max_cdf_size * sizeof(double));
+  tmp_pdf_scratch = malloc(max_cdf_size * sizeof(double));
+  if (!cdf_scratch || !tmp_pdf_scratch) {
+    free(cdf_scratch); free(tmp_pdf_scratch);
+    cdf_scratch = tmp_pdf_scratch = NULL;
+    return;  /* fall back to lazy realloc in fill_cdf */
+  }
+  cdf_scratch_size = max_cdf_size;
+}
+
 /* ---- Memory & timing helpers ---- */
 
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
@@ -1706,6 +1738,11 @@ int main_ref(int argc, char **argv) {
     load_motifs();
   }
   if (args.v) print_time((uint64_t)difftime(time(NULL), t0), "load motifs");
+
+  /* Pre-allocate CDF scratch sized to the max cdf_size across loaded motifs
+     (with headroom for -e flank extension). Avoids incremental realloc
+     thrash during refinement. */
+  preallocate_cdf_scratch();
 
   /* Validate extension fits */
   if (args.extend > 0) {
