@@ -1,6 +1,25 @@
 CHANGES IN VERSION UNRELEASED
 -----------------------------
 
+* yamtk enr: new -x / -X flags for BED-restricted enrichment. -x narrows
+  scoring in positives to the BED-defined regions; -X does the same for
+  the -n negatives (requires -n and -x together). Each BED region is one
+  independent unit for the test, so pos_n / neg_n now report region
+  counts and SEQS asks "of N regions, how many contain the motif?". When
+  -x is set and -n is absent, the shuffled null is built from the BED
+  region slices so the null's k-mer composition matches what's scored.
+  Per-region strand from BED col-6 ('.'=both subject to -R, '+'=fwd,
+  '-'=rev). Output header gains PosUnits / NegUnits fields. -l + -x is
+  supported with -n; -l + -x without -n is rejected (shuffled-from-BED
+  is not streamable).
+
+* yamtk seq: new 'subsample' action. -a subsample picks a random subset
+  of input sequences in one of two modes: -n N for reservoir sampling
+  (exact count, buffers N records) or -f p for per-sequence Bernoulli
+  sampling (streams, approximate count). Output preserves input order.
+  -s <uint> seeds the xoroshiro128++ PRNG (time-seeded by default and
+  printed under -v).
+
 * yamtk enr: new 'consensus' column in TSV output (position 3, between
   motif_id and pos_n), giving the per-motif IUPAC consensus using the
   75% cumulative-probability rule. Computed at ingest time for all four

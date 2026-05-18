@@ -58,6 +58,8 @@ KHASH_SET_INIT_STR(motif_str_h);
 #define DEFAULT_QVALUE_FILTER                0.1
 #define MAX_K                                  9
 #define FASTA_LINE_LEN                        60
+#define BED_FIELD_MAX_CHAR      ((uint64_t) 256)
+#define BED_ALLOC_CHUNK_SIZE    ((uint64_t) 256)
 #define PROGRESS_BAR_WIDTH                    60
 #define PROGRESS_BAR_STRING \
   "============================================================"
@@ -146,6 +148,8 @@ typedef struct args_t {
   int      v;
   int      w;
   int      low_mem;       /* -l: streaming, no all-seqs-in-memory */
+  int      use_bed_pos;   /* -x */
+  int      use_bed_neg;   /* -X (requires -n and -x) */
   const char *pos_path;   /* retained for -l shuffled re-open */
 } args_t;
 
@@ -169,6 +173,8 @@ static args_t args = {
   .v            = 0,
   .w            = 0,
   .low_mem      = 0,
+  .use_bed_pos  = 0,
+  .use_bed_neg  = 0,
   .pos_path     = NULL
 };
 
@@ -186,14 +192,17 @@ static void print_pb(const double prog) {
 /* ---- Files ---- */
 
 typedef struct files_t {
-  int    m_open, i_open, n_open, o_open;
+  int    m_open, i_open, n_open, o_open, x_pos_open, x_neg_open;
   FILE  *m;
   gzFile i;
   gzFile n;
   FILE  *o;
+  gzFile x_pos;
+  gzFile x_neg;
 } files_t;
 
-static files_t files = { .m_open=0, .i_open=0, .n_open=0, .o_open=0 };
+static files_t files = { .m_open=0, .i_open=0, .n_open=0, .o_open=0,
+                         .x_pos_open=0, .x_neg_open=0 };
 
 static khash_t(seq_str_h) *seq_hash_tab;
 
@@ -202,6 +211,8 @@ static void close_files(void) {
   if (files.i_open) gzclose(files.i);
   if (files.n_open) gzclose(files.n);
   if (files.o_open) fclose(files.o);
+  if (files.x_pos_open) gzclose(files.x_pos);
+  if (files.x_neg_open) gzclose(files.x_neg);
 }
 
 /* ---- Sequence sets ---- */
@@ -231,6 +242,279 @@ static void free_seq_set(seq_set_t *s) {
   }
   free(s->sizes);
   memset(s, 0, sizeof(*s));
+}
+
+/* Forward declarations for helpers defined later in the file. */
+static void badexit(const char *msg);
+static inline int str_to_uint64_t(char *str, uint64_t *res);
+
+/* ---- BED reader ----
+   Parametric on enr_bed_t so we can hold two independent BED sets (pos / neg).
+   Closely modeled on yamseq.c's BED code; range_names are dropped (yamenr
+   doesn't output region names) and seq_idx is added to cache per-region
+   sequence-set indices once binding has run. */
+
+typedef struct enr_bed_t {
+  uint64_t  *starts;       /* 0-based                          */
+  uint64_t  *ends;         /* 0-based, exclusive               */
+  char      *strands;      /* '.', '+', '-'                    */
+  char     **seq_names;
+  uint64_t   n_regions;
+  uint64_t   n_alloc;
+  /* Filled by enr_bed_bind_seqs(): per-region index into seq_set,
+     or UINT64_MAX if the BED seq is not present (fatal in fully-loaded mode). */
+  uint64_t  *seq_idx;
+  /* Filled by enr_bed_build_hash(): name -> head region index;
+     seq_next[i] -> next region for the same seq (UINT64_MAX terminates). */
+  khash_t(seq_str_h) *seq_hash;
+  uint64_t  *seq_next;
+} enr_bed_t;
+
+static enr_bed_t bed_pos = {0};
+static enr_bed_t bed_neg = {0};
+
+static void enr_bed_free(enr_bed_t *b) {
+  if (b->n_alloc) {
+    for (uint64_t i = 0; i < b->n_regions; i++) free(b->seq_names[i]);
+    free(b->seq_names);
+    free(b->starts);
+    free(b->ends);
+    free(b->strands);
+  }
+  free(b->seq_idx);
+  free(b->seq_next);
+  if (b->seq_hash) kh_destroy(seq_str_h, b->seq_hash);
+  memset(b, 0, sizeof(*b));
+}
+
+static void enr_bed_grow(enr_bed_t *b) {
+  if (b->n_regions + 1 <= b->n_alloc) return;
+  const uint64_t na = b->n_alloc + BED_ALLOC_CHUNK_SIZE;
+  char     **p1 = realloc(b->seq_names, sizeof(*b->seq_names) * na);
+  uint64_t  *p2 = realloc(b->starts,    sizeof(*b->starts)    * na);
+  uint64_t  *p3 = realloc(b->ends,      sizeof(*b->ends)      * na);
+  char      *p4 = realloc(b->strands,   sizeof(*b->strands)   * na);
+  if (!p1 || !p2 || !p3 || !p4) badexit("Error: Failed to grow BED storage.");
+  b->seq_names = p1; b->starts = p2; b->ends = p3; b->strands = p4;
+  b->n_alloc = na;
+}
+
+static uint64_t bed_count_nonempty_chars(const char *line) {
+  uint64_t n = 0;
+  for (uint64_t i = 0; line[i] != '\0'; i++)
+    if (line[i] != ' ' && line[i] != '\t' && line[i] != '\r' && line[i] != '\n') n++;
+  return n;
+}
+
+static uint64_t bed_count_fields(const char *line) {
+  uint64_t r = 1, i = 0;
+  while (line[i] != '\0') { if (line[i] == '\t') r++; i++; }
+  return r;
+}
+
+static uint64_t bed_field_size(const char *line, const uint64_t k) {
+  uint64_t r = 0, i = 0, n = 0;
+  while (line[i] != '\0') {
+    if (line[i] == '\t') n++;
+    else if (n + 1 == k) r++;
+    else if (n + 1 > k) break;
+    i++;
+  }
+  return r;
+}
+
+static uint64_t bed_field_start(const char *line, const uint64_t k) {
+  uint64_t i = 0, n = 0;
+  while (line[i] != '\0') {
+    if (line[i] == '\t') n++;
+    else if (n + 1 == k) break;
+    i++;
+  }
+  return i;
+}
+
+static uint64_t bed_field_end(const char *line, const uint64_t k) {
+  uint64_t i = 0, n = 0;
+  while (line[i] != '\0') {
+    if (line[i] == '\t') n++;
+    if (n == k) { i--; break; }
+    i++;
+  }
+  return i;
+}
+
+static inline uint64_t bed_parse_field(const char *line, const uint64_t k,
+                                       char *field, const int no_spaces) {
+  uint64_t s = bed_field_start(line, k);
+  uint64_t e = bed_field_end(line, k);
+  uint64_t sz = bed_field_size(line, k);
+  uint64_t fi = 0;
+  ERASE_ARRAY(field, BED_FIELD_MAX_CHAR);
+  if (sz > 0 && sz < BED_FIELD_MAX_CHAR) {
+    for (uint64_t i = s; i <= e; i++) {
+      if (no_spaces && (line[i]==' '||line[i]=='\t'||line[i]=='\r'||line[i]=='\n')) sz--;
+      else field[fi++] = line[i];
+    }
+  }
+  return sz;
+}
+
+static void enr_bed_read(enr_bed_t *b, gzFile gz, const char *label) {
+  kstream_t *kbed = ks_init(gz);
+  if (!kbed) badexit("Error: Failed to init BED stream.");
+  kstring_t line = { 0, 0, 0 };
+  int rv;
+  uint64_t ln = 0;
+  char fld[BED_FIELD_MAX_CHAR];
+  while ((rv = ks_getuntil(kbed, '\n', &line, 0)) >= 0) {
+    ln++;
+    if (bed_count_nonempty_chars(line.s) == 0) continue;
+    if (line.s[0] == '#') continue;
+    if (line.l >= 7 && memcmp(line.s, "browser", 7) == 0) continue;
+    if (line.l >= 5 && memcmp(line.s, "track",   5) == 0) continue;
+    const uint64_t nf = bed_count_fields(line.s);
+    if (nf < 3) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " has %" PRIu64
+        " fields; need >=3.\n", label, ln, nf);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+    enr_bed_grow(b);
+
+    /* strand (col 6, optional) */
+    if (nf >= 6) {
+      uint64_t sz = bed_parse_field(line.s, 6, fld, 1);
+      if (sz != 1 || (fld[0] != '+' && fld[0] != '-' && fld[0] != '.')) {
+        fprintf(stderr, "Error: %s BED line %" PRIu64 " strand must be +/-/. (got '%s').\n",
+          label, ln, fld);
+        ks_destroy(kbed); free(line.s); badexit("");
+      }
+      b->strands[b->n_regions] = fld[0];
+    } else {
+      b->strands[b->n_regions] = '.';
+    }
+
+    /* start (col 2) */
+    if (bed_parse_field(line.s, 2, fld, 1) == 0) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " empty start.\n", label, ln);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+    uint64_t tmp;
+    if (str_to_uint64_t(fld, &tmp)) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " bad start '%s'.\n", label, ln, fld);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+    b->starts[b->n_regions] = tmp;
+
+    /* end (col 3) */
+    if (bed_parse_field(line.s, 3, fld, 1) == 0) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " empty end.\n", label, ln);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+    if (str_to_uint64_t(fld, &tmp)) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " bad end '%s'.\n", label, ln, fld);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+    b->ends[b->n_regions] = tmp;
+    if (b->starts[b->n_regions] >= b->ends[b->n_regions]) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " has start >= end.\n", label, ln);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+
+    /* seq name (col 1) */
+    const uint64_t sz1 = bed_parse_field(line.s, 1, fld, 0);
+    if (sz1 == 0 || sz1 >= BED_FIELD_MAX_CHAR) {
+      fprintf(stderr, "Error: %s BED line %" PRIu64 " empty/too-long seq name.\n", label, ln);
+      ks_destroy(kbed); free(line.s); badexit("");
+    }
+    b->seq_names[b->n_regions] = malloc(sz1 + 1);
+    if (!b->seq_names[b->n_regions]) {
+      ks_destroy(kbed); free(line.s); badexit("Error: BED alloc failed.");
+    }
+    memcpy(b->seq_names[b->n_regions], fld, sz1);
+    b->seq_names[b->n_regions][sz1] = '\0';
+    /* Trim at first space (kseq drops everything after the first space in
+       FASTA names; BED seq names must match the same canonical form). */
+    for (uint64_t i = 0; i < sz1; i++) {
+      if (b->seq_names[b->n_regions][i] == ' ') {
+        b->seq_names[b->n_regions][i] = '\0'; break;
+      }
+    }
+    b->n_regions++;
+  }
+  if (rv == -3) { ks_destroy(kbed); free(line.s); badexit("Error: Failed to read BED stream."); }
+  ks_destroy(kbed);
+  free(line.s);
+  if (!b->n_regions) badexit("Error: BED has no usable records.");
+  if (args.v) fprintf(stderr, "Read %" PRIu64 " %s BED region(s).\n", b->n_regions, label);
+}
+
+/* Resolve each BED region's seq name against a seq_set; verify bounds.
+   Fatal on unknown seq or out-of-bounds end. Sets b->seq_idx[i]. */
+static void enr_bed_bind_seqs(enr_bed_t *b, const seq_set_t *s, const char *label) {
+  /* Build a name->index map for the seq_set. */
+  khash_t(seq_str_h) *h = kh_init(seq_str_h);
+  if (!h) badexit("Error: hash init failed.");
+  int absent;
+  for (uint64_t i = 0; i < s->n; i++) {
+    khint_t k = kh_put(seq_str_h, h, s->names[i], &absent);
+    if (absent == -1) { kh_destroy(seq_str_h, h); badexit("Error: hash put failed."); }
+    if (absent == 0) {
+      fprintf(stderr, "Error: Duplicate sequence name '%s' in %s set.\n", s->names[i], label);
+      kh_destroy(seq_str_h, h); badexit("");
+    }
+    kh_val(h, k) = i;
+  }
+  b->seq_idx = malloc(sizeof(*b->seq_idx) * b->n_regions);
+  if (!b->seq_idx) { kh_destroy(seq_str_h, h); badexit("Error: alloc failed."); }
+  for (uint64_t i = 0; i < b->n_regions; i++) {
+    khint_t k = kh_get(seq_str_h, h, b->seq_names[i]);
+    if (k == kh_end(h)) {
+      fprintf(stderr, "Error: %s BED references unknown sequence '%s'.\n", label, b->seq_names[i]);
+      kh_destroy(seq_str_h, h); badexit("");
+    }
+    uint64_t si = kh_val(h, k);
+    b->seq_idx[i] = si;
+    if (b->ends[i] > s->sizes[si]) {
+      fprintf(stderr,
+        "Error: %s BED region '%s:%" PRIu64 "-%" PRIu64 "' exceeds seq length %" PRIu64 ".\n",
+        label, b->seq_names[i], b->starts[i], b->ends[i], s->sizes[si]);
+      kh_destroy(seq_str_h, h); badexit("");
+    }
+  }
+  kh_destroy(seq_str_h, h);
+}
+
+/* Streaming-mode helper: build name -> region-list linked structure. */
+static void enr_bed_build_hash(enr_bed_t *b) {
+  b->seq_hash = kh_init(seq_str_h);
+  if (!b->seq_hash) badexit("Error: BED hash init failed.");
+  b->seq_next = malloc(sizeof(*b->seq_next) * b->n_regions);
+  if (!b->seq_next) badexit("Error: BED next alloc failed.");
+  for (uint64_t i = 0; i < b->n_regions; i++) b->seq_next[i] = UINT64_MAX;
+  int absent;
+  for (uint64_t i = 0; i < b->n_regions; i++) {
+    khint_t k = kh_put(seq_str_h, b->seq_hash, b->seq_names[i], &absent);
+    if (absent == -1) badexit("Error: BED hash put failed.");
+    if (absent == 0) {
+      b->seq_next[i] = kh_val(b->seq_hash, k);
+      kh_val(b->seq_hash, k) = i;
+    } else {
+      kh_val(b->seq_hash, k) = i;
+    }
+  }
+}
+
+static uint64_t enr_bed_collect(const enr_bed_t *b, const char *seq_name, uint64_t *out) {
+  if (!b->seq_hash) return 0;
+  khint_t k = kh_get(seq_str_h, b->seq_hash, seq_name);
+  if (k == kh_end(b->seq_hash)) return 0;
+  uint64_t n = 0;
+  uint64_t idx = kh_val(b->seq_hash, k);
+  while (idx != UINT64_MAX) {
+    out[n++] = idx;
+    idx = b->seq_next[idx];
+  }
+  return n;
 }
 
 /* ---- Motif structs ---- */
@@ -313,6 +597,12 @@ static uint64_t *site_hits_pos = NULL;
 static uint64_t *site_hits_neg = NULL;
 static int      *max_scores_arr = NULL;  /* [n_motifs * (n_pos + n_neg)], ranksum only */
 
+/* Unit counts: number of independent observations for the test. Equals
+   pos_set.n / neg_set.n when no BED is in use, else the count of BED
+   regions in bed_pos / bed_neg. Set once after sequences are loaded. */
+static uint64_t pos_unit_n = 0;
+static uint64_t neg_unit_n = 0;
+
 static pthread_t *threads = NULL;
 
 /* ---- Lookup tables (from yamscan.c) ---- */
@@ -350,6 +640,8 @@ static void badexit(const char *msg) {
   free_motifs();
   free_seq_set(&pos_set);
   free_seq_set(&neg_set);
+  enr_bed_free(&bed_pos);
+  enr_bed_free(&bed_neg);
   free_cdf();
   free(threads);
   free(seq_hits_pos); free(seq_hits_neg);
@@ -1333,13 +1625,18 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
 /* ---- Build shuffled negative set ---- */
 
 static void make_shuffled_negatives(void) {
+  /* When -x is in use, the null set is built from BED region slices so the
+     k-mer composition of the null matches what's actually being scored. */
+  const int use_bed = args.use_bed_pos;
+  const uint64_t n_src = use_bed ? bed_pos.n_regions : pos_set.n;
   if (args.v)
-    fprintf(stderr, "Generating shuffled negative set (k=%d) ...\n", args.shuffle_k);
-  neg_set.n = pos_set.n;
-  neg_set.n_alloc = pos_set.n;
-  neg_set.seqs = malloc(sizeof(unsigned char *) * pos_set.n);
+    fprintf(stderr, "Generating shuffled negative set (k=%d, %s) ...\n",
+      args.shuffle_k, use_bed ? "BED-restricted positives" : "full positives");
+  neg_set.n = n_src;
+  neg_set.n_alloc = n_src;
+  neg_set.seqs = malloc(sizeof(unsigned char *) * n_src);
   if (!neg_set.seqs) badexit("Error: Failed to allocate shuffled negatives.");
-  neg_set.sizes = malloc(sizeof(uint64_t) * pos_set.n);
+  neg_set.sizes = malloc(sizeof(uint64_t) * n_src);
   if (!neg_set.sizes) badexit("Error: Failed to allocate shuffled negative sizes.");
   neg_set.names = NULL;  /* not needed for scoring */
   /* Seed the PRNG once */
@@ -1347,42 +1644,52 @@ static void make_shuffled_negatives(void) {
   sxrand_r(&xrng, seed);
   if (args.v)
     fprintf(stderr, "RNG seed: %" PRIu64 "\n", seed);
-  if (args.shuffle_k == 1) {
-    for (uint64_t i=0; i<pos_set.n; i++) {
-      neg_set.sizes[i] = pos_set.sizes[i];
-      neg_set.seqs[i] = malloc(pos_set.sizes[i]);
-      if (!neg_set.seqs[i]) badexit("Error: Failed to allocate shuffle buffer.");
-      memcpy(neg_set.seqs[i], pos_set.seqs[i], pos_set.sizes[i]);
-      if (pos_set.sizes[i] > 1) shuffle_fisher_yates(neg_set.seqs[i], pos_set.sizes[i]);
-    }
-  } else {
-    uint64_t ksz = args.shuffle_k;
-    uint64_t *kmer_tab      = calloc(pow5[ksz], sizeof(uint64_t));
-    unsigned char *inv_vtx  = calloc(pow5[ksz-1], sizeof(unsigned char));
-    uint64_t *euler_path    = calloc(pow5[ksz-1], sizeof(uint64_t));
-    uint64_t *next_idx      = calloc(pow5[ksz-1], sizeof(uint64_t));
+  const uint64_t ksz = (uint64_t) args.shuffle_k;
+  uint64_t      *kmer_tab   = NULL;
+  unsigned char *inv_vtx    = NULL;
+  uint64_t      *euler_path = NULL;
+  uint64_t      *next_idx   = NULL;
+  if (ksz > 1) {
+    kmer_tab   = calloc(pow5[ksz],   sizeof(uint64_t));
+    inv_vtx    = calloc(pow5[ksz-1], sizeof(unsigned char));
+    euler_path = calloc(pow5[ksz-1], sizeof(uint64_t));
+    next_idx   = calloc(pow5[ksz-1], sizeof(uint64_t));
     if (!kmer_tab||!inv_vtx||!euler_path||!next_idx)
       badexit("Error: Failed to allocate Euler shuffle scratch.");
-    for (uint64_t i=0; i<pos_set.n; i++) {
-      neg_set.sizes[i] = pos_set.sizes[i];
-      neg_set.seqs[i] = malloc(pos_set.sizes[i]);
-      if (!neg_set.seqs[i]) badexit("Error: Failed to allocate shuffle buffer.");
-      memcpy(neg_set.seqs[i], pos_set.seqs[i], pos_set.sizes[i]);
-      if (pos_set.sizes[i] >= ksz) {
-        memset(kmer_tab, 0, sizeof(uint64_t)*pow5[ksz]);
-        memset(inv_vtx,  0, sizeof(unsigned char)*pow5[ksz-1]);
-        memset(euler_path, 0, sizeof(uint64_t)*pow5[ksz-1]);
-        memset(next_idx,  0, sizeof(uint64_t)*pow5[ksz-1]);
-        count_kmers(neg_set.seqs[i], pos_set.sizes[i], kmer_tab, ksz);
-        shuffle_euler(neg_set.seqs[i], pos_set.sizes[i], ksz,
-                      kmer_tab, inv_vtx, euler_path, next_idx);
-      }
-    }
-    free(kmer_tab); free(inv_vtx); free(euler_path); free(next_idx);
   }
-  neg_set.total_bases = pos_set.total_bases;
-  neg_set.gc_pct      = pos_set.gc_pct;
-  neg_set.unknowns    = pos_set.unknowns;
+  uint64_t total_bp = 0;
+  for (uint64_t i = 0; i < n_src; i++) {
+    /* Resolve the (seq, slice) for this region or the whole sequence. */
+    const unsigned char *src;
+    uint64_t L;
+    if (use_bed) {
+      const uint64_t si = bed_pos.seq_idx[i];
+      src = pos_set.seqs[si] + bed_pos.starts[i];
+      L   = bed_pos.ends[i] - bed_pos.starts[i];
+    } else {
+      src = pos_set.seqs[i];
+      L   = pos_set.sizes[i];
+    }
+    neg_set.sizes[i] = L;
+    neg_set.seqs[i]  = malloc(L ? L : 1);
+    if (!neg_set.seqs[i]) badexit("Error: Failed to allocate shuffle buffer.");
+    if (L) memcpy(neg_set.seqs[i], src, L);
+    if (ksz == 1) {
+      if (L > 1) shuffle_fisher_yates(neg_set.seqs[i], L);
+    } else if (L >= ksz) {
+      memset(kmer_tab,   0, sizeof(uint64_t)      * pow5[ksz]);
+      memset(inv_vtx,    0, sizeof(unsigned char) * pow5[ksz-1]);
+      memset(euler_path, 0, sizeof(uint64_t)      * pow5[ksz-1]);
+      memset(next_idx,   0, sizeof(uint64_t)      * pow5[ksz-1]);
+      count_kmers(neg_set.seqs[i], L, kmer_tab, ksz);
+      shuffle_euler(neg_set.seqs[i], L, ksz, kmer_tab, inv_vtx, euler_path, next_idx);
+    }
+    total_bp += L;
+  }
+  free(kmer_tab); free(inv_vtx); free(euler_path); free(next_idx);
+  neg_set.total_bases = total_bp;
+  neg_set.gc_pct      = pos_set.gc_pct;     /* approximate; only used in -v messages */
+  neg_set.unknowns    = pos_set.unknowns;   /* approximate likewise */
   if (args.v)
     fprintf(stderr, "Negative (shuffled) set: %'" PRIu64 " seq(s), %'" PRIu64 " bp\n",
       neg_set.n, neg_set.total_bases);
@@ -1560,30 +1867,71 @@ static inline void score_subseq_rc(const motif_t *m, const unsigned char *seq, c
   }
 }
 
-/* Count hits and track max PWM score for one (motif, sequence) pair. */
-static void score_seq_scan(const motif_t *motif, const unsigned char *seq,
-                            const uint64_t seq_size, uint64_t *out_hits, int *out_max) {
-  if (seq_size < motif->size) return;
-  const int mot_size = (int)motif->size;
+/* Count hits and track max PWM score for [start, end) of seq, with explicit
+   strand mask. do_fwd / do_rc allow per-region strand control under -x/-X. */
+static void score_range_scan(const motif_t *motif, const unsigned char *seq,
+                              const uint64_t start, const uint64_t end,
+                              const int do_fwd, const int do_rc,
+                              uint64_t *out_hits, int *out_max) {
+  const uint64_t mot_size = motif->size;
+  if (end <= start || (end - start) < mot_size) return;
   /* Use INT_MAX-1 as effective threshold when threshold==INT_MAX (no hits, but max computed). */
   const int threshold = motif->threshold - 1;
   const unsigned char *tbl = args.mask ? char2maskindex : char2index;
+  const uint64_t last = end - mot_size;
   int score, score_rc;
-  if (args.scan_rc) {
-    for (uint64_t i=0; i<=seq_size-mot_size; i++) {
+  if (do_fwd && do_rc) {
+    for (uint64_t i = start; i <= last; i++) {
       score_subseq_rc(motif, seq, i, &score, &score_rc, tbl);
-      if (UNLIKELY(score > threshold))    (*out_hits)++;
+      if (UNLIKELY(score    > threshold)) (*out_hits)++;
       if (UNLIKELY(score_rc > threshold)) (*out_hits)++;
       if (score    > *out_max) *out_max = score;
       if (score_rc > *out_max) *out_max = score_rc;
     }
-  } else {
-    for (uint64_t i=0; i<=seq_size-mot_size; i++) {
+  } else if (do_fwd) {
+    for (uint64_t i = start; i <= last; i++) {
       score_subseq(motif, seq, i, &score, tbl);
       if (UNLIKELY(score > threshold)) (*out_hits)++;
       if (score > *out_max) *out_max = score;
     }
+  } else if (do_rc) {
+    /* Reverse-only: compute both but ignore forward score. */
+    for (uint64_t i = start; i <= last; i++) {
+      score_subseq_rc(motif, seq, i, &score, &score_rc, tbl);
+      if (UNLIKELY(score_rc > threshold)) (*out_hits)++;
+      if (score_rc > *out_max) *out_max = score_rc;
+    }
   }
+}
+
+/* Count hits and track max PWM score for one (motif, full sequence) pair.
+   Wrapper around score_range_scan using args.scan_rc as the strand mask. */
+static void score_seq_scan(const motif_t *motif, const unsigned char *seq,
+                            const uint64_t seq_size, uint64_t *out_hits, int *out_max) {
+  score_range_scan(motif, seq, 0, seq_size, 1, args.scan_rc, out_hits, out_max);
+}
+
+/* Decide do_fwd / do_rc for a BED region given its strand char and -R setting. */
+static inline void strand_mask_for(const char strand, int *do_fwd, int *do_rc) {
+  if (strand == '+')      { *do_fwd = 1;            *do_rc = 0; }
+  else if (strand == '-') { *do_fwd = 0;            *do_rc = args.scan_rc ? 1 : 0; }
+  else                    { *do_fwd = 1;            *do_rc = args.scan_rc ? 1 : 0; }
+  /* If user passed -R and the region is strand '-', we have no work to do
+     (no rc, no fwd). Make that explicit: skip such regions in callers via
+     do_fwd|do_rc == 0. */
+}
+
+/* Per-region scoring position count: (width - mot_size + 1) * strand_factor.
+   strand_factor = 2 when both strands active, 1 otherwise. Returns 0 when
+   region is shorter than the motif or no strand is active. */
+static inline uint64_t region_positions(const uint64_t start, const uint64_t end,
+                                        const uint64_t mot_size, const char strand) {
+  if (end <= start || (end - start) < mot_size) return 0;
+  int do_fwd, do_rc;
+  strand_mask_for(strand, &do_fwd, &do_rc);
+  const uint64_t s = do_fwd + do_rc;
+  if (s == 0) return 0;
+  return (end - start - mot_size + 1) * s;
 }
 
 /* ---- Low-memory streaming scoring (single-threaded) ---- */
@@ -1617,15 +1965,52 @@ static void score_one_seq_all_motifs(const unsigned char *seq, const uint64_t L,
   }
 }
 
+/* BED-restricted streaming variant: score every region for this sequence
+   against every motif, treating each region as one independent unit. */
+static void score_one_seq_all_motifs_bed(const unsigned char *seq, const uint64_t L,
+                                          const enr_bed_t *bed,
+                                          const uint64_t *regions, const uint64_t nr,
+                                          const int is_pos) {
+  uint64_t *seq_hits  = is_pos ? seq_hits_pos  : seq_hits_neg;
+  uint64_t *site_hits = is_pos ? site_hits_pos : site_hits_neg;
+  uint64_t *positions = is_pos ? stream_pos_positions : stream_neg_positions;
+  (void) L;  /* bounds were validated at bed bind / read time when possible;
+                in streaming we accept the BED start/end as-is — out-of-bounds
+                is handled by score_range_scan returning early. */
+  for (uint64_t ri = 0; ri < nr; ri++) {
+    const uint64_t rid = regions[ri];
+    int do_fwd, do_rc;
+    strand_mask_for(bed->strands[rid], &do_fwd, &do_rc);
+    for (uint64_t mi = 0; mi < motif_info.n; mi++) {
+      motif_t *m = motifs[mi];
+      uint64_t hits = 0; int mx = INT_MIN;
+      score_range_scan(m, seq, bed->starts[rid], bed->ends[rid],
+                       do_fwd, do_rc, &hits, &mx);
+      site_hits[mi] += hits;
+      if (hits > 0) seq_hits[mi]++;
+      if (positions)
+        positions[mi] += region_positions(bed->starts[rid], bed->ends[rid],
+                                          m->size, bed->strands[rid]);
+    }
+  }
+}
+
 /* Walk pos / neg FASTA via kseq, calling score_one_seq_all_motifs per record
-   and accumulating set-level GC / total_bases / unknowns. */
+   and accumulating set-level GC / total_bases / unknowns. When `bed` is
+   non-NULL, scoring is restricted to that BED's regions for the streamed
+   sequence (one unit per region). */
 static void stream_score_set(kseq_t *kseq, seq_set_t *set, const int is_pos,
-                             const char *label) {
+                             const char *label, const enr_bed_t *bed) {
   ERASE_ARRAY(char_counts, 256);
   set->n = 0;
   set->total_bases = 0;
   set->unknowns = 0;
   set->gc_pct = 0.0;
+  uint64_t *region_buf = NULL;
+  if (bed) {
+    region_buf = malloc(sizeof(*region_buf) * bed->n_regions);
+    if (!region_buf) badexit("Error: Failed to alloc BED region scratch.");
+  }
   int ret;
   while ((ret = kseq_read(kseq)) >= 0) {
     if (kseq->seq.l == 0) continue;
@@ -1633,12 +2018,18 @@ static void stream_score_set(kseq_t *kseq, seq_set_t *set, const int is_pos,
     const unsigned char *seq = (const unsigned char *) kseq->seq.s;
     const uint64_t L = kseq->seq.l;
     for (uint64_t j = 0; j < L; j++) char_counts[seq[j]]++;
-    score_one_seq_all_motifs(seq, L, is_pos);
+    if (bed) {
+      const uint64_t nr = enr_bed_collect(bed, kseq->name.s ? kseq->name.s : "", region_buf);
+      if (nr) score_one_seq_all_motifs_bed(seq, L, bed, region_buf, nr, is_pos);
+    } else {
+      score_one_seq_all_motifs(seq, L, is_pos);
+    }
     if (args.progress && (set->n % 100) == 0) {
       fprintf(stderr, "\r%s seqs streamed: %" PRIu64, label, set->n);
       fflush(stderr);
     }
   }
+  free(region_buf);
   if (args.progress) fprintf(stderr, "\r%s seqs streamed: %" PRIu64 "\n", label, set->n);
   if (ret == -2) badexit("Error: Failed to parse FASTQ qualities.");
   if (ret < -2)  badexit("Error: Failed to read input.");
@@ -1671,7 +2062,7 @@ static void stream_score_set(kseq_t *kseq, seq_set_t *set, const int is_pos,
 static void *enr_sub_process(void *arg) {
   uint64_t thread_i = *(uint64_t *)arg;
   free(arg);
-  uint64_t n_total = pos_set.n + neg_set.n;
+  const uint64_t n_total = pos_unit_n + neg_unit_n;
   for (uint64_t mi=0; mi<motif_info.n; mi++) {
     motif_t *motif = motifs[mi];
     if (motif->thread != thread_i) continue;
@@ -1679,21 +2070,53 @@ static void *enr_sub_process(void *arg) {
     fill_cdf(motif);
     set_threshold(motif);
     uint64_t sp=0, sn=0, hp=0, hn=0;
-    for (uint64_t si=0; si<pos_set.n; si++) {
-      uint64_t hits=0; int mx=INT_MIN;
-      score_seq_scan(motif, pos_set.seqs[si], pos_set.sizes[si], &hits, &mx);
-      sp += hits;
-      if (hits > 0) hp++;
-      if (args.test_mode == TEST_RANKSUM && max_scores_arr)
-        max_scores_arr[mi*n_total + si] = mx;
+    /* Positives: iterate BED regions when -x, else full sequences. */
+    if (args.use_bed_pos) {
+      for (uint64_t ri=0; ri<bed_pos.n_regions; ri++) {
+        const uint64_t si = bed_pos.seq_idx[ri];
+        int do_fwd, do_rc;
+        strand_mask_for(bed_pos.strands[ri], &do_fwd, &do_rc);
+        uint64_t hits=0; int mx=INT_MIN;
+        score_range_scan(motif, pos_set.seqs[si], bed_pos.starts[ri], bed_pos.ends[ri],
+                         do_fwd, do_rc, &hits, &mx);
+        sp += hits;
+        if (hits > 0) hp++;
+        if (args.test_mode == TEST_RANKSUM && max_scores_arr)
+          max_scores_arr[mi*n_total + ri] = mx;
+      }
+    } else {
+      for (uint64_t si=0; si<pos_set.n; si++) {
+        uint64_t hits=0; int mx=INT_MIN;
+        score_seq_scan(motif, pos_set.seqs[si], pos_set.sizes[si], &hits, &mx);
+        sp += hits;
+        if (hits > 0) hp++;
+        if (args.test_mode == TEST_RANKSUM && max_scores_arr)
+          max_scores_arr[mi*n_total + si] = mx;
+      }
     }
-    for (uint64_t si=0; si<neg_set.n; si++) {
-      uint64_t hits=0; int mx=INT_MIN;
-      score_seq_scan(motif, neg_set.seqs[si], neg_set.sizes[si], &hits, &mx);
-      sn += hits;
-      if (hits > 0) hn++;
-      if (args.test_mode == TEST_RANKSUM && max_scores_arr)
-        max_scores_arr[mi*n_total + pos_set.n + si] = mx;
+    /* Negatives: iterate BED regions when -X, else full sequences. */
+    if (args.use_bed_neg) {
+      for (uint64_t ri=0; ri<bed_neg.n_regions; ri++) {
+        const uint64_t si = bed_neg.seq_idx[ri];
+        int do_fwd, do_rc;
+        strand_mask_for(bed_neg.strands[ri], &do_fwd, &do_rc);
+        uint64_t hits=0; int mx=INT_MIN;
+        score_range_scan(motif, neg_set.seqs[si], bed_neg.starts[ri], bed_neg.ends[ri],
+                         do_fwd, do_rc, &hits, &mx);
+        sn += hits;
+        if (hits > 0) hn++;
+        if (args.test_mode == TEST_RANKSUM && max_scores_arr)
+          max_scores_arr[mi*n_total + pos_unit_n + ri] = mx;
+      }
+    } else {
+      for (uint64_t si=0; si<neg_set.n; si++) {
+        uint64_t hits=0; int mx=INT_MIN;
+        score_seq_scan(motif, neg_set.seqs[si], neg_set.sizes[si], &hits, &mx);
+        sn += hits;
+        if (hits > 0) hn++;
+        if (args.test_mode == TEST_RANKSUM && max_scores_arr)
+          max_scores_arr[mi*n_total + pos_unit_n + si] = mx;
+      }
     }
     seq_hits_pos[mi]  = hp;
     seq_hits_neg[mi]  = hn;
@@ -1738,6 +2161,12 @@ static void usage(void) {
     " -j <int>   Threads (default: 1).\n"
     " -l         Low-memory streaming mode (one seq at a time). Incompatible\n"
     "            with -T ranksum, stdin (-i -), and forces -j 1.\n"
+    " -x <bed>   BED file restricting scoring to ranges in positives. Each\n"
+    "            BED region is treated as one independent unit for the test.\n"
+    "            BED col-6 strand: '.'=both (resp. -R), '+'=fwd, '-'=rev.\n"
+    " -X <bed>   BED file restricting scoring to ranges in negatives. Requires\n"
+    "            -n and -x; if absent, full -n FASTA is used. If -x is set and\n"
+    "            -n is absent, the shuffled null is built from BED slices.\n"
     " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
     , YAMTK_VERSION, YAMTK_YEAR,
@@ -1786,7 +2215,7 @@ int main_enr(int argc, char **argv) {
   char *seed_str = NULL;
   char neg_source_str[512]; neg_source_str[0]='\0';
 
-  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:RMdrk:s:q:j:lgvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "i:n:m:o:b:p:N:t:T:RMdrk:s:q:j:lgx:X:vwh")) != -1) {
     switch (opt) {
       case 'i':
         if (files.i_open) badexit("Error: -i specified more than once.");
@@ -1896,6 +2325,28 @@ int main_enr(int argc, char **argv) {
       case 'l':
         args.low_mem = 1;
         break;
+      case 'x':
+        if (files.x_pos_open) badexit("Error: -x specified more than once.");
+        files.x_pos = gzopen(optarg, "r");
+        if (!files.x_pos) {
+          fprintf(stderr, "Error: Failed to open positive BED file \"%s\" [%s]",
+            optarg, strerror(errno));
+          badexit("");
+        }
+        files.x_pos_open = 1;
+        args.use_bed_pos = 1;
+        break;
+      case 'X':
+        if (files.x_neg_open) badexit("Error: -X specified more than once.");
+        files.x_neg = gzopen(optarg, "r");
+        if (!files.x_neg) {
+          fprintf(stderr, "Error: Failed to open negative BED file \"%s\" [%s]",
+            optarg, strerror(errno));
+          badexit("");
+        }
+        files.x_neg_open = 1;
+        args.use_bed_neg = 1;
+        break;
       case 'w':
         args.w=1;
         /* fall through */
@@ -1916,6 +2367,14 @@ int main_enr(int argc, char **argv) {
   if (!has_pos) badexit("Error: Missing -i (positives FASTA).");
   if (!has_motifs) badexit("Error: Missing -m (motif file).");
   if (!has_neg && use_stdin_pos) badexit("Error: Cannot shuffle stdin input; provide -n.");
+  if (args.use_bed_neg && !has_neg)
+    badexit("Error: -X requires -n (external negative FASTA).");
+  if (args.use_bed_neg && !args.use_bed_pos)
+    badexit("Error: -X must be paired with -x.");
+  if (args.use_bed_pos && use_stdin_pos)
+    badexit("Error: -x is incompatible with stdin input (cannot index sequence names).");
+  if (args.low_mem && args.use_bed_pos && !has_neg)
+    badexit("Error: -l with -x requires -n (shuffled-from-BED is not streamable).");
 
   if (test_mode_str) {
     if      (strcmp(test_mode_str,"seqs")==0)    args.test_mode=TEST_SEQS;
@@ -1987,11 +2446,24 @@ int main_enr(int argc, char **argv) {
     }
     setup_motifs_low_mem();
 
+    /* Read BED(s) before streaming so per-seq lookups are O(1) inside the loop. */
+    if (args.use_bed_pos) {
+      if (args.v) fprintf(stderr, "Reading positive BED ...\n");
+      enr_bed_read(&bed_pos, files.x_pos, "positive");
+      enr_bed_build_hash(&bed_pos);
+    }
+    if (args.use_bed_neg) {
+      if (args.v) fprintf(stderr, "Reading negative BED ...\n");
+      enr_bed_read(&bed_neg, files.x_neg, "negative");
+      enr_bed_build_hash(&bed_neg);
+    }
+
     /* Positives: stream + score */
     if (args.v) fprintf(stderr, "Streaming positives ...\n");
     t0 = time(NULL);
     kseq_t *kseq_pos = kseq_init(files.i);
-    stream_score_set(kseq_pos, &pos_set, /*is_pos=*/1, "Positive");
+    stream_score_set(kseq_pos, &pos_set, /*is_pos=*/1, "Positive",
+                     args.use_bed_pos ? &bed_pos : NULL);
     kseq_destroy(kseq_pos);
     if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+score positives");
 
@@ -2000,7 +2472,8 @@ int main_enr(int argc, char **argv) {
       if (args.v) fprintf(stderr, "Streaming negatives ...\n");
       t0 = time(NULL);
       kseq_t *kseq_neg = kseq_init(files.n);
-      stream_score_set(kseq_neg, &neg_set, /*is_pos=*/0, "Negative");
+      stream_score_set(kseq_neg, &neg_set, /*is_pos=*/0, "Negative",
+                       args.use_bed_neg ? &bed_neg : NULL);
       kseq_destroy(kseq_neg);
       if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "stream+score negatives");
       snprintf(neg_source_str, sizeof(neg_source_str), "%s", "fasta");
@@ -2099,6 +2572,10 @@ int main_enr(int argc, char **argv) {
         args.shuffle_k, args.use_seed ? args.seed : (uint64_t) 0);
     }
     free_cdf();
+    /* In streaming mode pos_set.n / neg_set.n are only known now. Lock in
+       unit counts before falling through to compute_stats. */
+    pos_unit_n = args.use_bed_pos ? bed_pos.n_regions : pos_set.n;
+    neg_unit_n = args.use_bed_neg ? bed_neg.n_regions : neg_set.n;
     /* Fall through to the existing stats / output block. */
     goto compute_stats;
   }
@@ -2115,6 +2592,14 @@ int main_enr(int argc, char **argv) {
   load_seq_set(kseq_pos, &pos_set, "positive");
   if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "load positives");
 
+  /* Read + bind the positive BED, if any. Validation is fatal on unknown
+     seq names or out-of-bounds ranges; this is statistically load-bearing. */
+  if (args.use_bed_pos) {
+    if (args.v) fprintf(stderr, "Reading positive BED ...\n");
+    enr_bed_read(&bed_pos, files.x_pos, "positive");
+    enr_bed_bind_seqs(&bed_pos, &pos_set, "positive");
+  }
+
   /* Load or shuffle negatives */
   if (has_neg) {
     if (args.v) fprintf(stderr, "Loading negatives ...\n");
@@ -2127,6 +2612,11 @@ int main_enr(int argc, char **argv) {
     if (!neg_set.names||!neg_set.seqs||!neg_set.sizes) badexit("Error: alloc neg_set failed.");
     load_seq_set(kseq_neg, &neg_set, "negative");
     if (args.v) print_time((uint64_t)difftime(time(NULL),t0), "load negatives");
+    if (args.use_bed_neg) {
+      if (args.v) fprintf(stderr, "Reading negative BED ...\n");
+      enr_bed_read(&bed_neg, files.x_neg, "negative");
+      enr_bed_bind_seqs(&bed_neg, &neg_set, "negative");
+    }
     /* Warn if length distributions differ greatly */
     if (args.v) {
       double ratio = (pos_set.total_bases > neg_set.total_bases)
@@ -2144,13 +2634,19 @@ int main_enr(int argc, char **argv) {
       "shuffle k=%d seed=%" PRIu64, args.shuffle_k, seed);
   }
 
+  /* Now that both sets and any BEDs are loaded, lock in the unit counts.
+     Each BED region (or whole sequence, sans BED) is one independent
+     observation for the enrichment test. */
+  pos_unit_n = args.use_bed_pos ? bed_pos.n_regions : pos_set.n;
+  neg_unit_n = args.use_bed_neg ? bed_neg.n_regions : neg_set.n;
+
   /* Warn for small ranksum samples */
   if (args.test_mode == TEST_RANKSUM && args.v) {
-    if (pos_set.n < 10 || neg_set.n < 10)
+    if (pos_unit_n < 10 || neg_unit_n < 10)
       fprintf(stderr,
         "Warning: Small sample sizes (pos=%'" PRIu64 ", neg=%'" PRIu64 ") may make\n"
         "  normal approximation for ranksum unreliable.\n",
-        pos_set.n, neg_set.n);
+        pos_unit_n, neg_unit_n);
   }
 
   /* Allocate result matrices */
@@ -2162,7 +2658,7 @@ int main_enr(int argc, char **argv) {
     badexit("Error: Failed to alloc result arrays.");
 
   if (args.test_mode == TEST_RANKSUM) {
-    uint64_t n_total = pos_set.n + neg_set.n;
+    uint64_t n_total = pos_unit_n + neg_unit_n;
     uint64_t ranksum_bytes = motif_info.n * n_total * sizeof(int);
     /* Hard cap: refuse rather than OOM-crash. 4 GB matches the practical
        single-allocation ceiling on most 64-bit systems and is plenty for
@@ -2221,16 +2717,28 @@ compute_stats:
       pos_positions = malloc(sizeof(uint64_t)*motif_info.n);
       neg_positions = malloc(sizeof(uint64_t)*motif_info.n);
       if (!pos_positions||!neg_positions) badexit("Error: Failed to alloc positions.");
-      int strands = args.scan_rc ? 2 : 1;
+      const int strands_full = args.scan_rc ? 2 : 1;
       for (uint64_t mi=0; mi<motif_info.n; mi++) {
-        uint64_t sz = motifs[mi]->size;
+        const uint64_t sz = motifs[mi]->size;
         pos_positions[mi]=0; neg_positions[mi]=0;
-        for (uint64_t si=0; si<pos_set.n; si++)
-          if (pos_set.sizes[si] >= sz)
-            pos_positions[mi] += (pos_set.sizes[si]-sz+1) * strands;
-        for (uint64_t si=0; si<neg_set.n; si++)
-          if (neg_set.sizes[si] >= sz)
-            neg_positions[mi] += (neg_set.sizes[si]-sz+1) * strands;
+        if (args.use_bed_pos) {
+          for (uint64_t ri=0; ri<bed_pos.n_regions; ri++)
+            pos_positions[mi] += region_positions(bed_pos.starts[ri], bed_pos.ends[ri],
+                                                  sz, bed_pos.strands[ri]);
+        } else {
+          for (uint64_t si=0; si<pos_set.n; si++)
+            if (pos_set.sizes[si] >= sz)
+              pos_positions[mi] += (pos_set.sizes[si]-sz+1) * strands_full;
+        }
+        if (args.use_bed_neg) {
+          for (uint64_t ri=0; ri<bed_neg.n_regions; ri++)
+            neg_positions[mi] += region_positions(bed_neg.starts[ri], bed_neg.ends[ri],
+                                                  sz, bed_neg.strands[ri]);
+        } else {
+          for (uint64_t si=0; si<neg_set.n; si++)
+            if (neg_set.sizes[si] >= sz)
+              neg_positions[mi] += (neg_set.sizes[si]-sz+1) * strands_full;
+        }
       }
     }
   }
@@ -2249,12 +2757,12 @@ compute_stats:
     if (args.test_mode == TEST_SEQS) {
       a = seq_hits_pos[mi];
       b = seq_hits_neg[mi];
-      c = pos_set.n - a;
-      d = neg_set.n - b;
+      c = pos_unit_n - a;
+      d = neg_unit_n - b;
       pval = fishers_exact_log_greater(a, b, c, d);
-      double pos_rate = (double)a / (double)pos_set.n;
-      double neg_rate = (double)b / (double)neg_set.n;
-      double neg_denom = (neg_rate > eps) ? neg_rate : (0.5 / (double)neg_set.n);
+      double pos_rate = (double)a / (double)pos_unit_n;
+      double neg_rate = (double)b / (double)neg_unit_n;
+      double neg_denom = (neg_rate > eps) ? neg_rate : (0.5 / (double)neg_unit_n);
       eff = pos_rate / neg_denom;
       l2e = log2(eff);
     } else if (args.test_mode == TEST_SITES) {
@@ -2269,9 +2777,9 @@ compute_stats:
       eff = (pos_rate > 0.0) ? pos_rate / neg_denom : 0.0;
       l2e = (eff > 0.0) ? log2(eff) : -INFINITY;
     } else { /* ranksum */
-      uint64_t n_total = pos_set.n + neg_set.n;
+      const uint64_t n_total = pos_unit_n + neg_unit_n;
       double auc;
-      mann_whitney_u_greater(&max_scores_arr[mi*n_total], (int)pos_set.n, (int)neg_set.n,
+      mann_whitney_u_greater(&max_scores_arr[mi*n_total], (int)pos_unit_n, (int)neg_unit_n,
                               &pval, &auc);
       eff = auc;
       double auc_denom = (1.0-auc > eps) ? (1.0-auc) : eps;
@@ -2311,8 +2819,10 @@ compute_stats:
   fprintf(files.o, "]\n");
   fprintf(files.o,
     "##MotifCount=%'" PRIu64 " PosSeqs=%'" PRIu64 " NegSeqs=%'" PRIu64
+    " PosUnits=%'" PRIu64 " NegUnits=%'" PRIu64
     " NegSource=%s TestMode=%s Effect=%s\n",
-    motif_info.n, pos_set.n, neg_set.n, neg_source_str, test_label, effect_label);
+    motif_info.n, pos_set.n, neg_set.n, pos_unit_n, neg_unit_n,
+    neg_source_str, test_label, effect_label);
   fprintf(files.o,
     "##motif\tmotif_id\tconsensus\tpos_n\tpos_seq_hits\tpos_site_hits"
     "\tneg_n\tneg_seq_hits\tneg_site_hits\teffect\tlog2_effect\tpvalue\tqvalue\n");
@@ -2325,8 +2835,8 @@ compute_stats:
       "\t%" PRIu64 "\t%" PRIu64 "\t%" PRIu64
       "\t%.6g\t%.6g\t%.9g\t%.9g\n",
       motifs[mi]->name, mi+1, motifs[mi]->consensus,
-      pos_set.n, seq_hits_pos[mi], site_hits_pos[mi],
-      neg_set.n, seq_hits_neg[mi], site_hits_neg[mi],
+      pos_unit_n, seq_hits_pos[mi], site_hits_pos[mi],
+      neg_unit_n, seq_hits_neg[mi], site_hits_neg[mi],
       results[ri].effect, results[ri].log2_effect,
       results[ri].pvalue, results[ri].qvalue);
   }

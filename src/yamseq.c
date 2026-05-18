@@ -1,5 +1,5 @@
 /*
- *   yamseq: Sequence manipulation (stats, rc, rna/dna, dup, subset, mask)
+ *   yamseq: Sequence manipulation (stats, rc, rna/dna, dup, subset, mask, subsample)
  *   Copyright (C) 2026  Benjamin Jean-Marie Tremblay
  *
  *   This program is free software: you can redistribute it and/or modify
@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <ctype.h>
+#include <time.h>
 #include <zlib.h>
 #include "kseq.h"
 #include "khash.h"
@@ -64,31 +65,34 @@ typedef enum {
   ACTION_DNA,
   ACTION_DUP,
   ACTION_SUBSET,
-  ACTION_MASK
+  ACTION_MASK,
+  ACTION_SUBSAMPLE
 } action_t;
 
 static action_t parse_action(const char *s) {
   if (!s) return ACTION_NONE;
-  if (strcmp(s, "stats")  == 0) return ACTION_STATS;
-  if (strcmp(s, "rc")     == 0) return ACTION_RC;
-  if (strcmp(s, "rna")    == 0) return ACTION_RNA;
-  if (strcmp(s, "dna")    == 0) return ACTION_DNA;
-  if (strcmp(s, "dup")    == 0) return ACTION_DUP;
-  if (strcmp(s, "subset") == 0) return ACTION_SUBSET;
-  if (strcmp(s, "mask")   == 0) return ACTION_MASK;
+  if (strcmp(s, "stats")     == 0) return ACTION_STATS;
+  if (strcmp(s, "rc")        == 0) return ACTION_RC;
+  if (strcmp(s, "rna")       == 0) return ACTION_RNA;
+  if (strcmp(s, "dna")       == 0) return ACTION_DNA;
+  if (strcmp(s, "dup")       == 0) return ACTION_DUP;
+  if (strcmp(s, "subset")    == 0) return ACTION_SUBSET;
+  if (strcmp(s, "mask")      == 0) return ACTION_MASK;
+  if (strcmp(s, "subsample") == 0) return ACTION_SUBSAMPLE;
   return ACTION_NONE;
 }
 
 static const char *action_name(action_t a) {
   switch (a) {
-    case ACTION_STATS:  return "stats";
-    case ACTION_RC:     return "rc";
-    case ACTION_RNA:    return "rna";
-    case ACTION_DNA:    return "dna";
-    case ACTION_DUP:    return "dup";
-    case ACTION_SUBSET: return "subset";
-    case ACTION_MASK:   return "mask";
-    default:            return "<none>";
+    case ACTION_STATS:     return "stats";
+    case ACTION_RC:        return "rc";
+    case ACTION_RNA:       return "rna";
+    case ACTION_DNA:       return "dna";
+    case ACTION_DUP:       return "dup";
+    case ACTION_SUBSET:    return "subset";
+    case ACTION_MASK:      return "mask";
+    case ACTION_SUBSAMPLE: return "subsample";
+    default:               return "<none>";
   }
 }
 
@@ -96,7 +100,10 @@ static const char *action_name(action_t a) {
 
 typedef struct args_t {
   action_t action;
-  uint64_t dup_n;
+  uint64_t n_arg;        /* -n N (used by dup count, subsample reservoir size) */
+  double   sub_f;        /* -f p Bernoulli probability for subsample; <0 = unset */
+  uint64_t seed;
+  int      use_seed;
   int      mask_hard;
   int      use_bed;
   int      trim_names;
@@ -107,7 +114,10 @@ typedef struct args_t {
 
 static args_t args = {
   .action     = ACTION_NONE,
-  .dup_n      = 0,
+  .n_arg      = 0,
+  .sub_f      = -1.0,
+  .seed       = 0,
+  .use_seed   = 0,
   .mask_hard  = 0,
   .use_bed    = 0,
   .trim_names = 1,
@@ -169,11 +179,16 @@ static void usage(void) {
     "           BED col-4 = output name (else seq:start-end), col-6 = strand.\n"
     "  mask     Soft-mask (lowercase) BED regions; -N for hard mask (N).\n"
     "           Requires -x; strand ignored.\n"
+    "  subsample  Random subset of input sequences. Requires either -n N\n"
+    "           (reservoir, exact count) or -f p (Bernoulli, 0<p<1).\n"
+    "           Input order is preserved in the output.\n"
     "\n"
     " -i <str>   Input FASTA/FASTQ ('-' = stdin).\n"
     " -o <str>   Output (default: stdout).\n"
     " -x <str>   BED file (subset/mask only). Can be gzipped.\n"
-    " -n <int>   Repeat count for dup.\n"
+    " -n <int>   Count: copies per input (dup) or reservoir size (subsample).\n"
+    " -f <dbl>   Per-sequence keep probability for subsample (0,1).\n"
+    " -s <uint>  RNG seed for subsample (default: time-seeded).\n"
     " -N         Hard-mask (replace with N) instead of soft-mask. mask only.\n"
     " -r         Do not trim sequence names to the first word.\n"
     " -g         Show progress bar.\n"
@@ -228,6 +243,50 @@ static void toggle_u_to_t(unsigned char *seq, const uint64_t L) {
     else if (seq[i] == 'u') seq[i] = 't';
   }
 }
+
+/* ---- PRNG (xoroshiro128++, seeded via splitmix64). Shared with subsample. ---- */
+
+#define ROTL(x, k) (((x) << (k)) | ((x) >> (64 - (k))))
+
+typedef struct { uint64_t s[2]; } xrng_t;
+
+static inline uint64_t splitmix64(uint64_t x) {
+  uint64_t z = (x += 0x9e3779b97f4a7c15);
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+  return z ^ (z >> 31);
+}
+
+static inline uint64_t xrand_r(xrng_t *r) {
+  const uint64_t s0 = r->s[0];
+  uint64_t s1 = r->s[1];
+  const uint64_t result = ROTL(s0 + s1, 17) + s0;
+  s1 ^= s0;
+  r->s[0] = ROTL(s0, 49) ^ s1 ^ (s1 << 21);
+  r->s[1] = ROTL(s1, 28);
+  return result;
+}
+
+static inline void sxrand_r(xrng_t *r, uint64_t seed) {
+  r->s[0] = splitmix64(seed);
+  r->s[1] = splitmix64(r->s[0]);
+}
+
+/* Uniform double in [0, 1). 53-bit mantissa precision. */
+static inline double xrand_double(xrng_t *r) {
+  return (xrand_r(r) >> 11) * (1.0 / (double)(1ULL << 53));
+}
+
+/* Uniform integer in [0, k). Unbiased rejection sampling. */
+static inline uint64_t xrand_below(xrng_t *r, uint64_t k) {
+  if (k == 0) return 0;
+  const uint64_t lim = UINT64_MAX - (UINT64_MAX % k);
+  uint64_t x;
+  do { x = xrand_r(r); } while (x >= lim);
+  return x % k;
+}
+
+static xrng_t xrng;
 
 /* ---- FASTA output ---- */
 
@@ -599,6 +658,63 @@ static void emit_stats_row(const unsigned char *seq, const uint64_t L, const cha
     idx, name, L, gc_pct, n_n);
 }
 
+/* ---- Action: subsample ----
+
+   Two modes (mutually exclusive):
+     -n N : reservoir sampling, exact output count (or all if input < N).
+     -f p : independent Bernoulli per sequence, streaming, approximate count.
+
+   In both modes the output preserves input order. For -f that's free (we
+   decide on the fly); for -n we sort the reservoir by original index
+   before emitting. */
+
+typedef struct {
+  uint64_t       idx;       /* 1-based original input index */
+  uint64_t       L;
+  uint64_t       comment_l;
+  char          *name;
+  unsigned char *seq;
+  char          *comment;   /* NULL if no comment or if !args.trim_names==0 */
+} reservoir_slot_t;
+
+static reservoir_slot_t *reservoir = NULL;
+static uint64_t          reservoir_filled = 0;
+
+static int slot_copy(reservoir_slot_t *dst, const kseq_t *kseq, const uint64_t idx) {
+  dst->idx = idx;
+  dst->L = kseq->seq.l;
+  dst->name = strdup(kseq->name.s ? kseq->name.s : "");
+  if (!dst->name) return 1;
+  if (dst->L) {
+    dst->seq = malloc(dst->L + 1);
+    if (!dst->seq) { free(dst->name); dst->name = NULL; return 1; }
+    memcpy(dst->seq, kseq->seq.s, dst->L);
+    dst->seq[dst->L] = '\0';
+  } else {
+    dst->seq = NULL;
+  }
+  dst->comment_l = kseq->comment.l;
+  if (kseq->comment.l && kseq->comment.s) {
+    dst->comment = strdup(kseq->comment.s);
+    if (!dst->comment) { free(dst->name); free(dst->seq); dst->name=NULL; dst->seq=NULL; return 1; }
+  } else {
+    dst->comment = NULL;
+  }
+  return 0;
+}
+
+static void slot_free(reservoir_slot_t *s) {
+  free(s->name); free(s->seq); free(s->comment);
+  s->name = NULL; s->seq = NULL; s->comment = NULL;
+}
+
+static int cmp_slot_by_idx(const void *a, const void *b) {
+  const reservoir_slot_t *sa = a, *sb = b;
+  if (sa->idx < sb->idx) return -1;
+  if (sa->idx > sb->idx) return  1;
+  return 0;
+}
+
 /* ---- Validation of action + flag combos ---- */
 
 static void validate_args(void) {
@@ -615,14 +731,34 @@ static void validate_args(void) {
     fprintf(stderr, "Error: -a %s requires -x <bed>.\n", action_name(args.action));
     badexit("");
   }
-  /* -n only with dup, required there */
-  if (args.dup_n > 0 && args.action != ACTION_DUP) {
-    fprintf(stderr, "Error: -n is only valid with -a dup (got -a %s).\n",
+  /* -n only with dup/subsample, required for dup */
+  if (args.n_arg > 0 && args.action != ACTION_DUP && args.action != ACTION_SUBSAMPLE) {
+    fprintf(stderr, "Error: -n is only valid with -a dup or -a subsample (got -a %s).\n",
       action_name(args.action));
     badexit("");
   }
-  if (args.action == ACTION_DUP && args.dup_n == 0) {
+  if (args.action == ACTION_DUP && args.n_arg == 0) {
     badexit("Error: -a dup requires -n <int>=1.");
+  }
+  /* -f only with subsample */
+  if (args.sub_f >= 0.0 && args.action != ACTION_SUBSAMPLE) {
+    fprintf(stderr, "Error: -f is only valid with -a subsample (got -a %s).\n",
+      action_name(args.action));
+    badexit("");
+  }
+  if (args.action == ACTION_SUBSAMPLE) {
+    int has_n = (args.n_arg > 0);
+    int has_f = (args.sub_f >= 0.0);
+    if (!has_n && !has_f) badexit("Error: -a subsample requires either -n <int> or -f <dbl>.");
+    if ( has_n &&  has_f) badexit("Error: -a subsample: -n and -f are mutually exclusive.");
+    if (has_f && (args.sub_f <= 0.0 || args.sub_f >= 1.0))
+      badexit("Error: -f must be in (0,1).");
+  }
+  /* -s only with subsample */
+  if (args.use_seed && args.action != ACTION_SUBSAMPLE) {
+    fprintf(stderr, "Error: -s is only valid with -a subsample (got -a %s).\n",
+      action_name(args.action));
+    badexit("");
   }
   /* -N only with mask */
   if (args.mask_hard && args.action != ACTION_MASK) {
@@ -639,7 +775,7 @@ int main_seq(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "a:i:o:x:n:Nrgvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "a:i:o:x:n:f:s:Nrgvwh")) != -1) {
     switch (opt) {
       case 'a':
         if (args.action != ACTION_NONE) badexit("Error: -a specified more than once.");
@@ -686,12 +822,26 @@ int main_seq(int argc, char **argv) {
         args.use_bed = 1;
         break;
       case 'n':
-        if (str_to_uint64_t(optarg, &args.dup_n)) {
+        if (str_to_uint64_t(optarg, &args.n_arg)) {
           badexit("Error: Failed to parse -n value.");
         }
-        if (args.dup_n == 0) {
+        if (args.n_arg == 0) {
           badexit("Error: -n must be a positive integer.");
         }
+        break;
+      case 'f': {
+        char *tmp; errno = 0;
+        args.sub_f = strtod(optarg, &tmp);
+        if (optarg == tmp || errno != 0 || *tmp != '\0') {
+          badexit("Error: Failed to parse -f value.");
+        }
+        break;
+      }
+      case 's':
+        if (str_to_uint64_t(optarg, &args.seed)) {
+          badexit("Error: Failed to parse -s value.");
+        }
+        args.use_seed = 1;
         break;
       case 'N':
         args.mask_hard = 1;
@@ -732,10 +882,23 @@ int main_seq(int argc, char **argv) {
   /* Per-action one-time header */
   if (args.action == ACTION_STATS) emit_stats_header();
 
+  /* Subsample setup: seed RNG, allocate reservoir if -n. */
+  if (args.action == ACTION_SUBSAMPLE) {
+    const uint64_t actual_seed = args.use_seed
+      ? args.seed : (uint64_t)time(NULL);
+    sxrand_r(&xrng, actual_seed);
+    if (args.v) fprintf(stderr, "RNG seed: %" PRIu64 "\n", actual_seed);
+    if (args.n_arg > 0) {
+      reservoir = calloc(args.n_arg, sizeof(*reservoir));
+      if (!reservoir) badexit("Error: Failed to alloc reservoir.");
+    }
+  }
+
   /* Stream sequences */
   kseq_t *kseq = kseq_init(files.i);
   int ret_val;
   uint64_t idx = 0;
+  uint64_t kept = 0;  /* for subsample summary */
   while ((ret_val = kseq_read(kseq)) >= 0) {
     idx++;
     unsigned char *seq = (unsigned char *) kseq->seq.s;
@@ -760,7 +923,7 @@ int main_seq(int argc, char **argv) {
         break;
       case ACTION_DUP: {
         char dup_name[1024];
-        for (uint64_t i = 1; i <= args.dup_n; i++) {
+        for (uint64_t i = 1; i <= args.n_arg; i++) {
           snprintf(dup_name, sizeof(dup_name), "%s-%" PRIu64, name, i);
           write_seq(seq, L, dup_name, NULL, 0);
         }
@@ -784,6 +947,29 @@ int main_seq(int argc, char **argv) {
         write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
         break;
       }
+      case ACTION_SUBSAMPLE:
+        if (args.n_arg > 0) {
+          /* Reservoir sampling (Vitter algorithm R). */
+          if (idx <= args.n_arg) {
+            if (slot_copy(&reservoir[idx - 1], kseq, idx))
+              badexit("Error: Failed to copy sequence into reservoir.");
+            reservoir_filled = idx;
+          } else {
+            const uint64_t j = xrand_below(&xrng, idx);
+            if (j < args.n_arg) {
+              slot_free(&reservoir[j]);
+              if (slot_copy(&reservoir[j], kseq, idx))
+                badexit("Error: Failed to copy sequence into reservoir.");
+            }
+          }
+        } else {
+          /* Bernoulli: emit immediately if u < p. Streams in input order. */
+          if (xrand_double(&xrng) < args.sub_f) {
+            write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
+            kept++;
+          }
+        }
+        break;
       default:
         /* Other actions wired in subsequent commits */
         break;
@@ -797,7 +983,25 @@ int main_seq(int argc, char **argv) {
   kseq_destroy(kseq);
   free(seq_regions_buf);
 
-  if (args.v) fprintf(stderr, "Processed %" PRIu64 " sequence(s).\n", idx);
+  /* Flush reservoir (subsample -n N): sort by original index, write, free. */
+  if (args.action == ACTION_SUBSAMPLE && args.n_arg > 0) {
+    if (reservoir_filled > 1)
+      qsort(reservoir, reservoir_filled, sizeof(*reservoir), cmp_slot_by_idx);
+    for (uint64_t i = 0; i < reservoir_filled; i++) {
+      reservoir_slot_t *s = &reservoir[i];
+      write_seq(s->seq, s->L, s->name, s->comment, s->comment_l);
+      slot_free(s);
+    }
+    free(reservoir); reservoir = NULL;
+    kept = reservoir_filled;
+  }
+
+  if (args.v) {
+    if (args.action == ACTION_SUBSAMPLE)
+      fprintf(stderr, "Processed %" PRIu64 " sequence(s); kept %" PRIu64 ".\n", idx, kept);
+    else
+      fprintf(stderr, "Processed %" PRIu64 " sequence(s).\n", idx);
+  }
 
   free_bed();
   close_files();

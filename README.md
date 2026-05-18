@@ -7,7 +7,7 @@
 * PWM refinement against positive sequences: [yamtk ref](#yamref)
 * Motif-vs-database comparison: [yamtk cmp](#yamcmp)
 * Seed sequences with sampled motifs: [yamtk seed](#yamseed)
-* Sequence manipulation (stats/rc/rna-dna/dup/subset/mask): [yamtk seq](#yamseq)
+* Sequence manipulation (stats/rc/rna-dna/dup/subset/mask/subsample): [yamtk seq](#yamseq)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
@@ -375,8 +375,47 @@ Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt
  -j <int>   Threads (default: 1).
  -l         Low-memory streaming mode (one seq at a time). Incompatible
             with -T ranksum, stdin (-i -), and forces -j 1.
+ -x <bed>   BED file restricting scoring to ranges in positives. Each
+            BED region is treated as one independent unit for the test.
+            BED col-6 strand: '.'=both (resp. -R), '+'=fwd, '-'=rev.
+ -X <bed>   BED file restricting scoring to ranges in negatives. Requires
+            -n and -x; if absent, full -n FASTA is used. If -x is set and
+            -n is absent, the shuffled null is built from BED slices.
  -g         Show progress bar.
  -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### BED-restricted enrichment (`-x` / `-X`)
+
+For peak-based enrichment (the standard AME/STREME workflow) pass a BED
+file of peak regions via `-x`. Each BED region becomes one independent
+**unit** for the statistical test:
+
+- `-T seqs` asks "of N peaks, how many contain ≥1 motif hit?"
+- `-T sites` counts hits inside peaks and uses the sum of peak widths
+  (× strands) as the position denominator.
+- `-T ranksum` collects one max PWM score per peak.
+
+The output's `pos_n` / `neg_n` columns then report the peak (region)
+count rather than the FASTA sequence count.
+
+Each BED row's col-6 strand controls which strand the region is scanned
+on: `.` = both (subject to `-R`), `+` = forward only, `-` = reverse only.
+
+When `-n` is given, `-X <bed>` applies the same restriction to the
+negative set. When `-n` is omitted and `-x` is set, the shuffled null is
+built from the BED region slices (one shuffled seq per region) so the
+null's k-mer composition matches what's actually being scored.
+
+```sh
+# Peak-based enrichment: scan each peak in pos.bed against motifs.
+$ yamtk enr -i genome.fa -x peaks.bed -m motifs.meme
+
+# Pos + neg BEDs (slices of the same genome FASTA):
+$ yamtk enr -i pos.fa -n neg.fa -x pos.bed -X neg.bed -m motifs.meme
+
+# Shuffled null built from peak slices:
+$ yamtk enr -i genome.fa -x peaks.bed -m motifs.meme -k 2 -s 42
 ```
 
 ### Low-memory mode (`-l`)
@@ -421,9 +460,13 @@ sorted ascending by q-value:
 
 ```
 ##yamenr v2.2.0 [ ... ]
-##MotifCount=N PosSeqs=N NegSeqs=N NegSource=... TestMode=seqs Effect=seq_fold
-##motif  motif_id  pos_n  pos_seq_hits  pos_site_hits  neg_n  neg_seq_hits  neg_site_hits  effect  log2_effect  pvalue  qvalue
+##MotifCount=N PosSeqs=N NegSeqs=N PosUnits=N NegUnits=N NegSource=... TestMode=seqs Effect=seq_fold
+##motif  motif_id  consensus  pos_n  pos_seq_hits  pos_site_hits  neg_n  neg_seq_hits  neg_site_hits  effect  log2_effect  pvalue  qvalue
 ```
+
+`PosUnits` / `NegUnits` equal `PosSeqs` / `NegSeqs` by default; under
+`-x` / `-X` they are the number of BED regions instead. `pos_n` /
+`neg_n` (the per-row count columns) follow the same convention.
 
 `effect` and `log2_effect` meaning depends on `-T`:
 - `seqs` / `sites` — fold enrichment (positive/negative hit rate ratio)
@@ -696,6 +739,7 @@ subcommand with an `-a <action>` selector. The supported actions are:
 | `dup` | Repeat each input sequence N times. Names get `-1`…`-N` suffixes. Requires `-n`. |
 | `subset` | Extract substrings defined by BED ranges. Col-4 = output name; col-6 `-` → RC. Requires `-x`. |
 | `mask` | Soft-mask (lowercase) BED regions in place; `-N` flag switches to hard mask (replace with `N`). Requires `-x`. |
+| `subsample` | Random subset of input sequences. Either `-n N` (reservoir: exact count, buffers N records) or `-f p` (per-sequence Bernoulli, streams). Input order is preserved. `-s` for seed. |
 
 ### Usage
 
@@ -706,7 +750,9 @@ Usage:  yamtk seq -a <action> [options] -i seqs.fa[.gz]
  -i <str>   Input FASTA/FASTQ ('-' = stdin).
  -o <str>   Output (default: stdout).
  -x <str>   BED file (subset/mask only). Can be gzipped.
- -n <int>   Repeat count for dup.
+ -n <int>   Count: copies per input (dup) or reservoir size (subsample).
+ -f <dbl>   Per-sequence keep probability for subsample (0,1).
+ -s <uint>  RNG seed for subsample (default: time-seeded).
  -N         Hard-mask (replace with N) instead of soft-mask. mask only.
  -r         Do not trim sequence names to the first word.
  -g         Show progress bar.
@@ -732,7 +778,15 @@ yamtk seq -a subset -x peaks.bed -i genome.fa > peaks.fa
 yamtk seq -a mask -x repeats.bed -i genome.fa > masked.fa
 # ... or hard-mask
 yamtk seq -a mask -N -x repeats.bed -i genome.fa > hardmasked.fa
+
+# Random subsample of exactly 1,000 sequences (reservoir, reproducible)
+yamtk seq -a subsample -n 1000 -s 42 -i big.fa > sample.fa
+# ... or roughly half the input by per-sequence coin flip (streams)
+yamtk seq -a subsample -f 0.5 -s 42 -i big.fa > halved.fa
 ```
+
+Header bar — `yamtk seq -a stats -i big.fa | wc -l` is a quick way to
+size the input before picking `-n`.
 
 ## yamshuf
 
