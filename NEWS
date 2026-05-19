@@ -1,6 +1,18 @@
 CHANGES IN VERSION UNRELEASED
 -----------------------------
 
+* yamtk scan/enr: alloc_cdf() now pre-sizes each thread's CDF scratch to
+  max(cdf_size) across all loaded motifs, mirroring yamref's
+  commit 4975752 pattern. Eliminates the per-motif realloc thrash in
+  fill_cdf and brings the three multi-threaded scoring tools to a
+  consistent allocation strategy. yamme is unchanged: it discovers
+  motifs at runtime, so no max can be computed at thread-init time.
+
+* yamtk scan: out_buf_lens (per-thread output-buffer fill counters) is
+  now padded so each counter occupies its own 64-byte cache line.
+  Removes false sharing between adjacent threads' counter writes during
+  buffer flushes. Modest win on hit-dense scans at high -j.
+
 * yamtk ref: DEFAULT_HIT_PVAL is now 1e-4 (was 1e-3), matching yamme /
   yamenr / yamscan. Note that 1e-4 is below the minimum reachable
   p-value for a 6-bp PWM at uniform background (~2.4e-4), so for short

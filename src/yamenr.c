@@ -563,17 +563,24 @@ static double   **cdf           = NULL;
 static double   **tmp_pdf       = NULL;
 
 static int alloc_cdf(void) {
+  /* Pre-size each thread's CDF scratch to max(cdf_size) across all loaded
+     motifs; fill_cdf will never need to grow. Mirrors yamref's pattern
+     (commit 4975752). */
+  uint64_t max_cdf_size = 1;
+  for (uint64_t i = 0; i < motif_info.n; i++) {
+    if (motifs[i]->cdf_size > max_cdf_size) max_cdf_size = motifs[i]->cdf_size;
+  }
   cdf_real_size = malloc(sizeof(uint64_t) * args.nthreads);
   if (!cdf_real_size) { fprintf(stderr, "Error: alloc_cdf failed."); return 1; }
-  for (uint64_t i = 0; i < (uint64_t)args.nthreads; i++) cdf_real_size[i] = 1;
+  for (uint64_t i = 0; i < (uint64_t)args.nthreads; i++) cdf_real_size[i] = max_cdf_size;
   cdf = malloc(sizeof(double *) * args.nthreads);
   if (!cdf) { fprintf(stderr, "Error: alloc_cdf failed."); return 1; }
   tmp_pdf = malloc(sizeof(double *) * args.nthreads);
   if (!tmp_pdf) { fprintf(stderr, "Error: alloc_cdf failed."); return 1; }
   for (uint64_t i = 0; i < (uint64_t)args.nthreads; i++) {
-    cdf[i] = malloc(sizeof(double));
+    cdf[i] = malloc(max_cdf_size * sizeof(double));
     if (!cdf[i]) { fprintf(stderr, "Error: alloc_cdf failed."); return 1; }
-    tmp_pdf[i] = malloc(sizeof(double));
+    tmp_pdf[i] = malloc(max_cdf_size * sizeof(double));
     if (!tmp_pdf[i]) { fprintf(stderr, "Error: alloc_cdf failed."); return 1; }
   }
   return 0;
@@ -925,7 +932,10 @@ static void fill_cdf(motif_t *motif) {
       motif->name, motif->cdf_size, MAX_CDF_SIZE);
     badexit("");
   }
-  if (cdf_real_size[motif->thread] < motif->cdf_size) {
+  /* alloc_cdf() sizes each thread's CDF scratch to max(cdf_size) across all
+     loaded motifs, so we shouldn't need to grow here. Defensive realloc
+     retained in case a future code path adds motifs after alloc_cdf. */
+  if (UNLIKELY(cdf_real_size[motif->thread] < motif->cdf_size)) {
     double *r1 = realloc(cdf[motif->thread], motif->cdf_size*sizeof(double));
     if (!r1) badexit("Error: Memory re-allocation for CDF failed.");
     cdf[motif->thread] = r1;

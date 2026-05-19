@@ -510,13 +510,20 @@ static double    **cdf;
 static double    **tmp_pdf;
 
 static int alloc_cdf(void) {
+  /* Compute max cdf_size across all loaded motifs once, so each thread's
+     CDF scratch can be sized in one shot rather than reallocing per-motif
+     in fill_cdf(). Mirrors yamref's pattern (commit 4975752). */
+  uint64_t max_cdf_size = 1;
+  for (uint64_t i = 0; i < motif_info.n; i++) {
+    if (motifs[i]->cdf_size > max_cdf_size) max_cdf_size = motifs[i]->cdf_size;
+  }
   cdf_real_size = malloc(sizeof(uint64_t) * args.nthreads);
   if (cdf_real_size == NULL) {
     fprintf(stderr, "Error: Failed to allocate memory for real CDF sizes.");
     return 1;
   }
   for (uint64_t i = 0; i < args.nthreads; i++) {
-    cdf_real_size[i] = 1;
+    cdf_real_size[i] = max_cdf_size;
   }
   cdf = malloc(sizeof(double *) * args.nthreads);
   if (cdf == NULL) {
@@ -529,12 +536,12 @@ static int alloc_cdf(void) {
     return 1;
   }
   for (uint64_t i = 0; i < args.nthreads; i++) {
-    cdf[i] = malloc(sizeof(double));
+    cdf[i] = malloc(max_cdf_size * sizeof(double));
     if (cdf[i] == NULL) {
       fprintf(stderr, "Error: Failed to allocate memory for CDF (#%" PRIu64 ").", i);
       return 1;
     }
-    tmp_pdf[i] = malloc(sizeof(double));
+    tmp_pdf[i] = malloc(max_cdf_size * sizeof(double));
     if (tmp_pdf[i] == NULL) {
       fprintf(stderr, "Error: Failed to allocate memory for temporary PDF (#%" PRIu64 ").", i);
       return 1;
@@ -758,11 +765,10 @@ static void fill_cdf(motif_t *motif) {
         MIN_BKG_VALUE);
     badexit("");
   }
-  /* Instead of allocating and freeing a CDF for every motif, share a
-   * single one for all motifs -- just reset it every time and realloc to a
-   * larger size if needed.
-   */
-  if (cdf_real_size[motif->thread] < motif->cdf_size) {
+  /* alloc_cdf() sizes each thread's CDF scratch to max(cdf_size) across
+     all loaded motifs, so we should never need to grow here. Keep a
+     defensive realloc in case future code adds motifs after alloc_cdf. */
+  if (UNLIKELY(cdf_real_size[motif->thread] < motif->cdf_size)) {
     double *cdf_rl = realloc(cdf[motif->thread], motif->cdf_size * sizeof(double));
     if (cdf_rl == NULL) {
       badexit("Error: Memory re-allocation for motif CDF failed.");
@@ -2791,7 +2797,14 @@ static inline void score_subseq_rc(const motif_t *motif, const unsigned char *se
 #define OUT_LINE_RESERVE   ((uint64_t) 1024)
 
 static char           **out_bufs       = NULL;  /* [nthreads][OUT_BUF_CAP] */
-static uint64_t        *out_buf_lens   = NULL;  /* [nthreads] current fill */
+/* Per-thread fill counters, cache-line padded so adjacent threads' writes
+   don't ping-pong the same L1 line. Each entry occupies one 64-byte line. */
+#define CACHE_LINE_SIZE ((uint64_t) 64)
+typedef struct {
+  uint64_t v;
+  char     pad[CACHE_LINE_SIZE - sizeof(uint64_t)];
+} padded_u64_t;
+static padded_u64_t    *out_buf_lens   = NULL;  /* [nthreads] current fill */
 static pthread_mutex_t  out_lock       = PTHREAD_MUTEX_INITIALIZER;
 
 static int out_bufs_init(int n) {
@@ -2806,11 +2819,11 @@ static int out_bufs_init(int n) {
 }
 
 static void out_buf_flush(uint64_t thread_i) {
-  if (out_buf_lens[thread_i] == 0) return;
+  if (out_buf_lens[thread_i].v == 0) return;
   pthread_mutex_lock(&out_lock);
-  fwrite(out_bufs[thread_i], 1, out_buf_lens[thread_i], files.o);
+  fwrite(out_bufs[thread_i], 1, out_buf_lens[thread_i].v, files.o);
   pthread_mutex_unlock(&out_lock);
-  out_buf_lens[thread_i] = 0;
+  out_buf_lens[thread_i].v = 0;
 }
 
 static void out_bufs_flush_all(int n) {
@@ -2828,14 +2841,14 @@ static void out_bufs_free(int n) {
   PVALUE8, SCORE9, SCORE_PCT10, MATCH11_SIZE, MATCH11) \
     do { \
       const uint64_t _ti = motif->thread; \
-      if (out_buf_lens[_ti] + OUT_LINE_RESERVE > OUT_BUF_CAP) out_buf_flush(_ti); \
-      int _n = snprintf(out_bufs[_ti] + out_buf_lens[_ti], \
-        OUT_BUF_CAP - out_buf_lens[_ti], \
+      if (out_buf_lens[_ti].v + OUT_LINE_RESERVE > OUT_BUF_CAP) out_buf_flush(_ti); \
+      int _n = snprintf(out_bufs[_ti] + out_buf_lens[_ti].v, \
+        OUT_BUF_CAP - out_buf_lens[_ti].v, \
         "%s:%" PRIu64 "-%" PRIu64 "(%c)\t%s\t%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
         BED_RANGE1_CHROM, BED_RANGE1_START, BED_RANGE1_END, BED_RANGE1_STRAND, \
         BED_NAME2, SEQ_NAME3, START4, END5, STRAND6, MOTIF7, PVALUE8, SCORE9, \
         SCORE_PCT10, MATCH11_SIZE, MATCH11); \
-      if (_n > 0) out_buf_lens[_ti] += (uint64_t) _n; \
+      if (_n > 0) out_buf_lens[_ti].v += (uint64_t) _n; \
     } while (0)
 
 static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const uint64_t bed_i) {
@@ -2890,13 +2903,13 @@ static void score_seq_in_bed(const motif_t *motif, const uint64_t seq_loc, const
   SCORE_PCT8, MATCH9_SIZE, MATCH9) \
     do { \
       const uint64_t _ti = motif->thread; \
-      if (out_buf_lens[_ti] + OUT_LINE_RESERVE > OUT_BUF_CAP) out_buf_flush(_ti); \
-      int _n = snprintf(out_bufs[_ti] + out_buf_lens[_ti], \
-        OUT_BUF_CAP - out_buf_lens[_ti], \
+      if (out_buf_lens[_ti].v + OUT_LINE_RESERVE > OUT_BUF_CAP) out_buf_flush(_ti); \
+      int _n = snprintf(out_bufs[_ti] + out_buf_lens[_ti].v, \
+        OUT_BUF_CAP - out_buf_lens[_ti].v, \
         "%s\t%" PRIu64 "\t%" PRIu64 "\t%c\t%s\t%.9g\t%.3f\t%.1f\t%.*s\n", \
         SEQ_NAME1, START2, END3, STRAND4, MOTIF5, PVALUE6, SCORE7, SCORE_PCT8, \
         MATCH9_SIZE, MATCH9); \
-      if (_n > 0) out_buf_lens[_ti] += (uint64_t) _n; \
+      if (_n > 0) out_buf_lens[_ti].v += (uint64_t) _n; \
     } while (0)
 
 static void score_seq(const motif_t *motif, const uint64_t seq_i, const uint64_t seq_loc) {
