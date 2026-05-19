@@ -54,7 +54,7 @@ KSEQ_INIT(gzFile, gzread)
 #define ALLOC_CHUNK_SIZE        ((uint64_t) 256)
 #define DEFAULT_PSEUDOCOUNT                    1
 #define DEFAULT_NSITES                      1000
-#define DEFAULT_HIT_PVAL                     1e-3
+#define DEFAULT_HIT_PVAL                     1e-4
 #define DEFAULT_R_PASSES                       2
 #define PROGRESS_BAR_WIDTH                    60
 #define PROGRESS_BAR_STRING \

@@ -1,6 +1,14 @@
 CHANGES IN VERSION UNRELEASED
 -----------------------------
 
+* yamtk ref: DEFAULT_HIT_PVAL is now 1e-4 (was 1e-3), matching yamme /
+  yamenr / yamscan. Note that 1e-4 is below the minimum reachable
+  p-value for a 6-bp PWM at uniform background (~2.4e-4), so for short
+  motifs the set_threshold fallback to p=0.01 kicks in and refinement
+  uses the top-1% scoring positions; pass an explicit -t 1e-3 (or
+  similar) to opt back into a strict threshold for short motifs.
+  Goldens regenerated.
+
 * yamtk ref: flag harmonization (BREAKING).
     -r N    -> -n N    (refinement passes; new -r is the cross-tool
                         "do not trim motif names" toggle, matching
