@@ -132,59 +132,98 @@ TOTAL_BP=$(awk '/^>/{next} {n+=length($0)} END{print n}' "$FA")
 # ---- Warm up disk cache ----
 cat "$FA" >/dev/null
 
+# Parse the "Approx. peak memory usage: X (KB|MB|GB)" line yamtk emits
+# under -v. Strip locale-dependent grouping commas (LC_NUMERIC=en_US adds
+# them). Returns peak memory in MB as a float (or "-" if not found).
+parse_peak_mb() {
+    awk '
+        /Approx. peak memory usage:/ {
+            # match e.g. "Approx. peak memory usage: 1,234.56 MB."
+            n=split($0, parts, ":")
+            val=parts[2]
+            gsub(/,/, "", val)
+            gsub(/\.$/, "", val)
+            gsub(/^[ \t]+|[ \t]+$/, "", val)
+            # val now like "1234.56 MB" or "1234.56 KB" / "GB"
+            split(val, kv, " ")
+            num=kv[1]+0
+            unit=kv[2]
+            if (unit == "GB")      printf "%.2f", num * 1024
+            else if (unit == "KB") printf "%.4f", num / 1024
+            else                   printf "%.2f", num
+            exit
+        }
+    ' "$1"
+}
+
 # ---- Run ----
-echo -e "j\ttrial\twall_s\tbp_per_s"
+STDERR_LOG="$BENCH_DIR/last.stderr"
+echo -e "j\ttrial\twall_s\tbp_per_s\tpeak_mb"
 for j in "${JS[@]}"; do
     for ((t=1; t<=TRIALS; t++)); do
         start=$(python3 -c 'import time; print(time.time())')
-        "$YAMTK" scan -m "$MM" -s "$FA" -j "$j" -o /dev/null 2>/dev/null
+        "$YAMTK" scan -m "$MM" -s "$FA" -j "$j" -v -o /dev/null 2>"$STDERR_LOG"
         end=$(python3 -c 'import time; print(time.time())')
         wall=$(python3 -c "print(f'{$end - $start:.4f}')")
         bps=$(python3 -c "print(int($TOTAL_BP / ($end - $start)))")
-        echo -e "$j\t$t\t$wall\t$bps"
+        peak=$(parse_peak_mb "$STDERR_LOG")
+        [ -z "$peak" ] && peak="-"
+        echo -e "$j\t$t\t$wall\t$bps\t$peak"
     done
 done | tee "$BENCH_DIR/last.tsv"
 
 # ---- Summary: median per -j ----
-echo -e "\n# Median bp/s per -j:" >&2
-awk -F'\t' '
-    NR>1 && $1!="j" { vals[$1] = vals[$1] " " $4 }
-    END {
-        for (j in vals) {
-            n=split(vals[j], a, " ");
-            # a may have empty leading element; reindex
-            m=0; for(i=1;i<=n;i++) if(a[i] != "") b[++m]=a[i];
-            # sort b[]
-            for(i=1;i<=m;i++) for(k=i+1;k<=m;k++) if(b[i]+0>b[k]+0) {tmp=b[i]; b[i]=b[k]; b[k]=tmp}
-            mid=int((m+1)/2);
-            printf "  j=%s  median %d bp/s\n", j, b[mid];
-        }
-    }' "$BENCH_DIR/last.tsv" | sort >&2
+echo -e "\n# Median per -j (bp/s, peak MB):" >&2
+python3 - "$BENCH_DIR/last.tsv" <<'PY' >&2
+import sys, statistics, collections
+d_bps = collections.defaultdict(list)
+d_mem = collections.defaultdict(list)
+with open(sys.argv[1]) as f:
+    for ln in f:
+        if ln.startswith('#'): continue
+        parts = ln.strip().split('\t')
+        if len(parts) < 5 or parts[0] == 'j': continue
+        j, _, _, bps, mem = parts
+        d_bps[int(j)].append(float(bps))
+        if mem != '-': d_mem[int(j)].append(float(mem))
+for j in sorted(d_bps):
+    mb = statistics.median(d_mem[j]) if d_mem.get(j) else float('nan')
+    print(f"  j={j}  median {int(statistics.median(d_bps[j])):,} bp/s   {mb:6.1f} MB")
+PY
 
 # ---- Compare against baseline ----
 if [ -n "$BASELINE" ]; then
     if [ ! -s "$BASELINE" ]; then
         echo "error: baseline '$BASELINE' missing or empty" >&2; exit 2
     fi
-    echo -e "\n# Delta vs $BASELINE (per j, median bp/s):" >&2
+    echo -e "\n# Delta vs $BASELINE (per j, median bp/s, median peak MB):" >&2
     python3 - "$BASELINE" "$BENCH_DIR/last.tsv" <<'PY' >&2
 import sys, statistics, collections
-def medians(path):
-    d = collections.defaultdict(list)
+def parse(path):
+    bps = collections.defaultdict(list)
+    mem = collections.defaultdict(list)
     with open(path) as f:
         for ln in f:
             if ln.startswith('#'): continue
             parts = ln.strip().split('\t')
-            if len(parts)<4 or parts[0]=='j': continue
-            j, _, _, bps = parts
-            d[int(j)].append(float(bps))
-    return {j: statistics.median(v) for j, v in d.items()}
-a = medians(sys.argv[1])
-b = medians(sys.argv[2])
-for j in sorted(set(a) | set(b)):
-    base = a.get(j); new = b.get(j)
-    if base and new:
-        delta = (new - base) / base * 100
-        print(f"  j={j}  {base:>12,.0f} -> {new:>12,.0f} bp/s  ({delta:+.1f}%)")
+            if len(parts) < 4 or parts[0] == 'j': continue
+            j = int(parts[0]); bps[j].append(float(parts[3]))
+            if len(parts) >= 5 and parts[4] != '-':
+                mem[j].append(float(parts[4]))
+    return ({j: statistics.median(v) for j, v in bps.items()},
+            {j: statistics.median(v) for j, v in mem.items()})
+a_bps, a_mem = parse(sys.argv[1])
+b_bps, b_mem = parse(sys.argv[2])
+for j in sorted(set(a_bps) | set(b_bps)):
+    ba = a_bps.get(j); bn = b_bps.get(j)
+    if not (ba and bn): continue
+    dbps = (bn - ba) / ba * 100
+    if j in a_mem and j in b_mem:
+        ma, mn = a_mem[j], b_mem[j]
+        dmem = (mn - ma) / ma * 100 if ma else 0.0
+        print(f"  j={j}  {ba:>12,.0f} -> {bn:>12,.0f} bp/s  ({dbps:+.1f}%)   "
+              f"{ma:6.1f} -> {mn:6.1f} MB  ({dmem:+.1f}%)")
+    else:
+        print(f"  j={j}  {ba:>12,.0f} -> {bn:>12,.0f} bp/s  ({dbps:+.1f}%)   (no mem data)")
 PY
 fi
