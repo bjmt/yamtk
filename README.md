@@ -547,16 +547,19 @@ Usage:  yamtk ref [options] [ -m motifs.txt | -1 CONSENSUS ] -i positives.fa[.gz
  -i <str>   Positives FASTA/FASTQ ('-' = stdin).
  -o <str>   MEME output file (default: stdout).
  -t <dbl>   Hit-scoring p-value (default: 0.001).
- -r <int>   Refinement passes (default: 2; 0 = trim/extend only).
+ -n <int>   Refinement passes (default: 2; 0 = trim/extend only).
  -e <int>   Extend by N flanking positions per side on pass 1 (default: 0).
  -E         Auto-extend: grow flanks 1 column at a time until both sides'
-            new column IC falls below -I. Implies -T.
- -T         IC-trim flanks after refinement.
- -I <dbl>   IC threshold for -E stopping and -T trimming (default: 0.5).
+            new column IC falls below the -T threshold. Implies -T.
+ -T <dbl>   IC-trim flanks after refinement; value is the IC threshold
+            (in bits) used by both -T and -E (default: 0.5).
  -Q         Drop motifs whose refined total IC < seed total IC.
  -b A,C,G,T Background (default: from MEME bkg or uniform).
  -p <int>   Pseudocount for PWM generation (default: 1).
  -R         Disable reverse-strand scoring.
+ -r         Do not trim motif names: preserve identifier + altname in
+            output (default behaviour drops altname so the refined
+            consensus serves as the sole altname).
  -M         Mask lower-case bases (skip scanning at those positions).
  -g         Show progress bar.
  -v / -w / -h   Verbose / very-verbose / help.
@@ -574,7 +577,14 @@ Seed from a consensus, auto-extend flanks until per-column IC drops below 0.5,
 then IC-trim:
 
 ```sh
-$ yamtk ref -1 CACGTG -i peaks.fa -E -I 0.5 -o refined.meme
+$ yamtk ref -1 CACGTG -i peaks.fa -E -T 0.5 -o refined.meme
+```
+
+Refine and preserve the seed motif's original identifier + altname (so downstream
+tooling that keys on motif names still matches):
+
+```sh
+$ yamtk ref -m seed.meme -i peaks.fa -r -o refined.meme
 ```
 
 ## yamcmp

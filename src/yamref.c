@@ -125,6 +125,8 @@ typedef struct {
   double   ic_min;
   int      scan_rc;
   int      mask;
+  int      trim_names;   /* 1 = trim motif names to first token on output
+                            (default); -r sets to 0 to preserve full name. */
   int      use_user_bkg;
   int      progress;
   int      v;
@@ -144,6 +146,7 @@ static args_t args = {
   .ic_min       = MIN_IC_BITS,
   .scan_rc      = 1,
   .mask         = 0,
+  .trim_names   = 1,
   .use_user_bkg = 0,
   .progress     = 0,
   .v            = 0,
@@ -1572,10 +1575,16 @@ static void write_meme(int argc, char **argv) {
     motif_t *m = motifs[ri];
     if (m->dropped) continue;
     build_consensus(m, cons);
-    /* m->name captures identifier AND any altname (space-joined); print only
-       the identifier so the refined consensus serves as the sole altname. */
-    size_t id_len = strcspn(m->name, " \t");
-    fprintf(f, "MOTIF %.*s %s\n\n", (int)id_len, m->name, cons);
+    if (args.trim_names) {
+      /* Default: m->name captures identifier AND any altname (space-joined).
+         Print only the identifier so the refined consensus serves as the
+         sole altname. */
+      size_t id_len = strcspn(m->name, " \t");
+      fprintf(f, "MOTIF %.*s %s\n\n", (int)id_len, m->name, cons);
+    } else {
+      /* -r: preserve identifier + altname verbatim; do not append consensus. */
+      fprintf(f, "MOTIF %s\n\n", m->name);
+    }
     fprintf(f, "letter-probability matrix: alength= 4 w= %" PRIu64 " nsites= %" PRIu64 "\n",
       m->size, m->nsites_actual ? m->nsites_actual : (uint64_t)args.nsites);
     for (uint64_t j = 0; j < m->size; j++) {
@@ -1599,16 +1608,19 @@ static void usage(void) {
     " -i <str>   Positives FASTA/FASTQ ('-' = stdin).\n"
     " -o <str>   MEME output file (default: stdout).\n"
     " -t <dbl>   Hit-scoring p-value (default: %g).\n"
-    " -r <int>   Refinement passes (default: %d; 0 = trim/extend only).\n"
+    " -n <int>   Refinement passes (default: %d; 0 = trim/extend only).\n"
     " -e <int>   Extend by N flanking positions per side on pass 1 (default: 0).\n"
     " -E         Auto-extend: grow flanks 1 column at a time until both sides'\n"
-    "            new column IC falls below -I. Implies -T.\n"
-    " -T         IC-trim flanks after refinement.\n"
-    " -I <dbl>   IC threshold for -E stopping and -T trimming (default: %.2g).\n"
+    "            new column IC falls below the -T threshold. Implies -T.\n"
+    " -T <dbl>   IC-trim flanks after refinement; value is the IC threshold\n"
+    "            (in bits) used by both -T and -E (default: %.2g).\n"
     " -Q         Drop motifs whose refined total IC < seed total IC.\n"
     " -b A,C,G,T Background (default: from MEME bkg or uniform).\n"
     " -p <int>   Pseudocount for PWM generation (default: %d).\n"
     " -R         Disable reverse-strand scoring.\n"
+    " -r         Do not trim motif names: preserve identifier + altname in\n"
+    "            output (default behaviour drops altname so the refined\n"
+    "            consensus serves as the sole altname).\n"
     " -M         Mask lower-case bases (skip scanning at those positions).\n"
     " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
@@ -1628,7 +1640,7 @@ int main_ref(int argc, char **argv) {
   struct timespec ts_program;
   clock_gettime(CLOCK_MONOTONIC, &ts_program);
 
-  while ((opt = getopt(argc, argv, "m:1:i:o:t:r:e:ETI:Qb:p:RMgvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:t:n:e:ET:Qb:p:RrMgvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1665,10 +1677,12 @@ int main_ref(int argc, char **argv) {
         if (str_to_double(optarg, &args.hit_pval)) badexit("Error: Failed to parse -t value.");
         if (args.hit_pval <= 0.0 || args.hit_pval > 1.0) badexit("Error: -t must be in (0,1].");
         break;
-      case 'r':
-        if (str_to_int(optarg, &args.r_passes)) badexit("Error: Failed to parse -r value.");
-        if (args.r_passes < 0) badexit("Error: -r must be >= 0.");
+      case 'n':
+        if (str_to_int(optarg, &args.r_passes)) badexit("Error: Failed to parse -n value.");
+        if (args.r_passes < 0) badexit("Error: -n must be >= 0.");
         break;
+      case 'r':
+        args.trim_names = 0; break;
       case 'e':
         if (str_to_int(optarg, &args.extend)) badexit("Error: Failed to parse -e value.");
         if (args.extend < 0) badexit("Error: -e must be >= 0.");
@@ -1676,11 +1690,10 @@ int main_ref(int argc, char **argv) {
       case 'E':
         args.auto_extend = 1; break;
       case 'T':
-        args.ic_trim = 1; break;
-      case 'I':
-        if (str_to_double(optarg, &args.ic_min)) badexit("Error: Failed to parse -I value.");
+        if (str_to_double(optarg, &args.ic_min)) badexit("Error: Failed to parse -T value.");
         if (args.ic_min < 0.0 || args.ic_min > 2.0)
-          badexit("Error: -I must be in [0, 2].");
+          badexit("Error: -T must be in [0, 2].");
+        args.ic_trim = 1;
         break;
       case 'Q':
         args.quality_gate = 1; break;

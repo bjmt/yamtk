@@ -1,6 +1,19 @@
 CHANGES IN VERSION UNRELEASED
 -----------------------------
 
+* yamtk ref: flag harmonization (BREAKING).
+    -r N    -> -n N    (refinement passes; new -r is the cross-tool
+                        "do not trim motif names" toggle, matching
+                        scan/enr/seed/seq).
+    -T      -> -T <dbl> (now takes the IC-trim threshold directly).
+    -I <dbl> removed   (threshold is folded into -T; -E still uses it
+                        as the auto-extend stop threshold).
+  Numerical defaults are unchanged (refinement passes = 2, IC threshold
+  = 0.5 bits), so default invocations produce byte-identical output.
+  With -r, yamref now writes "MOTIF <id> <altname>" (preserves the seed
+  motif name verbatim, no consensus appended); without -r the default
+  is unchanged: "MOTIF <id> <refined-consensus>".
+
 * yamtk seed: new -c <int> flag for centre-biased random placement.
   Controls how strongly -f insertions cluster around each sequence's
   midpoint using an Irwin-Hall N draw (mean of N Uniform[0,1) samples):

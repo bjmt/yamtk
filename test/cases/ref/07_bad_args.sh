@@ -25,6 +25,6 @@ assert_stderr_contains "oversized extension stderr" "max" \
 assert_exit_nonzero "bad -i path" \
   "$YAMTK" ref -m "${TESTDIR}/fixtures/ref_seed.meme" -i /nonexistent.fa
 
-assert_exit_nonzero "negative -r" \
-  "$YAMTK" ref -r -1 -m "${TESTDIR}/fixtures/ref_seed.meme" \
+assert_exit_nonzero "negative -n" \
+  "$YAMTK" ref -n -1 -m "${TESTDIR}/fixtures/ref_seed.meme" \
   -i "${TESTDIR}/fixtures/me_implanted.fa"
