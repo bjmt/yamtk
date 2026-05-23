@@ -18,6 +18,8 @@ jobs:
         cc: [gcc, clang]
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, 'build_me')
+    env:
+      CC: ${{ matrix.cc }}
     steps:
       - name: clone
         uses: actions/checkout@v4
