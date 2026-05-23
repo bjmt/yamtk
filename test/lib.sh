@@ -34,15 +34,36 @@ assert_stderr_contains() {
     PASS "$desc stderr contains '$pattern'"
 }
 
-assert_golden() {
-    local desc="$1"; local expected="$2"; shift 2
-    local actual
-    actual=$("$@" 2>/dev/null | grep -v '^##yamscan ')
+__golden_check() {
+    local desc="$1" expected="$2" strip_pat="$3"; shift 3
+    local err_file actual rc
+    err_file=$(mktemp)
+    set +e
+    actual=$("$@" 2>"$err_file" | grep -v "$strip_pat")
+    rc=${PIPESTATUS[0]}
+    set -e
+    if [ "$rc" -ne 0 ]; then
+        echo "command exited non-zero ($rc); stderr follows:" >&2
+        sed 's/^/  | /' "$err_file" >&2
+        rm -f "$err_file"
+        FAIL "$desc: command exited non-zero"
+    fi
     if ! diff -u "$expected" <(echo "$actual") >/dev/null 2>&1; then
         diff -u "$expected" <(echo "$actual") >&2 || true
+        if [ -s "$err_file" ]; then
+            echo "captured stderr:" >&2
+            sed 's/^/  | /' "$err_file" >&2
+        fi
+        rm -f "$err_file"
         FAIL "$desc: output differs from golden $expected"
     fi
+    rm -f "$err_file"
     PASS "$desc matches golden"
+}
+
+assert_golden() {
+    local desc="$1" expected="$2"; shift 2
+    __golden_check "$desc" "$expected" '^##yamscan ' "$@"
 }
 
 assert_stdout_contains() {
@@ -66,47 +87,23 @@ assert_line_count_ge() {
 }
 
 assert_enr_golden() {
-    local desc="$1"; local expected="$2"; shift 2
-    local actual
-    actual=$("$@" 2>/dev/null | grep -v '^##yamenr \|^##MotifCount')
-    if ! diff -u "$expected" <(echo "$actual") >/dev/null 2>&1; then
-        diff -u "$expected" <(echo "$actual") >&2 || true
-        FAIL "$desc: output differs from golden $expected"
-    fi
-    PASS "$desc matches golden"
+    local desc="$1" expected="$2"; shift 2
+    __golden_check "$desc" "$expected" '^##yamenr \|^##MotifCount' "$@"
 }
 
 assert_me_golden() {
-    local desc="$1"; local expected="$2"; shift 2
-    local actual
-    actual=$("$@" 2>/dev/null | grep -v '^##yamme ')
-    if ! diff -u "$expected" <(echo "$actual") >/dev/null 2>&1; then
-        diff -u "$expected" <(echo "$actual") >&2 || true
-        FAIL "$desc: output differs from golden $expected"
-    fi
-    PASS "$desc matches golden"
+    local desc="$1" expected="$2"; shift 2
+    __golden_check "$desc" "$expected" '^##yamme ' "$@"
 }
 
 assert_ref_golden() {
-    local desc="$1"; local expected="$2"; shift 2
-    local actual
-    actual=$("$@" 2>/dev/null | grep -v '^##yamref ')
-    if ! diff -u "$expected" <(echo "$actual") >/dev/null 2>&1; then
-        diff -u "$expected" <(echo "$actual") >&2 || true
-        FAIL "$desc: output differs from golden $expected"
-    fi
-    PASS "$desc matches golden"
+    local desc="$1" expected="$2"; shift 2
+    __golden_check "$desc" "$expected" '^##yamref ' "$@"
 }
 
 assert_cmp_golden() {
-    local desc="$1"; local expected="$2"; shift 2
-    local actual
-    actual=$("$@" 2>/dev/null | grep -v '^##yamcmp ')
-    if ! diff -u "$expected" <(echo "$actual") >/dev/null 2>&1; then
-        diff -u "$expected" <(echo "$actual") >&2 || true
-        FAIL "$desc: output differs from golden $expected"
-    fi
-    PASS "$desc matches golden"
+    local desc="$1" expected="$2"; shift 2
+    __golden_check "$desc" "$expected" '^##yamcmp ' "$@"
 }
 
 assert_line_count_eq() {
