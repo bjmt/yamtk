@@ -440,9 +440,9 @@ static void close_files(void) {
 static void badexit(const char *msg) {
   fprintf(stderr, "%s\nRun yamtk me -h for usage.\n", msg);
   free_results();
+  free_thread_ctxs();
   free_seq_set(&pos_set);
   free_seq_set(&neg_set);
-  free_thread_ctxs();
   close_files();
   exit(EXIT_FAILURE);
 }
@@ -2222,11 +2222,12 @@ int main_me(int argc, char **argv) {
   if (files.tsv) write_tsv(argc, argv);
   if (files.meme) write_meme();
 
-  /* Clean up */
+  /* Clean up. free_thread_ctxs() depends on pos_set.n to free per-thread
+     sequence buffers, so it must run before free_seq_set(&pos_set). */
   free_results();
+  free_thread_ctxs();
   free_seq_set(&pos_set);
   free_seq_set(&neg_set);
-  free_thread_ctxs();
   close_files();
 
   if (args.v) {
