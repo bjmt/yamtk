@@ -1724,6 +1724,12 @@ int main_ref(int argc, char **argv) {
     }
   }
 
+  if (optind < argc) {
+    fprintf(stderr, "Error: Unexpected positional argument: %s\n", argv[optind]);
+    free_motifs(); free_seq_set(&pos_set); free_cdf(); close_files();
+    return EXIT_FAILURE;
+  }
+
   setlocale(LC_NUMERIC, "");
 
   if (!has_m && !consensus) badexit("Error: Missing required argument -m or -1.");
