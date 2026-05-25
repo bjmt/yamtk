@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <ctype.h>
+#include <math.h>
 #include <time.h>
 #include <zlib.h>
 #include "kseq.h"
@@ -39,6 +40,7 @@ KHASH_MAP_INIT_STR(seq_str_h, uint64_t)
 #define BED_FIELD_MAX_CHAR      ((uint64_t) 256)
 #define BED_NAME_MAX_CHAR       ((uint64_t) 512)
 #define BED_ALLOC_CHUNK_SIZE    ((uint64_t) 256)
+#define DEFAULT_GC_HIST_STEP    0.05
 
 #define ERASE_ARRAY(ARR, LEN) memset(ARR, 0, sizeof(ARR[0]) * (LEN))
 
@@ -66,7 +68,8 @@ typedef enum {
   ACTION_DUP,
   ACTION_SUBSET,
   ACTION_MASK,
-  ACTION_SUBSAMPLE
+  ACTION_SUBSAMPLE,
+  ACTION_HIST
 } action_t;
 
 static action_t parse_action(const char *s) {
@@ -79,6 +82,7 @@ static action_t parse_action(const char *s) {
   if (strcmp(s, "subset")    == 0) return ACTION_SUBSET;
   if (strcmp(s, "mask")      == 0) return ACTION_MASK;
   if (strcmp(s, "subsample") == 0) return ACTION_SUBSAMPLE;
+  if (strcmp(s, "hist")      == 0) return ACTION_HIST;
   return ACTION_NONE;
 }
 
@@ -92,6 +96,7 @@ static const char *action_name(action_t a) {
     case ACTION_SUBSET:    return "subset";
     case ACTION_MASK:      return "mask";
     case ACTION_SUBSAMPLE: return "subsample";
+    case ACTION_HIST:      return "hist";
     default:               return "<none>";
   }
 }
@@ -102,6 +107,8 @@ typedef struct args_t {
   action_t action;
   uint64_t n_arg;        /* -n N (used by dup count, subsample reservoir size) */
   double   sub_f;        /* -f p Bernoulli probability for subsample; <0 = unset */
+  double   bin_step;     /* -b step for hist (fraction in (0, 1]) */
+  int      use_bin_step;
   uint64_t seed;
   int      use_seed;
   int      mask_hard;
@@ -113,17 +120,19 @@ typedef struct args_t {
 } args_t;
 
 static args_t args = {
-  .action     = ACTION_NONE,
-  .n_arg      = 0,
-  .sub_f      = -1.0,
-  .seed       = 0,
-  .use_seed   = 0,
-  .mask_hard  = 0,
-  .use_bed    = 0,
-  .trim_names = 1,
-  .progress   = 0,
-  .v          = 0,
-  .w          = 0
+  .action       = ACTION_NONE,
+  .n_arg        = 0,
+  .sub_f        = -1.0,
+  .bin_step     = DEFAULT_GC_HIST_STEP,
+  .use_bin_step = 0,
+  .seed         = 0,
+  .use_seed     = 0,
+  .mask_hard    = 0,
+  .use_bed      = 0,
+  .trim_names   = 1,
+  .progress     = 0,
+  .v            = 0,
+  .w            = 0
 };
 
 /* ---- Files ---- */
@@ -182,18 +191,21 @@ static void usage(void) {
     "  subsample  Random subset of input sequences. Requires either -n N\n"
     "           (reservoir, exact count) or -f p (Bernoulli, 0<p<1).\n"
     "           Input order is preserved in the output.\n"
+    "  hist     Per-bin TSV histogram of per-sequence GC fractions, with\n"
+    "           seq_count and bp_count columns. Bin step set by -b.\n"
     "\n"
     " -i <str>   Input FASTA/FASTQ ('-' = stdin).\n"
     " -o <str>   Output (default: stdout).\n"
     " -x <str>   BED file (subset/mask only). Can be gzipped.\n"
     " -n <int>   Count: copies per input (dup) or reservoir size (subsample).\n"
     " -f <dbl>   Per-sequence keep probability for subsample (0,1).\n"
+    " -b <dbl>   GC bin step for hist, in (0, 1] (default: %.2f).\n"
     " -s <uint>  RNG seed for subsample (default: time-seeded).\n"
     " -N         Hard-mask (replace with N) instead of soft-mask. mask only.\n"
     " -r         Do not trim sequence names to the first word.\n"
     " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
-    , YAMTK_VERSION, YAMTK_YEAR
+    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_GC_HIST_STEP
   );
 }
 
@@ -658,6 +670,24 @@ static void emit_stats_row(const unsigned char *seq, const uint64_t L, const cha
     idx, name, L, gc_pct, n_n);
 }
 
+/* ---- Action: hist ----
+   Per-sequence GC fraction binned into uniform-width bins of width
+   args.bin_step. All-N / empty sequences contribute to n_skipped
+   (not bin 0). */
+
+static int gc_hist_n_bins(double step) {
+  int n = (int)ceil(1.0 / step);
+  if (n < 1) n = 1;
+  return n;
+}
+
+static int gc_hist_bin(double gc_frac, double step, int nb) {
+  int b = (int)floor(gc_frac / step);
+  if (b < 0) b = 0;
+  if (b >= nb) b = nb - 1;
+  return b;
+}
+
 /* ---- Action: subsample ----
 
    Two modes (mutually exclusive):
@@ -760,6 +790,12 @@ static void validate_args(void) {
       action_name(args.action));
     badexit("");
   }
+  /* -b only with hist */
+  if (args.use_bin_step && args.action != ACTION_HIST) {
+    fprintf(stderr, "Error: -b is only valid with -a hist (got -a %s).\n",
+      action_name(args.action));
+    badexit("");
+  }
   /* -N only with mask */
   if (args.mask_hard && args.action != ACTION_MASK) {
     fprintf(stderr, "Error: -N is only valid with -a mask (got -a %s).\n",
@@ -775,7 +811,7 @@ int main_seq(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "a:i:o:x:n:f:s:Nrgvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "a:i:o:x:n:f:b:s:Nrgvwh")) != -1) {
     switch (opt) {
       case 'a':
         if (args.action != ACTION_NONE) badexit("Error: -a specified more than once.");
@@ -837,6 +873,18 @@ int main_seq(int argc, char **argv) {
         }
         break;
       }
+      case 'b': {
+        char *tmp; errno = 0;
+        args.bin_step = strtod(optarg, &tmp);
+        if (optarg == tmp || errno != 0 || *tmp != '\0') {
+          badexit("Error: Failed to parse -b value.");
+        }
+        if (args.bin_step <= 0.0 || args.bin_step > 1.0) {
+          badexit("Error: -b must be in (0, 1].");
+        }
+        args.use_bin_step = 1;
+        break;
+      }
       case 's':
         if (str_to_uint64_t(optarg, &args.seed)) {
           badexit("Error: Failed to parse -s value.");
@@ -894,6 +942,21 @@ int main_seq(int argc, char **argv) {
     }
   }
 
+  /* Hist setup: allocate per-bin counters. */
+  int       hist_nb       = 0;
+  uint64_t *hist_seq_cnt  = NULL;
+  uint64_t *hist_bp_cnt   = NULL;
+  uint64_t  hist_skipped  = 0;
+  if (args.action == ACTION_HIST) {
+    hist_nb = gc_hist_n_bins(args.bin_step);
+    hist_seq_cnt = calloc((size_t)hist_nb, sizeof(*hist_seq_cnt));
+    hist_bp_cnt  = calloc((size_t)hist_nb, sizeof(*hist_bp_cnt));
+    if (!hist_seq_cnt || !hist_bp_cnt) {
+      free(hist_seq_cnt); free(hist_bp_cnt);
+      badexit("Error: Failed to alloc hist bins.");
+    }
+  }
+
   /* Stream sequences */
   kseq_t *kseq = kseq_init(files.i);
   int ret_val;
@@ -947,6 +1010,24 @@ int main_seq(int argc, char **argv) {
         write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
         break;
       }
+      case ACTION_HIST: {
+        uint64_t n_cg = 0, n_known = 0;
+        for (uint64_t i = 0; i < L; i++) {
+          const unsigned char idx_b = char2index[seq[i]];
+          if (idx_b == 4) continue;
+          n_known++;
+          if (idx_b == 1 || idx_b == 2) n_cg++;
+        }
+        if (n_known == 0) {
+          hist_skipped++;
+        } else {
+          const double gc_frac = (double)n_cg / (double)n_known;
+          const int b = gc_hist_bin(gc_frac, args.bin_step, hist_nb);
+          hist_seq_cnt[b]++;
+          hist_bp_cnt[b]  += L;
+        }
+        break;
+      }
       case ACTION_SUBSAMPLE:
         if (args.n_arg > 0) {
           /* Reservoir sampling (Vitter algorithm R). */
@@ -982,6 +1063,25 @@ int main_seq(int argc, char **argv) {
   }
   kseq_destroy(kseq);
   free(seq_regions_buf);
+
+  /* Emit hist TSV. */
+  if (args.action == ACTION_HIST) {
+    fprintf(files.o, "##yamseq hist gc_step=%g\n", args.bin_step);
+    fprintf(files.o, "#bin_lo\tbin_hi\tseq_count\tbp_count\n");
+    for (int b = 0; b < hist_nb; b++) {
+      double lo = (double)b * args.bin_step;
+      double hi = lo + args.bin_step;
+      if (hi > 1.0) hi = 1.0;
+      fprintf(files.o, "%g\t%g\t%" PRIu64 "\t%" PRIu64 "\n",
+        lo, hi, hist_seq_cnt[b], hist_bp_cnt[b]);
+    }
+    if (args.v && hist_skipped) {
+      fprintf(stderr, "Skipped %" PRIu64 " sequence(s) with no A/C/G/T bases.\n",
+        hist_skipped);
+    }
+    free(hist_seq_cnt); free(hist_bp_cnt);
+    hist_seq_cnt = NULL; hist_bp_cnt = NULL;
+  }
 
   /* Flush reservoir (subsample -n N): sort by original index, write, free. */
   if (args.action == ACTION_SUBSAMPLE && args.n_arg > 0) {
