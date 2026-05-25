@@ -644,7 +644,9 @@ Generate synthetic benchmark FASTA by inserting motif samples into input
 sequences. For each insertion, the bases overlaid on the sequence are sampled
 column-by-column from the motif's PPM (so a column with `[A=0.8, C=0.1, G=0.05,
 T=0.05]` yields 'A' 80% of the time). Sequence length is preserved (overwrite
-in place, never extend). Two placement modes are supported.
+in place, never extend). Four placement modes are supported: per-bp Poisson
+rate (`-f`), fixed count per sequence (`-n`), BED-driven (`-x`), and a
+single-range shortcut (`-X`).
 
 ### Usage
 
@@ -661,17 +663,21 @@ Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
  -o <str>   Output FASTA (default: stdout).
  -O <str>   Write ground-truth BED of insertions (seq, start, end,
             motif, '.', strand).
- -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x/-X.
+ -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -n/-x/-X.
+ -n <int>   Fixed-count mode: implant exactly N motifs per sequence
+            (or as many as fit; warns on shortfall). Same placement
+            engine as -f but with a deterministic count independent
+            of sequence length. Excludes -f/-x/-X.
  -x <str>   BED mode: col-4 = motif name (must match a loaded motif),
             col-6 = strand. If end-start != motif width, motif is
-            centered at the BED-range midpoint. Excludes -f/-X.
+            centered at the BED-range midpoint. Excludes -f/-n/-X.
  -X <str>   Single-range shortcut: seqname:start-end[:strand].
-            Requires exactly one motif loaded. Excludes -f/-x.
- -M <int>   Minimum spacing (bp) between -f insertions (default: 0).
- -c <int>   Random mode: centre-bias strength (Irwin-Hall N draws
-            averaged). 1 = uniform (default), 2 = triangular, larger
-            = more concentrated around the sequence midpoint. Only
-            applies to -f.
+            Requires exactly one motif loaded. Excludes -f/-n/-x.
+ -M <int>   Minimum spacing (bp) between -f/-n insertions (default: 0).
+ -c <int>   Random/fixed mode: centre-bias strength (Irwin-Hall N
+            draws averaged). 1 = uniform (default), 2 = triangular,
+            larger = more concentrated around the sequence midpoint.
+            Only applies to -f/-n.
  -R         Disable reverse-strand sampling (always insert '+').
  -s <int>   RNG seed (default: time-seeded).
  -r         Do not trim motif/sequence names to the first word.
@@ -711,6 +717,27 @@ yamtk seed -m motifs.meme -i peaks.fa -f 0.01 -c 10 -s 42 -O truth.bed > seeded.
 
 `-c 1` produces output that's byte-identical to omitting `-c`, so existing
 seeds and fixtures keep reproducing the same insertions.
+
+### Fixed-count mode
+
+`-n N` implants exactly *N* motifs per sequence regardless of sequence
+length, where Random mode (`-f`) gives a Poisson count that scales with
+length. Useful when every sequence in a benchmark needs the same number
+of planted hits (e.g. one motif per peak, or a fixed positive class
+size for ROC/PR evaluation):
+
+```sh
+# Plant exactly 3 motifs in every input sequence
+yamtk seed -m motifs.meme -i background.fa -n 3 -s 1 -O truth.bed > seeded.fa
+```
+
+The placement engine is shared with `-f`: random motif choice, random
+position, `-c` centre bias, `-M` minimum spacing, `-R` strand control,
+and `-O` truth-BED output all apply. Collisions retry up to 100 times
+per insertion. If a sequence is too short or too crowded to fit all
+*N*, the run prints a `placed K/N` warning to stderr and continues —
+the truth BED reflects only the insertions that were actually
+committed, so it always remains accurate.
 
 ### BED mode
 
