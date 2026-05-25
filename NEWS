@@ -22,6 +22,24 @@ CHANGES IN VERSION UNRELEASED
   negative set of `yamtk enr -n` or `yamtk me -n` when a real biological
   null is preferred over the shuffled-positive default.
 
+* New subcommand: yamtk conv — convert motifs between MEME, JASPAR,
+  HOMER, and HOCOMOCO formats. Input format is auto-detected (same
+  detector as the rest of yamtk); the target is chosen with -t
+  {meme|jaspar|homer|hocomoco}. Motifs are stored internally as PPMs;
+  PCM-style outputs (JASPAR, HOCOMOCO) are scaled to integer counts
+  using an nsites value preserved from the source where available (MEME
+  nsites= field, or JASPAR/HOCOMOCO column-sums) with -N as a fallback.
+  -p sets the pseudocount applied during PCM->PPM ingestion (default 0,
+  so JASPAR/HOCOMOCO round-trips reproduce the source counts exactly).
+  -T <bits> enables IC-based flank trimming (reuses yamref's
+  column_ic + ic_trim_motif), -b A,C,G,T sets the background used for
+  the HOMER threshold and emitted in the MEME Background block. HOMER
+  output's consensus column uses IUPAC ambiguity codes by cumulative
+  probability (any base with p >= 0.25 joins; argmax fallback); the
+  threshold field is the motif's max possible log-odds against the
+  background. Same-format input/output is allowed and acts as a
+  normalizer. -r preserves full motif names.
+
 * yamtk scan/enr: alloc_cdf() now pre-sizes each thread's CDF scratch to
   max(cdf_size) across all loaded motifs, mirroring yamref's
   commit 4975752 pattern. Eliminates the per-motif realloc thrash in
@@ -62,6 +80,16 @@ CHANGES IN VERSION UNRELEASED
   given seed), 2 = triangular, larger = more peaked. Applies to -f mode
   only; BED (-x) and single-range (-X) placement are unchanged. -c with
   a non-random mode is a usage error.
+
+* yamtk seed: new -n <int> flag for fixed-count placement. Implants
+  exactly N motifs per sequence regardless of length, in contrast to
+  -f which scales with sequence length via Poisson(lambda * seqlen).
+  Reuses the random-mode placement engine (motif/position sampling,
+  -c centre bias, -M spacing, -R strand control, -O truth BED,
+  collision retries). On retry exhaustion (sequence too short or too
+  crowded to fit all N), the run prints a "placed K/N" warning to
+  stderr and continues; the truth BED reflects only committed
+  insertions. Mutually exclusive with -f/-x/-X.
 
 * yamtk enr: new -x / -X flags for BED-restricted enrichment. -x narrows
   scoring in positives to the BED-defined regions; -X does the same for

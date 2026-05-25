@@ -30,6 +30,7 @@
 #include "yamseed.h"
 #include "yamseq.h"
 #include "yambkg.h"
+#include "yamconv.h"
 #include "version.h"
 
 static void help(void) {
@@ -47,6 +48,7 @@ static void help(void) {
         "    seed       Insert motif samples into sequences (FASTA + truth BED)\n"
         "    seq        Sequence manipulation (stats, rc, rna/dna, dup, subset, mask)\n"
         "    bkg        Generate GC/length-matched background sequences\n"
+        "    conv       Convert motifs between MEME/JASPAR/HOMER/HOCOMOCO\n"
         "    version    Print the version number and exit\n"
         "    help       Print this message and exit\n"
         "For subcommand usage, try: yamtk <subcommand> -h\n"
@@ -86,6 +88,8 @@ int main(int argc, char **argv) {
         return main_seq(argc - 1, argv + 1);
     } else if (strcmp(argv[1], "bkg") == 0) {
         return main_bkg(argc - 1, argv + 1);
+    } else if (strcmp(argv[1], "conv") == 0) {
+        return main_conv(argc - 1, argv + 1);
     } else {
         fprintf(stderr, "Error: Unknown subcommand '%s'; try 'help' for usage\n", argv[1]);
         return EXIT_FAILURE;

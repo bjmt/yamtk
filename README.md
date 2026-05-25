@@ -9,6 +9,7 @@
 * Seed sequences with sampled motifs: [yamtk seed](#yamseed)
 * Sequence manipulation: [yamtk seq](#yamseq)
 * GC/length-matched background sequences: [yamtk bkg](#yambkg)
+* Convert motifs between formats: [yamtk conv](#yamconv)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
@@ -954,6 +955,88 @@ Pool    GC bins (step=10%): 30-40%=2 40-50%=21 50-60%=27
   [13/50] tgt=[pos13] L=100 gc=55-60% -> neg49:0-100(+) gc=50-55% attempts=11 [fallback]
 Attempts: total=181, mean=3.6/pick, max=13/pick (limit -A 8).
 ```
+
+## yamconv
+
+Convert motifs between MEME, JASPAR, HOMER, and HOCOMOCO formats. The input
+format is auto-detected (same detector as the rest of yamtk); the output
+format is chosen with `-t`. Motifs are stored internally as PPMs; PCM-style
+outputs (JASPAR, HOCOMOCO) are scaled to integer counts using an `nsites`
+value preserved from the source when available, with `-N` as a fallback.
+Same-format conversion is allowed and acts as a normalizer.
+
+### Usage
+
+```
+yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk conv -m motifs.txt -t <fmt> [options]
+
+ -m <str>   Input motif file (MEME/JASPAR/HOMER/HOCOMOCO; '-' = stdin).
+ -t <str>   Target format: meme | jaspar | homer | hocomoco.
+ -o <str>   Output file (default: stdout).
+ -T <dbl>   IC threshold (bits) for flank trimming. When set, low-IC
+            flanking columns are trimmed before output. Suggested: 0.5.
+ -N <int>   Fallback nsites for PCM output when the source has none
+            (HOMER input, or MEME without nsites=) (default: 1000).
+ -p <int>   Pseudocount applied during PCM->PPM ingestion of JASPAR/
+            HOCOMOCO sources (default: 0; pass >0 to soften zero
+            probabilities for downstream log-transformed scoring).
+ -b A,C,G,T Background for the HOMER threshold (default: uniform).
+ -r         Do not trim motif names to the first word.
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Examples
+
+```sh
+# MEME -> JASPAR (count nsites preserved from the source's nsites= field)
+yamtk conv -m motifs.meme -t jaspar > motifs.jaspar
+
+# JASPAR -> MEME (counts -> probabilities, light pseudocount applied)
+yamtk conv -m JASPAR2024_CORE.jaspar -t meme > JASPAR.meme
+
+# HOMER -> HOCOMOCO with explicit nsites=200 (HOMER carries no nsites)
+yamtk conv -m my_motifs.homer -t hocomoco -N 200 > my_motifs.hocomoco
+
+# Same-format normalizer: round-trip through the parser/writer
+yamtk conv -m maybe_messy.meme -t meme > tidy.meme
+
+# Trim low-IC flanks before emitting
+yamtk conv -m discovered.meme -t meme -T 0.5 > trimmed.meme
+```
+
+### Format-specific notes
+
+**MEME output.** Emits MEME version 4 with `ALPHABET= ACGT`, a strand line,
+the Background block, and one `MOTIF` + `letter-probability matrix` pair
+per motif. The `nsites=` value is preserved from the source when known
+(MEME parses `nsites=` from the matrix header line; JASPAR/HOCOMOCO use
+the column-sum of counts); otherwise the `-N` fallback is used.
+
+**JASPAR output.** Standard four-row format with `A [ ... ]` / `C [ ... ]`
+/ `G [ ... ]` / `T [ ... ]`. Integer counts come from `round(p * nsites)`.
+
+**HOMER output.** First line is `>consensus<TAB>motif_name<TAB>threshold`.
+The consensus is an IUPAC string: any base with `p >= 0.25` joins the
+consensus set, mapped to its standard IUPAC code (single base -> ACGT;
+two bases -> M/R/W/S/Y/K; three bases -> V/H/D/B; four -> N). If no base
+clears the bar, the column falls back to argmax. The threshold is the
+motif's max possible log-odds score against the background
+(`sum_i log2(max_b(p_ib) / bkg_b)`) -- a sensible self-consistent default;
+override `-b` for non-uniform backgrounds, and tune the threshold
+externally for your actual scanning workload.
+
+**HOCOMOCO output.** Per-position count rows (no row labels). Counts come
+from `round(p * nsites)`; the source's column-sum nsites is preserved
+when known.
+
+### IC flank trimming (`-T`)
+
+When `-T <dbl>` is set, columns at both flanks are dropped while their
+information content (in bits, uniform background) is below the threshold.
+Trimming stops at the first column that clears the bar; a minimum width
+of 3 is enforced. This is the same routine used by `yamtk ref`. Useful
+for tidying noisy edges of de novo motifs before conversion.
 
 ## yamshuf
 

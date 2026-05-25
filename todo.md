@@ -2,6 +2,8 @@
 
 - wrappers: yamtkr, pyamtk
 
+- yamtk bkg: add a flag to print gc histograms
+
 - yamme -x, yamref -x
 - yamshuf: DNA/RNA shuffler
   + streme paper says it preserves positions of separator characters; I should do this too
@@ -11,8 +13,6 @@
     with the narrowed PPM. Would improve p-value sensitivity (fewer uninformative
     PWM degrees of freedom) in addition to the output-time IC trimming already
     implemented (MIN_IC_BITS).
-- yamconv: convert between motif formats
-
 - yamscan: Make only using -x and -s output the subset sequences instead of just
   info about the ranges? --> actually make it a separate program to manipulate seqs
 - get rid of infinite for loops, always use the `#define`'d bounds
