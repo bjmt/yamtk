@@ -1,5 +1,7 @@
 ## Todo
 
+- wrappers: yamtkr, pyamtk
+
 - yamme -x, yamref -x
 - yamshuf: DNA/RNA shuffler
   + streme paper says it preserves positions of separator characters; I should do this too

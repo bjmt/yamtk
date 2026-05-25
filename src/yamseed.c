@@ -179,12 +179,14 @@ static motif_t **motifs = NULL;
 
 typedef struct args_t {
   double      lambda;        /* -f, per-bp Poisson rate (random mode) */
+  uint64_t    n_per_seq;     /* -n, fixed insertions per sequence */
   uint64_t    min_spacing;   /* -M */
   int         centre_n;      /* -c, Irwin-Hall N for centre bias (random mode);
                                 1 = uniform (default) */
   int         seed;          /* -s */
   int         trim_names;    /* 1 = trim (default); -r sets to 0 */
   int         use_random;    /* set by -f */
+  int         use_fixed;     /* set by -n */
   int         use_bed;       /* set by -x */
   int         no_rc;         /* -R */
   int         progress;      /* -g */
@@ -197,11 +199,13 @@ typedef struct args_t {
 
 static args_t args = {
   .lambda      = 0.0,
+  .n_per_seq   = 0,
   .min_spacing = 0,
   .centre_n    = 1,
   .seed        = DEFAULT_SEED,
   .trim_names  = 1,
   .use_random  = 0,
+  .use_fixed   = 0,
   .use_bed     = 0,
   .no_rc       = 0,
   .progress    = 0,
@@ -1032,6 +1036,63 @@ static void do_random_mode(unsigned char *seq, const uint64_t L, const char *nam
   free(ivls);
 }
 
+/* Per-sequence fixed-count mode. Places exactly args.n_per_seq motifs (or as
+   many as fit). Same retry/collision rules as do_random_mode; on shortfall,
+   always warns to stderr. */
+static void do_fixed_mode(unsigned char *seq, const uint64_t L, const char *name, xrng_t *r) {
+  const uint64_t N = args.n_per_seq;
+  if (N == 0) return;
+  /* Find the smallest motif width to detect "no motif fits at all". */
+  uint64_t min_w = UINT64_MAX;
+  for (uint64_t i = 0; i < motif_info.n; i++) {
+    const uint64_t w = motifs[i]->size;
+    if (w > 0 && w < min_w) min_w = w;
+  }
+  if (min_w == UINT64_MAX || L < min_w) {
+    if (args.w)
+      fprintf(stderr,
+        "Warning: seq '%s' (len %" PRIu64 ") is shorter than the smallest motif; skipping.\n",
+        name, L);
+    return;
+  }
+  ivl_t *ivls = malloc(N * sizeof(*ivls));
+  if (!ivls) {
+    fprintf(stderr, "Error: Failed to allocate interval tracker for [%s].\n", name);
+    badexit("");
+  }
+  uint64_t n_ivls = 0, placed_total = 0;
+  for (uint64_t k = 0; k < N; k++) {
+    int placed = 0;
+    for (int attempt = 0; attempt < MAX_RETRIES && !placed; attempt++) {
+      const uint64_t mi = xrand_r(r) % motif_info.n;
+      motif_t *m = motifs[mi];
+      if (m->size == 0 || m->size > L) continue;
+      const uint64_t pos = (args.centre_n == 1)
+        ? xrand_r(r) % (L - m->size + 1)
+        : xrand_centred(r, L - m->size, args.centre_n);
+      const uint64_t end = pos + m->size;
+      if (overlaps_any(ivls, n_ivls, pos, end, args.min_spacing)) continue;
+      const int rc = (!args.no_rc) && (xrand_r(r) & 1);
+      overwrite_motif(seq, pos, m, rc, r);
+      if (files.O_open) {
+        fprintf(files.O, "%s\t%" PRIu64 "\t%" PRIu64 "\t%s\t.\t%c\n",
+          name, pos, end, m->name, rc ? '-' : '+');
+      }
+      insert_sorted(ivls, &n_ivls, pos, end);
+      total_insertions++;
+      per_motif_count[mi]++;
+      placed_total++;
+      placed = 1;
+    }
+  }
+  if (placed_total < N) {
+    fprintf(stderr,
+      "Warning: seq '%s' (len %" PRIu64 "): placed %" PRIu64 "/%" PRIu64 " insertions (too crowded or too short).\n",
+      name, L, placed_total, N);
+  }
+  free(ivls);
+}
+
 /* ---- BED file (-x mode) ---- */
 
 typedef struct bed_t {
@@ -1506,17 +1567,21 @@ static void usage(void) {
     " -o <str>   Output FASTA (default: stdout).\n"
     " -O <str>   Write ground-truth BED of insertions (seq, start, end,\n"
     "            motif, '.', strand).\n"
-    " -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -x/-X.\n"
+    " -f <dbl>   Random mode: per-bp Poisson insertion rate. Excludes -n/-x/-X.\n"
+    " -n <int>   Fixed-count mode: implant exactly N motifs per sequence\n"
+    "            (or as many as fit; warns on shortfall). Same placement\n"
+    "            engine as -f but with a deterministic count independent\n"
+    "            of sequence length. Excludes -f/-x/-X.\n"
     " -x <str>   BED mode: col-4 = motif name (must match a loaded motif),\n"
     "            col-6 = strand. If end-start != motif width, motif is\n"
-    "            centered at the BED-range midpoint. Excludes -f/-X.\n"
+    "            centered at the BED-range midpoint. Excludes -f/-n/-X.\n"
     " -X <str>   Single-range shortcut: seqname:start-end[:strand].\n"
-    "            Requires exactly one motif loaded. Excludes -f/-x.\n"
-    " -M <int>   Minimum spacing (bp) between -f insertions (default: 0).\n"
-    " -c <int>   Random mode: centre-bias strength (Irwin-Hall N draws\n"
-    "            averaged). 1 = uniform (default), 2 = triangular, larger\n"
-    "            = more concentrated around the sequence midpoint. Only\n"
-    "            applies to -f.\n"
+    "            Requires exactly one motif loaded. Excludes -f/-n/-x.\n"
+    " -M <int>   Minimum spacing (bp) between -f/-n insertions (default: 0).\n"
+    " -c <int>   Random/fixed mode: centre-bias strength (Irwin-Hall N\n"
+    "            draws averaged). 1 = uniform (default), 2 = triangular,\n"
+    "            larger = more concentrated around the sequence midpoint.\n"
+    "            Only applies to -f/-n.\n"
     " -R         Disable reverse-strand sampling (always insert '+').\n"
     " -s <int>   RNG seed (default: time-seeded).\n"
     " -r         Do not trim motif/sequence names to the first word.\n"
@@ -1534,7 +1599,7 @@ int main_seed(int argc, char **argv) {
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:x:X:M:c:Rrs:gvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "m:1:i:o:O:f:n:x:X:M:c:Rrs:gvwh")) != -1) {
     switch (opt) {
       case 'm':
         if (files.m_open) badexit("Error: -m specified more than once.");
@@ -1593,6 +1658,15 @@ int main_seed(int argc, char **argv) {
           badexit("Error: -f must be a positive double.");
         }
         args.use_random = 1;
+        break;
+      case 'n':
+        if (str_to_uint64_t(optarg, &args.n_per_seq)) {
+          badexit("Error: Failed to parse -n value.");
+        }
+        if (args.n_per_seq == 0) {
+          badexit("Error: -n must be a positive integer.");
+        }
+        args.use_fixed = 1;
         break;
       case 'x':
         if (args.use_bed) badexit("Error: -x specified more than once.");
@@ -1662,13 +1736,13 @@ int main_seed(int argc, char **argv) {
   }
   if (!files.i_open) badexit("Error: -i must be specified.");
   {
-    const int n_modes = (args.use_random ? 1 : 0) + (args.use_bed ? 1 : 0) +
-                        (args.single_range ? 1 : 0);
-    if (n_modes > 1) badexit("Error: -f, -x, and -X are mutually exclusive.");
-    if (n_modes == 0) badexit("Error: one of -f, -x, or -X must be specified.");
+    const int n_modes = (args.use_random ? 1 : 0) + (args.use_fixed ? 1 : 0) +
+                        (args.use_bed ? 1 : 0) + (args.single_range ? 1 : 0);
+    if (n_modes > 1) badexit("Error: -f, -n, -x, and -X are mutually exclusive.");
+    if (n_modes == 0) badexit("Error: one of -f, -n, -x, or -X must be specified.");
   }
-  if (args.centre_n > 1 && !args.use_random)
-    badexit("Error: -c requires -f (random mode).");
+  if (args.centre_n > 1 && !args.use_random && !args.use_fixed)
+    badexit("Error: -c requires -f or -n (random/fixed mode).");
   if (use_stdout) files.o = stdout;
 
   /* Load motifs */
@@ -1715,6 +1789,8 @@ int main_seed(int argc, char **argv) {
     const uint64_t before = total_insertions;
     if (args.use_random) {
       do_random_mode(seq, L, name, &xrng);
+    } else if (args.use_fixed) {
+      do_fixed_mode(seq, L, name, &xrng);
     } else if (args.use_bed || args.single_range) {
       const uint64_t nr = collect_seq_regions(name, seq_regions_buf);
       if (nr > 0) {
