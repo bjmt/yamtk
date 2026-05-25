@@ -797,6 +797,7 @@ subcommand with an `-a <action>` selector. The supported actions are:
 | `subset` | Extract substrings defined by BED ranges. Col-4 = output name; col-6 `-` → RC. Requires `-x`. |
 | `mask` | Soft-mask (lowercase) BED regions in place; `-N` flag switches to hard mask (replace with `N`). Requires `-x`. |
 | `subsample` | Random subset of input sequences. Either `-n N` (reservoir: exact count, buffers N records) or `-f p` (per-sequence Bernoulli, streams). Input order is preserved. `-s` for seed. |
+| `hist` | Per-bin TSV histogram of per-sequence GC fractions with `seq_count` and `bp_count` columns. Bin step set by `-b <fraction>` (default `0.05`). All-N sequences are skipped. |
 
 ### Usage
 
@@ -809,6 +810,7 @@ Usage:  yamtk seq -a <action> [options] -i seqs.fa[.gz]
  -x <str>   BED file (subset/mask only). Can be gzipped.
  -n <int>   Count: copies per input (dup) or reservoir size (subsample).
  -f <dbl>   Per-sequence keep probability for subsample (0,1).
+ -b <dbl>   GC bin step for hist, in (0, 1] (default: 0.05).
  -s <uint>  RNG seed for subsample (default: time-seeded).
  -N         Hard-mask (replace with N) instead of soft-mask. mask only.
  -r         Do not trim sequence names to the first word.
@@ -840,6 +842,11 @@ yamtk seq -a mask -N -x repeats.bed -i genome.fa > hardmasked.fa
 yamtk seq -a subsample -n 1000 -s 42 -i big.fa > sample.fa
 # ... or roughly half the input by per-sequence coin flip (streams)
 yamtk seq -a subsample -f 0.5 -s 42 -i big.fa > halved.fa
+
+# GC% distribution of an input set in 5%-wide bins (default)
+yamtk seq -a hist -i genome.fa
+# ... or 10%-wide bins
+yamtk seq -a hist -b 0.1 -i genome.fa
 ```
 
 Header bar — `yamtk seq -a stats -i big.fa | wc -l` is a quick way to
