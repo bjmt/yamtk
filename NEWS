@@ -1,6 +1,27 @@
 CHANGES IN VERSION UNRELEASED
 -----------------------------
 
+* New subcommand: yamtk bkg — HOMER-style GC/length-matched background
+  sampling. Given a target FASTA, emits a matched-background FASTA
+  sampled either from a pool FASTA (-p, subset selection) or a genome
+  FASTA (-g, random window sampling). Matching is by GC bin (configurable
+  step via -G, default 0.05) and -- in pool mode -- length tolerance in bp
+  (-T, default 50; genome-mode windows are always exactly the target
+  length). N-heavy windows are rejected via -N (default 0.10 max
+  N-fraction). When a bin can't be filled, the matcher falls back to the
+  nearest non-empty bin (deterministic tiebreak) and warns on stderr;
+  targets that still can't be placed are skipped with a warning rather
+  than aborting the run. Pool mode samples with replacement by default
+  (mirrors HOMER); -u enforces unique picks. Genome mode picks plus-strand
+  windows by default; -r randomly reverse-complements ~half. -B writes a
+  BED of sampled coordinates (genome mode only). -s seeds the
+  xoroshiro128++ PRNG (time-seeded by default). Under -w, prints a GC-bin
+  histogram of the target / pool set plus a per-pick trace line (source
+  name, GC range, attempts, fallback flag) and a final attempts tally so
+  -A pressure is visible. Output is intended for direct use as the
+  negative set of `yamtk enr -n` or `yamtk me -n` when a real biological
+  null is preferred over the shuffled-positive default.
+
 * yamtk scan/enr: alloc_cdf() now pre-sizes each thread's CDF scratch to
   max(cdf_size) across all loaded motifs, mirroring yamref's
   commit 4975752 pattern. Eliminates the per-motif realloc thrash in

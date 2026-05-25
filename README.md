@@ -7,7 +7,8 @@
 * PWM refinement against positive sequences: [yamtk ref](#yamref)
 * Motif-vs-database comparison: [yamtk cmp](#yamcmp)
 * Seed sequences with sampled motifs: [yamtk seed](#yamseed)
-* Sequence manipulation (stats/rc/rna-dna/dup/subset/mask/subsample): [yamtk seq](#yamseq)
+* Sequence manipulation: [yamtk seq](#yamseq)
+* GC/length-matched background sequences: [yamtk bkg](#yambkg)
 * Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
 * Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
 
@@ -815,6 +816,117 @@ yamtk seq -a subsample -f 0.5 -s 42 -i big.fa > halved.fa
 
 Header bar — `yamtk seq -a stats -i big.fa | wc -l` is a quick way to
 size the input before picking `-n`.
+
+## yambkg
+
+Generate a background sequence set matched to a target FASTA by GC content
+and length, in the style of HOMER's `findMotifsGenome.pl`. Two sampling
+modes are supported: subsample an existing pool FASTA (`-p`), or randomly
+draw windows from a genome FASTA (`-g`). Output is FASTA on stdout; the
+genome mode can additionally write a BED of the sampled coordinates via
+`-B`. The result feeds straight into `yamtk enr -i pos.fa -n bkg.fa` (or
+`yamtk me -n bkg.fa`) when a real biological null is preferred over a
+shuffled-positive null.
+
+### Usage
+
+```
+yamtk v2.2.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
+Usage:  yamtk bkg [options] -i targets.fa[.gz] { -p pool.fa | -g genome.fa }
+
+ -i <str>   Target FASTA/FASTQ ('-' = stdin).
+ -p <str>   Candidate pool FASTA. Sample matching sequences from this set.
+ -g <str>   Genome FASTA. Randomly sample matching windows from these seqs.
+            Exactly one of -p or -g is required.
+ -o <str>   Output FASTA file (default: stdout).
+ -B <str>   Output BED of sampled coordinates (genome mode only).
+ -G <dbl>   GC bin step, 0 < step <= 1 (default: 0.05).
+ -T <int>   Length tolerance in bp (pool mode only; default: 50).
+ -n <int>   Background sequences per target (default: 1).
+ -N <dbl>   Max N-fraction allowed in a window, in [0, 1] (default: 0.10).
+ -A <int>   Max sampling attempts per target before fallback (default: 1000).
+ -r         Randomize strand (genome mode; reverse-complement on emit).
+ -u         Sample pool without replacement (default: with replacement).
+ -s <uint>  RNG seed (default: time-seeded).
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Matching, fallback, and N handling
+
+Each target's GC fraction (computed over A/C/G/T only, excluding N from
+the denominator) selects a bin of width `-G`. A pool seq or genome
+window matches iff it lands in the same bin; pool mode additionally
+requires the candidate length to be within `±T` bp of the target length
+(genome-mode windows are always exactly the target length).
+
+When the exact bin can't be filled (pool mode: no length-compatible
+candidate left; genome mode: `-A` rejections in a row), the matcher
+falls back to the nearest non-empty bin (deterministic tiebreak: try
+the higher-GC neighbour first). If even that fails, the genome mode
+makes one last-ditch any-bin pick before skipping the target with a
+warning. Skipped targets print a stderr warning but do not abort the
+run; the exit code is non-zero only if zero backgrounds could be
+sampled.
+
+Windows whose N fraction exceeds `-N` are rejected (genome mode).
+Setting `-N 0` requires every base to be ACGT/U; the default 0.10
+tolerates ~10% Ns per window.
+
+### Modes
+
+**Pool subset (`-p`).** All pool sequences are loaded, binned by GC,
+and indexed by length within each bin. Sampling is with replacement by
+default (mirrors HOMER); pass `-u` to require unique pool sequences in
+the output. Pool sequences are emitted under their original FASTA
+names.
+
+**Genome window (`-g`).** Random `(chrom, start)` pairs are drawn,
+weighted by the number of valid start positions per chrom, until a
+window passes the bin + N-fraction filter. Emitted names are
+`chrom:start-end(strand)`; the optional `-B file.bed` writes one line
+per pick:
+
+```
+chrom  start  end  target_name  .  strand
+```
+
+Pass `-r` to randomly reverse-complement half the picks (and emit `-`
+in BED col-6); without `-r` every pick is `+` strand.
+
+### Examples
+
+```sh
+# Match a peak FASTA to a candidate pool by GC (5% bins) and length (±50 bp)
+yamtk bkg -i peaks.fa -p candidate_pool.fa -s 1 > bkg.fa
+
+# Sample matched genomic windows for each peak, also writing coords as BED
+yamtk bkg -i peaks.fa -g hg38.fa -s 1 -B bkg.bed > bkg.fa
+
+# Wider GC bins (10%) and 3 background sequences per target
+yamtk bkg -i peaks.fa -g hg38.fa -G 0.10 -n 3 -s 1 > bkg.fa
+
+# Feed the matched background into yamtk enr
+yamtk bkg -i peaks.fa -g hg38.fa -s 1 > bkg.fa
+yamtk enr -i peaks.fa -n bkg.fa -m motifs.meme
+```
+
+### Diagnosing matches under `-w`
+
+`-v` prints a one-line load summary and the emit/fallback/skip tallies;
+`-w` adds a GC-bin histogram of the target set (and pool, in pool mode)
+plus one per-pick trace line showing each target's source and bin, with
+a `[fallback]` flag when an exact-bin match wasn't possible. Genome
+mode additionally prints an attempts tally so you can see whether `-A`
+is squeezed:
+
+```
+Targets GC bins (step=10%): 40-50%=18 50-60%=32
+Pool    GC bins (step=10%): 30-40%=2 40-50%=21 50-60%=27
+  [1/50] tgt=[pos1] L=100 gc=50-60% -> pool=[neg4] L=100 gc=50-60%
+  ...
+  [13/50] tgt=[pos13] L=100 gc=55-60% -> neg49:0-100(+) gc=50-55% attempts=11 [fallback]
+Attempts: total=181, mean=3.6/pick, max=13/pick (limit -A 8).
+```
 
 ## yamshuf
 

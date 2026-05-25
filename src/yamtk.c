@@ -29,6 +29,7 @@
 #include "yamcmp.h"
 #include "yamseed.h"
 #include "yamseq.h"
+#include "yambkg.h"
 #include "version.h"
 
 static void help(void) {
@@ -45,6 +46,7 @@ static void help(void) {
         "    cmp        Compare query motifs against a target database\n"
         "    seed       Insert motif samples into sequences (FASTA + truth BED)\n"
         "    seq        Sequence manipulation (stats, rc, rna/dna, dup, subset, mask)\n"
+        "    bkg        Generate GC/length-matched background sequences\n"
         "    version    Print the version number and exit\n"
         "    help       Print this message and exit\n"
         "For subcommand usage, try: yamtk <subcommand> -h\n"
@@ -82,6 +84,8 @@ int main(int argc, char **argv) {
         return main_seed(argc - 1, argv + 1);
     } else if (strcmp(argv[1], "seq") == 0) {
         return main_seq(argc - 1, argv + 1);
+    } else if (strcmp(argv[1], "bkg") == 0) {
+        return main_bkg(argc - 1, argv + 1);
     } else {
         fprintf(stderr, "Error: Unknown subcommand '%s'; try 'help' for usage\n", argv[1]);
         return EXIT_FAILURE;
