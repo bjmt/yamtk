@@ -389,25 +389,25 @@ Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt
 
 ### BED-restricted enrichment (`-x` / `-X`)
 
-For peak-based enrichment (the standard AME/STREME workflow) pass a BED
-file of peak regions via `-x`. Each BED region becomes one independent
-**unit** for the statistical test:
+For peak-based enrichment (this is the usual AME/STREME workflow) you can
+pass a BED file of peak regions via `-x`. Each region in the BED then
+becomes one independent **unit** for the statistical test:
 
 - `-T seqs` asks "of N peaks, how many contain ≥1 motif hit?"
 - `-T sites` counts hits inside peaks and uses the sum of peak widths
   (× strands) as the position denominator.
 - `-T ranksum` collects one max PWM score per peak.
 
-The output's `pos_n` / `neg_n` columns then report the peak (region)
-count rather than the FASTA sequence count.
+The `pos_n` / `neg_n` columns in the output then report the number of
+peaks (regions) rather than the number of FASTA sequences.
 
-Each BED row's col-6 strand controls which strand the region is scanned
-on: `.` = both (subject to `-R`), `+` = forward only, `-` = reverse only.
+Each BED row's col-6 strand controls which strand its region is scanned
+on (`.` = both, subject to `-R`; `+` = forward only; `-` = reverse only).
 
 When `-n` is given, `-X <bed>` applies the same restriction to the
-negative set. When `-n` is omitted and `-x` is set, the shuffled null is
-built from the BED region slices (one shuffled seq per region) so the
-null's k-mer composition matches what's actually being scored.
+negative set. And when `-n` is omitted but `-x` is set, the shuffled null
+is built from the BED region slices (one shuffled sequence per region),
+so that the null's k-mer composition matches what is actually being scored.
 
 ```sh
 # Peak-based enrichment: scan each peak in pos.bed against motifs.
@@ -422,17 +422,21 @@ $ yamtk enr -i genome.fa -x peaks.bed -m motifs.meme -k 2 -s 42
 
 ### Low-memory mode (`-l`)
 
-For large positive/negative FASTAs (Gbp scale), `-l` streams sequences
-one at a time instead of loading them all into memory. Per-motif counters
-remain resident; sequence buffers are reused. Output is byte-identical
-to the default mode for the same input + seed.
+For large positive/negative FASTAs (think Gbp scale), `-l` streams the
+sequences one at a time rather than loading them all into memory at once.
+The per-motif counters stay resident and the sequence buffers are reused.
+The output is byte-identical to the default mode given the same input and
+seed.
 
-Restrictions: `-T ranksum` is rejected (it needs the full per-(motif x seq)
-max-score matrix), stdin input (`-i -`) is rejected (positives must be
-re-readable for shuffled negatives), and `-j > 1` auto-downgrades to 1.
+There are a few restrictions, however. `-T ranksum` is not allowed (it
+needs the full per-(motif x seq) max-score matrix), stdin input (`-i -`)
+is likewise rejected (the positives have to be re-readable in order to
+build the shuffled negatives), and `-j > 1` quietly downgrades to a single
+thread.
 
-Measured on a synthetic 100k-seq positives FASTA (~32 MB), `-k 2 -s 42`,
-two motifs: peak RSS drops from ~64 MB (default) to ~2.4 MB (`-l`).
+As an example, measured on a synthetic 100k-sequence positives FASTA
+(~32 MB) with `-k 2 -s 42` and two motifs, the peak RSS drops from about
+64 MB in the default mode to roughly 2.4 MB under `-l`.
 
 ### Examples
 
@@ -457,8 +461,8 @@ $ yamtk enr -i positives.fa -n negatives.fa -m motifs.meme -T ranksum
 
 ### Output
 
-Tab-separated with three comment header lines followed by one row per motif,
-sorted ascending by q-value:
+The output is tab-separated, with three comment header lines followed by
+one row per motif (sorted in ascending order by q-value):
 
 ```
 ##yamenr v2.3.0 [ ... ]
@@ -466,19 +470,20 @@ sorted ascending by q-value:
 ##motif  motif_id  consensus  pos_n  pos_seq_hits  pos_site_hits  neg_n  neg_seq_hits  neg_site_hits  effect  log2_effect  pvalue  qvalue
 ```
 
-`PosUnits` / `NegUnits` equal `PosSeqs` / `NegSeqs` by default; under
-`-x` / `-X` they are the number of BED regions instead. `pos_n` /
-`neg_n` (the per-row count columns) follow the same convention.
+`PosUnits` / `NegUnits` are equal to `PosSeqs` / `NegSeqs` by default;
+under `-x` / `-X` they instead count the BED regions. The per-row count
+columns (`pos_n` / `neg_n`) follow the same convention.
 
-`effect` and `log2_effect` meaning depends on `-T`:
-- `seqs` / `sites` — fold enrichment (positive/negative hit rate ratio)
-- `ranksum` — AUC (0.5 = no signal; range 0–1) / log-odds of AUC
+What `effect` and `log2_effect` mean depends on `-T`:
+- `seqs` / `sites`: fold enrichment (the ratio of positive to negative hit rates)
+- `ranksum`: AUC (0.5 = no signal, range 0 to 1) and the log-odds of that AUC
 
 ## yamme
 
-Discover motifs de novo from a positive FASTA using a STREME-like approach.
-Enumerates enriched k-mers per width, refines each into a PWM, masks accepted
-hits, and iterates. Outputs a TSV table and a MEME probability-matrix file.
+Discover motifs de novo from a positive FASTA, using an approach modelled on
+STREME. For each width it enumerates the enriched k-mers, refines each one into
+a PWM, masks the accepted hits, and then iterates. The output is a TSV table
+together with a MEME probability-matrix file.
 
 ### Usage
 
@@ -532,11 +537,11 @@ yamtk me -i chip_peaks.fa -k 6 -K 15 -N 10 -s 1 -v
 
 ## yamref
 
-Refine a seed PWM (or IUPAC consensus) against a set of positive sequences. The
-seed is scanned, hits are aligned, and a new PWM is built from the aligned
-columns; the process repeats for the requested number of refinement passes.
-Flanks can be extended before refinement, and optionally IC-trimmed after.
-Output is a MEME motif file containing the refined PWM(s).
+Refine a seed PWM (or an IUPAC consensus) against a set of positive sequences.
+The seed is scanned, its hits are aligned, and a new PWM is built from the
+aligned columns; this then repeats for as many refinement passes as you ask
+for. Flanks can be extended before refinement and, if you like, IC-trimmed
+afterwards. The output is a MEME motif file holding the refined PWM(s).
 
 ### Usage
 
@@ -591,11 +596,11 @@ $ yamtk ref -m seed.meme -i peaks.fa -r -o refined.meme
 
 ## yamcmp
 
-Compare query motifs against a target motif database, similar to TOMTOM. Every
-query is aligned at all valid offsets (forward and reverse) against every
-target, scored by a column-similarity metric, and assigned a p-value against
-either an empirical or a parametric null. Output is a TSV with BH-corrected
-q-values; one row per query-target pair passing the q-value filter.
+Compare query motifs against a target motif database, much as TOMTOM does. Every
+query is aligned against every target at all valid offsets (both forward and
+reverse), scored with a column-similarity metric, and assigned a p-value against
+either an empirical or a parametric null. The output is a TSV with BH-corrected
+q-values, one row per query-target pair that passes the q-value filter.
 
 ### Usage
 
@@ -641,13 +646,13 @@ $ yamtk cmp -m queries.meme -t small_db.meme -e -q 1 -o cmp.tsv
 
 ## yamseed
 
-Generate synthetic benchmark FASTA by inserting motif samples into input
-sequences. For each insertion, the bases overlaid on the sequence are sampled
+Generate a synthetic benchmark FASTA by inserting motif samples into your input
+sequences. For each insertion, the bases laid over the sequence are sampled
 column-by-column from the motif's PPM (so a column with `[A=0.8, C=0.1, G=0.05,
-T=0.05]` yields 'A' 80% of the time). Sequence length is preserved (overwrite
-in place, never extend). Four placement modes are supported: per-bp Poisson
-rate (`-f`), fixed count per sequence (`-n`), BED-driven (`-x`), and a
-single-range shortcut (`-X`).
+T=0.05]` will give you an 'A' 80% of the time). The sequence length is always
+preserved (the bases are overwritten in place, never extended). There are four
+placement modes to choose from: a per-bp Poisson rate (`-f`), a fixed count per
+sequence (`-n`), BED-driven placement (`-x`), and a single-range shortcut (`-X`).
 
 ### Usage
 
@@ -688,13 +693,14 @@ Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
 
 ### Random mode
 
-`-f λ` requests Poisson(λ × seqlen) insertions per sequence at uniform random
-positions. The motif is picked uniformly per insertion from the loaded set,
-and the strand is 50/50 ± (unless `-R`). Use `-M <int>` to enforce a minimum
-spacing in bp between insertions (defaults to 0 = touching ok; on collision
-the placement is retried up to 100 times before being skipped).
+`-f λ` requests Poisson(λ × seqlen) insertions per sequence, placed at uniform
+random positions. For each insertion the motif is picked uniformly from the
+loaded set, and the strand is a 50/50 toss between + and - (unless `-R` is set).
+Use `-M <int>` to enforce a minimum spacing in bp between insertions (the
+default of 0 means touching is fine; on a collision the placement is retried up
+to 100 times before it is skipped).
 
-Useful for stress-testing motif scanners on synthetic positives:
+This is handy for stress-testing motif scanners on synthetic positives:
 
 ```sh
 yamtk seed -m motifs.meme -i background.fa -f 0.005 -s 1 -O truth.bed > seeded.fa
@@ -705,26 +711,26 @@ comm -12 <(sort truth.bed) scanned.bed | wc -l
 # How many planted instances does the scanner recover?
 ```
 
-Real TF peaks usually cluster around the peak summit rather than being
-uniformly scattered across the window. `-c <int>` biases random
-insertions toward each sequence's midpoint by averaging *N* uniform
-draws (the Irwin–Hall distribution). `-c 1` (default) is uniform, `-c 2`
-is triangular, `-c 5` is bell-shaped, `-c 20+` is tightly centred:
+Real TF peaks tend to cluster around the peak summit rather than scattering
+uniformly across the window. `-c <int>` biases the random insertions toward
+each sequence's midpoint by averaging *N* uniform draws (this is the
+Irwin-Hall distribution). `-c 1` (the default) is uniform, `-c 2` is
+triangular, `-c 5` is bell-shaped, and `-c 20` or more is tightly centred:
 
 ```sh
 # Simulate peak-summit-style insertions (most motifs near sequence centre)
 yamtk seed -m motifs.meme -i peaks.fa -f 0.01 -c 10 -s 42 -O truth.bed > seeded.fa
 ```
 
-`-c 1` produces output that's byte-identical to omitting `-c`, so existing
-seeds and fixtures keep reproducing the same insertions.
+`-c 1` produces output that is byte-identical to leaving `-c` off entirely, so
+any existing seeds and fixtures will keep reproducing the same insertions.
 
 ### Fixed-count mode
 
-`-n N` implants exactly *N* motifs per sequence regardless of sequence
-length, where Random mode (`-f`) gives a Poisson count that scales with
-length. Useful when every sequence in a benchmark needs the same number
-of planted hits (e.g. one motif per peak, or a fixed positive class
+`-n N` implants exactly *N* motifs in every sequence, regardless of its
+length, whereas Random mode (`-f`) gives a Poisson count that scales with
+length. This is useful when every sequence in a benchmark needs the same
+number of planted hits (one motif per peak, say, or a fixed positive-class
 size for ROC/PR evaluation):
 
 ```sh
@@ -732,21 +738,21 @@ size for ROC/PR evaluation):
 yamtk seed -m motifs.meme -i background.fa -n 3 -s 1 -O truth.bed > seeded.fa
 ```
 
-The placement engine is shared with `-f`: random motif choice, random
-position, `-c` centre bias, `-M` minimum spacing, `-R` strand control,
-and `-O` truth-BED output all apply. Collisions retry up to 100 times
-per insertion. If a sequence is too short or too crowded to fit all
-*N*, the run prints a `placed K/N` warning to stderr and continues —
-the truth BED reflects only the insertions that were actually
-committed, so it always remains accurate.
+The placement engine here is shared with `-f`, so random motif choice, random
+position, `-c` centre bias, `-M` minimum spacing, `-R` strand control, and `-O`
+truth-BED output all apply just the same. Collisions are retried up to 100 times
+per insertion. If a sequence turns out to be too short or too crowded to fit all
+*N*, the run prints a `placed K/N` warning to stderr and carries on (the truth
+BED then reflects only the insertions that were actually committed, so it always
+stays accurate).
 
 ### BED mode
 
-`-x bed.txt` inserts one motif per BED row. Column 4 (range name) selects the
-motif by name from `-m` (abort on unknown name). Column 6 sets the strand. If
-the BED range width differs from the motif width, a warning is printed and the
-motif is centered on the midpoint of the BED range (clamped to fit within
-the sequence; skipped with a warning if it cannot fit).
+`-x bed.txt` inserts one motif per BED row. Column 4 (the range name) selects
+the motif by name from `-m` (an unknown name aborts the run). Column 6 sets the
+strand. If the BED range width differs from the motif width, a warning is
+printed and the motif is centred on the midpoint of the BED range (clamped to
+fit inside the sequence, or skipped with a warning if it cannot fit at all).
 
 ```sh
 # Hand-rolled benchmark with known motif positions
@@ -758,8 +764,9 @@ EOF
 yamtk seed -m motifs.meme -i bg.fa -x truth.bed -O recovered.bed > seeded.fa
 ```
 
-For one-off insertions, `-X seqname:start-end[:strand]` skips the BED file
-entirely. It requires exactly one motif loaded (most useful with `-1`):
+For one-off insertions, `-X seqname:start-end[:strand]` lets you skip the BED
+file entirely. It does require that exactly one motif be loaded (so it is most
+useful together with `-1`):
 
 ```sh
 # Plant a single E-box on the '+' strand
@@ -771,20 +778,20 @@ yamtk seed -1 CACGTG -X chr1:1000-1006:- -i bg.fa > seeded.fa
 
 ### Output
 
-The seeded FASTA goes to stdout (or `-o`). When `-O <file>` is given, a BED
-of every committed insertion is written with columns:
+The seeded FASTA is written to stdout (or to `-o`). When `-O <file>` is given, a
+BED of every committed insertion is written out, with the columns:
 
 ```
 seq_name    start    end    motif_name    .    strand
 ```
 
-`start` and `end` are 0-based, half-open. Coordinates always reflect the
-position that was actually written into the sequence (after any width-mismatch
-centering or clamping in BED mode).
+`start` and `end` are 0-based and half-open. The coordinates always reflect the
+position that was actually written into the sequence (that is, after any
+width-mismatch centring or clamping that BED mode may have applied).
 
 ## yamseq
 
-A collection of common FASTA manipulations gathered behind a single
+A grab-bag of common FASTA manipulations, gathered behind a single
 subcommand with an `-a <action>` selector. The supported actions are:
 
 | Action | Effect |
@@ -849,19 +856,19 @@ yamtk seq -a hist -i genome.fa
 yamtk seq -a hist -b 0.1 -i genome.fa
 ```
 
-Header bar — `yamtk seq -a stats -i big.fa | wc -l` is a quick way to
-size the input before picking `-n`.
+As an aside, `yamtk seq -a stats -i big.fa | wc -l` is a quick way to
+size up the input before deciding on `-n`.
 
 ## yambkg
 
 Generate a background sequence set matched to a target FASTA by GC content
-and length, in the style of HOMER's `findMotifsGenome.pl`. Two sampling
-modes are supported: subsample an existing pool FASTA (`-p`), or randomly
-draw windows from a genome FASTA (`-g`). Output is FASTA on stdout; the
-genome mode can additionally write a BED of the sampled coordinates via
-`-B`. The result feeds straight into `yamtk enr -i pos.fa -n bkg.fa` (or
-`yamtk me -n bkg.fa`) when a real biological null is preferred over a
-shuffled-positive null.
+and length, in the style of HOMER's `findMotifsGenome.pl`. There are two
+sampling modes: you can subsample an existing pool FASTA (`-p`), or randomly
+draw windows from a genome FASTA (`-g`). The output is FASTA on stdout; in
+genome mode you can also write out a BED of the sampled coordinates via `-B`.
+The result feeds straight into `yamtk enr -i pos.fa -n bkg.fa` (or `yamtk me
+-n bkg.fa`) for those times when you would rather use a real biological null
+than the shuffled-positive one.
 
 ### Usage
 
@@ -888,45 +895,45 @@ Usage:  yamtk bkg [options] -i targets.fa[.gz] { -p pool.fa | -g genome.fa }
 
 ### Matching, fallback, and N handling
 
-Each target's GC fraction (computed over A/C/G/T only, excluding N from
-the denominator) selects a bin of width `-G`. A pool seq or genome
-window matches iff it lands in the same bin; pool mode additionally
-requires the candidate length to be within `±T` bp of the target length
-(genome-mode windows are always exactly the target length).
+Each target's GC fraction (computed over A/C/G/T only, with N excluded from
+the denominator) selects a bin of width `-G`. A pool sequence or genome
+window matches if it lands in that same bin; pool mode additionally asks
+that the candidate length be within `±T` bp of the target length
+(genome-mode windows are always exactly the target length, so this does not
+arise there).
 
-When the exact bin can't be filled (pool mode: no length-compatible
-candidate left; genome mode: `-A` rejections in a row), the matcher
-falls back to the nearest non-empty bin (deterministic tiebreak: try
-the higher-GC neighbour first). If even that fails, the genome mode
-makes one last-ditch any-bin pick before skipping the target with a
-warning. Skipped targets print a stderr warning but do not abort the
-run; the exit code is non-zero only if zero backgrounds could be
-sampled.
+When the exact bin cannot be filled (in pool mode because no length-compatible
+candidate is left, or in genome mode after `-A` rejections in a row), the
+matcher falls back to the nearest non-empty bin (with a deterministic
+tiebreak: it tries the higher-GC neighbour first). If even that comes up
+empty, genome mode makes one last-ditch any-bin pick before giving up and
+skipping the target with a warning. A skipped target prints its warning to
+stderr but does not abort the run; the exit code is non-zero only if not a
+single background could be sampled.
 
-Windows whose N fraction exceeds `-N` are rejected (genome mode).
-Setting `-N 0` requires every base to be ACGT/U; the default 0.10
-tolerates ~10% Ns per window.
+In genome mode, any window whose N fraction exceeds `-N` is rejected.
+Setting `-N 0` insists that every base be ACGT/U, whereas the default of
+0.10 tolerates roughly 10% Ns per window.
 
 ### Modes
 
-**Pool subset (`-p`).** All pool sequences are loaded, binned by GC,
-and indexed by length within each bin. Sampling is with replacement by
-default (mirrors HOMER); pass `-u` to require unique pool sequences in
-the output. Pool sequences are emitted under their original FASTA
+**Pool subset (`-p`).** All of the pool sequences are loaded, binned by GC,
+and indexed by length within each bin. Sampling is done with replacement by
+default (this mirrors HOMER); pass `-u` if you need the pool sequences in the
+output to be unique. Pool sequences are emitted under their original FASTA
 names.
 
-**Genome window (`-g`).** Random `(chrom, start)` pairs are drawn,
-weighted by the number of valid start positions per chrom, until a
-window passes the bin + N-fraction filter. Emitted names are
-`chrom:start-end(strand)`; the optional `-B file.bed` writes one line
-per pick:
+**Genome window (`-g`).** Random `(chrom, start)` pairs are drawn (weighted by
+the number of valid start positions on each chrom) until a window passes both
+the bin and the N-fraction filter. The emitted names take the form
+`chrom:start-end(strand)`; the optional `-B file.bed` writes one line per pick:
 
 ```
 chrom  start  end  target_name  .  strand
 ```
 
-Pass `-r` to randomly reverse-complement half the picks (and emit `-`
-in BED col-6); without `-r` every pick is `+` strand.
+Pass `-r` to randomly reverse-complement about half of the picks (and emit
+`-` in BED col-6); without `-r`, every pick comes out on the `+` strand.
 
 ### Examples
 
@@ -947,12 +954,12 @@ yamtk enr -i peaks.fa -n bkg.fa -m motifs.meme
 
 ### Diagnosing matches under `-w`
 
-`-v` prints a one-line load summary and the emit/fallback/skip tallies;
-`-w` adds a GC-bin histogram of the target set (and pool, in pool mode)
-plus one per-pick trace line showing each target's source and bin, with
-a `[fallback]` flag when an exact-bin match wasn't possible. Genome
-mode additionally prints an attempts tally so you can see whether `-A`
-is squeezed:
+`-v` prints a one-line load summary along with the emit/fallback/skip tallies.
+`-w` goes further: it adds a GC-bin histogram of the target set (and of the
+pool, in pool mode), plus one trace line per pick showing each target's source
+and bin, with a `[fallback]` flag whenever an exact-bin match wasn't possible.
+In genome mode it also prints an attempts tally, so you can tell at a glance
+whether `-A` is being squeezed:
 
 ```
 Targets GC bins (step=10%): 40-50%=18 50-60%=32
@@ -965,12 +972,13 @@ Attempts: total=181, mean=3.6/pick, max=13/pick (limit -A 8).
 
 ## yamconv
 
-Convert motifs between MEME, JASPAR, HOMER, and HOCOMOCO formats. The input
-format is auto-detected (same detector as the rest of yamtk); the output
-format is chosen with `-t`. Motifs are stored internally as PPMs; PCM-style
-outputs (JASPAR, HOCOMOCO) are scaled to integer counts using an `nsites`
-value preserved from the source when available, with `-N` as a fallback.
-Same-format conversion is allowed and acts as a normalizer.
+Convert motifs between the MEME, JASPAR, HOMER, and HOCOMOCO formats. The input
+format is auto-detected (using the same detector as the rest of yamtk), and the
+output format is chosen with `-t`. Internally the motifs are stored as PPMs; the
+PCM-style outputs (JASPAR, HOCOMOCO) are scaled back to integer counts using an
+`nsites` value, preserved from the source where available and falling back to
+`-N` otherwise. Same-format conversion is allowed too, where it simply acts as a
+normalizer.
 
 ### Usage
 
@@ -1039,11 +1047,12 @@ when known.
 
 ### IC flank trimming (`-T`)
 
-When `-T <dbl>` is set, columns at both flanks are dropped while their
-information content (in bits, uniform background) is below the threshold.
-Trimming stops at the first column that clears the bar; a minimum width
-of 3 is enforced. This is the same routine used by `yamtk ref`. Useful
-for tidying noisy edges of de novo motifs before conversion.
+When `-T <dbl>` is set, columns at either flank are dropped for as long as their
+information content (in bits, against a uniform background) stays below the
+threshold. Trimming stops at the first column to clear the bar, and a minimum
+width of 3 is enforced. This is the same routine that `yamtk ref` uses, and I
+find it handy for tidying up the noisy edges of de novo motifs before converting
+them.
 
 ## yamshuf
 

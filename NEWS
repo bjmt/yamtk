@@ -1,18 +1,17 @@
 CHANGES IN VERSION 2.3.1 (unreleased)
 -------------------------------------
 
-* yamtk cmp: faster output stage at tight -q thresholds. After a query's
-  BH q-values are computed, the per-query result array is now compacted
-  in place so that only rows with q-value within -q remain in the prefix
-  used by write_results, and the subsequent qsort and output loop see
-  the compacted prefix instead of all target_set.n rows. The hot single-
-  threaded post-processing phase that was otherwise growing into the
-  dominant cost at high thread counts shrinks accordingly. When -q 1.0
-  is in effect the compaction is detected as a no-op and skipped
-  entirely, so existing callers (including scripts/yamcmp_bench.sh,
-  which uses -q 1.0) see no regression. Measured on a 500q x 5000t
-  synthetic fixture at -q 0.01: 1.04x at -j 1, 1.18x at -j 4, and 1.29x
-  at -j 8. Output is byte-identical to 2.3.0 at every -q value tested.
+* yamtk cmp: faster output stage at tight -q thresholds. Once a query's
+  BH q-values are computed, the per-query result array is compacted in
+  place so that only the rows within -q remain in the prefix; the qsort
+  and output loop that follow then see just that prefix rather than all
+  target_set.n rows. This trims the single-threaded post-processing
+  phase, which was otherwise becoming the dominant cost at high thread
+  counts. At -q 1.0 the compaction is a no-op and is skipped entirely,
+  so existing callers (scripts/yamcmp_bench.sh among them, which uses
+  -q 1.0) see no change. On a 500q x 5000t synthetic fixture at -q 0.01
+  the speed-up is 1.04x at -j 1, 1.18x at -j 4, and 1.29x at -j 8, and
+  the output stays byte-identical to 2.3.0 at every -q tested.
 
 
 CHANGES IN VERSION 2.3.0 (2026-05-28)
@@ -39,7 +38,7 @@ CHANGES IN VERSION 2.3.0 (2026-05-28)
   negative set of `yamtk enr -n` or `yamtk me -n` when a real biological
   null is preferred over the shuffled-positive default.
 
-* New subcommand: yamtk conv — convert motifs between MEME, JASPAR,
+* New subcommand: yamtk conv, for converting motifs between MEME, JASPAR,
   HOMER, and HOCOMOCO formats. Input format is auto-detected (same
   detector as the rest of yamtk); the target is chosen with -t
   {meme|jaspar|homer|hocomoco}. Motifs are stored internally as PPMs;
@@ -159,12 +158,12 @@ CHANGES IN VERSION 2.3.0 (2026-05-28)
 CHANGES IN VERSION 2.2.0 (2026-05-18)
 --------------------------------------
 
-* New subcommand: yamtk seed — generate synthetic benchmark FASTA by
+* New subcommand: yamtk seed, to generate a synthetic benchmark FASTA by
   inserting motif samples into input sequences. Two placement modes:
   -f <lambda> draws Poisson(lambda * seqlen) insertions per sequence at
   uniform random positions; -x <bed> inserts one motif per BED row
   (col-4 = motif name, col-6 = strand; width-mismatched ranges are
-  centered on the BED midpoint with a warning). For each insertion,
+  centred on the BED midpoint with a warning). For each insertion,
   bases are sampled column-by-column from the motif's pseudocount-
   adjusted PPM, so a column with [A=0.8, C=0.1, G=0.05, T=0.05]
   yields 'A' 80% of the time. Sequence length is preserved (overwrite
@@ -180,8 +179,8 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   the BED file entirely (most useful with -1); requires exactly one
   motif loaded.
 
-* New subcommand: yamtk seq — common FASTA manipulation utilities
-  behind a single -a <action> selector. Supported actions:
+* New subcommand: yamtk seq, a set of common FASTA manipulation utilities
+  gathered behind a single -a <action> selector. Supported actions:
     stats    Per-sequence TSV (seq_num, seq_name, size, gc_pct,
              n_count); byte-identical to 'yamtk scan -s'.
     rc       Reverse-complement each sequence. IUPAC-aware (R<->Y,
@@ -198,8 +197,8 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
     mask     -x bed soft-masks BED regions in place (lowercase);
              -N switches to hard mask (replace with 'N'). Strand
              ignored.
-  All actions stream one sequence at a time. -r preserves the FASTA
-  comment after the name (useful for rc round-tripping).
+  All of these actions stream one sequence at a time. -r preserves the
+  FASTA comment after the name (handy for rc round-tripping).
 
 * Cross-subcommand flag harmonization. Same letter for the same concept
   across scan/enr/me/ref/cmp wherever possible:
@@ -231,14 +230,14 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   after "MOTIF", silently discarding the alt-name (e.g. "Arnt" in
   "MOTIF MA0004.1 Arnt"). The parser now captures the full
   "identifier altname" string; trim_motif_name (called when -r is not set)
-  then truncates at the first space, preserving default behavior.
+  then truncates at the first space, preserving the default behaviour.
 
 * yamtk ref: no longer trims motif names at all. MEME's "MOTIF id altname"
   is kept end-to-end, both in the [name] stderr summary lines and in the
   output MEME's MOTIF header. ref has no no-trim flag (its -r is taken
   by refinement passes).
 
-* New subcommand: yamtk cmp — TOMTOM-equivalent query-vs-target motif
+* New subcommand: yamtk cmp, a TOMTOM-equivalent query-vs-target motif
   comparison. Takes a query motif file (-q) and target motif database
   (-t), both in MEME/JASPAR/HOMER/HOCOMOCO. For each query x target it
   slides query columns against target columns at every valid offset
@@ -249,7 +248,7 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   PCC scores against actual database columns (TOMTOM-style; p-values
   match TOMTOM's within a small constant factor on JASPAR2026). For
   small target databases (< ~500 total columns) the empirical histogram
-  becomes too sparse — use -e to switch to a parametric Dirichlet-
+  becomes too sparse, so use -e to switch to a parametric Dirichlet-
   Multinomial enumeration over a 56-column grid. Threading via -j over
   queries. TSV output columns: query_id, target_id, offset, p_value,
   q_value, score, overlap, query_consensus, target_consensus,
@@ -257,7 +256,7 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   (default 0.1). -p applies a TOMTOM-style pseudocount before scoring
   (default 0; PCC is largely invariant to it but provided for
   compatibility); -N overrides every motif's nsites. Per-query PMFs are
-  computed per-(start, length) window — not averaged — matching
+  computed per-(start, length) window (not averaged), matching
   TOMTOM's get_pv_lookup_new structure. Deterministic; no RNG.
 
 * yamtk scan/enr/ref/cmp MEME parser: handle JASPAR2026-style files.
@@ -266,16 +265,16 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   of the previous '-'/'*' blacklist, which caught some URLs but not all.
   (2) Concatenated MEME files with repeated "MEME version", ALPHABET,
   "strands:" and "Background letter frequencies" headers now parse
-  cleanly — the parser honors the first occurrence and emits one
-  warning per repeated header type. The previous behavior was to abort
-  with "Multiple alphabet definitions". (yamenr already had lenient
-  behavior; warnings are new there too.)
+  cleanly; the parser honours the first occurrence and emits one
+  warning per repeated header type. The previous behaviour was to abort
+  with "Multiple alphabet definitions". (yamenr already had this lenient
+  behaviour; the warnings are new there too.)
 
 * All subcommands: print "Total runtime: N.NNNs" with millisecond
   resolution under -v, using clock_gettime(CLOCK_MONOTONIC). Per-phase
   print_time calls (which suppress sub-2-second timings) are unchanged.
 
-* New subcommand: yamtk ref — refine a seed motif against positive sequences.
+* New subcommand: yamtk ref, to refine a seed motif against positive sequences.
   Takes a seed PWM (-m, accepting MEME/JASPAR/HOMER/HOCOMOCO) or an IUPAC
   consensus string (-1, e.g. CACGTG or NRTACGTYN), scans it against the
   positives, rebuilds the PWM from the resulting hit sites, and iterates
@@ -291,10 +290,10 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   is processed motif-by-motif; under-represented seeds (< MIN_REFINE_HITS,
   default 20) are dropped with a warning and the rest emitted.
 
-* New subcommand: yamtk me — STREME-like de novo motif elicitation.
+* New subcommand: yamtk me, for STREME-like de novo motif elicitation.
   Discovers enriched motifs from a positive FASTA against a negative
   set (or Eulerian-shuffled positives via -S).  For each width in
-  [-k, -K] (default 6–15), enumerates canonical k-mers by Fisher's
+  [-k, -K] (default 6-15), enumerates canonical k-mers by Fisher's
   exact enrichment, builds and refines PWMs over the top seeds, masks
   hits, and iterates up to -N motifs per width.  Pooled motifs across
   widths are deduplicated by coverage overlap (-D), BH-FDR corrected,
@@ -317,7 +316,7 @@ CHANGES IN VERSION 2.2.0 (2026-05-18)
   Bases inside ranges are shuffled in place; bases outside pass through
   unchanged. Sequences with no overlapping ranges are emitted unchanged.
   All four shuffle modes supported (Fisher-Yates, Euler, Markov, Linear);
-  k-mer statistics are trained per range. Fully streaming — no
+  k-mer statistics are trained per range. Fully streaming, with no
   whole-input buffering. Not compatible with -p.
 
 * yamtk enr: removed sequence name duplicate checking; -d now only
@@ -335,13 +334,13 @@ CHANGES IN VERSION 2.1.0 (2026-05-07)
 * Condensed -h output for all subcommands (scan, shuf, enr) to fit on one
   screen; wording and formatting now consistent across all three.
 
-* New subcommand: yamtk enr — motif enrichment scoring.
+* New subcommand: yamtk enr, for motif enrichment scoring.
   Compares a positive FASTA against a negative FASTA (or an in-process
   shuffled-positive null) for each motif in a MEME/JASPAR/HOMER/HOCOMOCO
   file. Three test modes via -T:
-    seqs    — one-tailed Fisher's exact test on per-sequence hit presence.
-    sites   — one-tailed Fisher's exact test on per-position hit rate.
-    ranksum — threshold-free Mann-Whitney U on per-sequence max PWM score
+    seqs      One-tailed Fisher's exact test on per-sequence hit presence.
+    sites     One-tailed Fisher's exact test on per-position hit rate.
+    ranksum   Threshold-free Mann-Whitney U on per-sequence max PWM score
               (AUC effect size; tie-corrected normal approximation).
   All modes always report both per-sequence and per-site hit counts.
   BH FDR correction applied across all motifs in the run (-q filter).
