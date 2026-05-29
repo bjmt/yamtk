@@ -791,7 +791,7 @@ static void ic_trim_motif(motif_t *m, double min_ic) {
 /* Mask -> IUPAC: 4-bit (A=1,C=2,G=4,T=8). Single-base codes get the natural
    letter; ambiguous codes follow IUPAC convention. */
 static const char mask2iupac[16] = {
-  'N',   /* 0000 = empty (should never happen — caller falls back to argmax) */
+  'N',   /* 0000 = empty (should never happen; caller falls back to argmax) */
   'A',   /* 0001 */
   'C',   /* 0010 */
   'M',   /* 0011 = A|C */
@@ -830,7 +830,7 @@ static void motif_consensus(const motif_t *m, char *out) {
 
 /* Max log-odds score = sum over columns of log2(max(p) / bkg). Pseudocount
    protection: the PWM has already been pseudocounted during PCM ingestion,
-   but MEME/HOMER PPMs may legitimately contain zeros — guard with a tiny
+   but MEME/HOMER PPMs may legitimately contain zeros, so guard with a tiny
    epsilon to avoid -inf. */
 static double motif_max_logodds(const motif_t *m) {
   double sum = 0.0;
@@ -1142,7 +1142,7 @@ int main_conv(int argc, char **argv) {
     }
   }
 
-  /* Per-motif emit info — useful for PCM targets to see nsites source. */
+  /* Per-motif emit info, useful for PCM targets to see nsites source. */
   if (args.w && (args.to_fmt == FMT_JASPAR || args.to_fmt == FMT_HOCOMOCO)) {
     for (uint64_t i = 0; i < motif_info.n; i++) report_motif_emit(motifs[i]);
   }

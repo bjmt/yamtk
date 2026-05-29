@@ -282,7 +282,7 @@ static void load_seq_set(kseq_t *kseq, seq_set_t *set, const char *label) {
 
 /* ---- GC / window statistics ----
    Iterate over a window once, returning the GC fraction (over A/C/G/T
-   bases — N excluded from the denominator) and the N fraction (1 - std/L).
+   bases, with N excluded from the denominator) and the N fraction (1 - std/L).
    Returns 0 if the window has zero standard bases (caller should treat
    as "skip"). */
 static int window_stats(const unsigned char *seq, uint64_t s, uint64_t e,

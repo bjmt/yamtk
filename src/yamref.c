@@ -840,7 +840,7 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
 
 static void parse_meme_name(const char *line, const uint64_t motif_i) {
   /* Capture identifier AND any altname; trim_motif_name (run when args.trim_names)
-     truncates at the first space later, so default behavior is unchanged. */
+     truncates at the first space later, so default behaviour is unchanged. */
   uint64_t i = 5, j = 0;
   int prev_space = 1;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n' && j < MAX_NAME_SIZE - 1) {
@@ -868,7 +868,7 @@ static void read_meme(void) {
   while ((r = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (check_line_contains(line, "Background letter frequencies\0")) {
-      /* Only honor the first occurrence; concatenated MEME files (e.g.
+      /* Only honour the first occurrence; concatenated MEME files (e.g.
          JASPAR2026_CORE_*_meme.txt) repeat the header per chunk. */
       if (!bkg_L) bkg_L = line_num;
       else if (!warned_bkg) {
@@ -1146,7 +1146,7 @@ static int add_motif_pcm_column(motif_t *motif, const char *line, const uint64_t
                  (args.nsites + args.pseudocount);
     motif->pwm_probs[pos][i] = adj;
   }
-  /* HOCOMOCO uses pseudocount addition on the raw counts (preserves yamscan behavior). */
+  /* HOCOMOCO uses pseudocount addition on the raw counts (preserves yamscan behaviour). */
   double adj_probs[4];
   for (int i = 0; i < 4; i++) adj_probs[i] = probs[i] + args.pseudocount / 4.0;
   set_score(motif, 'A', pos, calc_score(adj_probs[0] / pcm_sum, args.bkg[0]));

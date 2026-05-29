@@ -1082,7 +1082,7 @@ static int get_meme_bkg(const char *line, const uint64_t ln) {
 
 static void parse_meme_name(const char *line, const uint64_t mi) {
   /* Capture identifier AND any altname; trim_motif_name (run when args.trim_names)
-     truncates at the first space later, so default behavior is unchanged. */
+     truncates at the first space later, so default behaviour is unchanged. */
   uint64_t i=5, j=0;
   int prev_space=1;
   while (line[i]&&line[i]!='\r'&&line[i]!='\n'&&j<MAX_NAME_SIZE-1) {
@@ -1109,7 +1109,7 @@ static void read_meme(void) {
   while ((read = getline(&line,&len,files.m)) != -1) {
     ln++;
     if (check_line_contains(line,"Background letter frequencies\0")) {
-      /* Only honor the first; concatenated MEME files repeat the header per chunk. */
+      /* Only honour the first; concatenated MEME files repeat the header per chunk. */
       if (!bkg_L && mi==(uint64_t)-1) bkg_L=ln;
       else if (!warned_bkg) {
         fprintf(stderr,
@@ -2007,7 +2007,7 @@ static void score_one_seq_all_motifs_bed(const unsigned char *seq, const uint64_
   uint64_t *site_hits = is_pos ? site_hits_pos : site_hits_neg;
   uint64_t *positions = is_pos ? stream_pos_positions : stream_neg_positions;
   (void) L;  /* bounds were validated at bed bind / read time when possible;
-                in streaming we accept the BED start/end as-is — out-of-bounds
+                in streaming we accept the BED start/end as-is, and out-of-bounds
                 is handled by score_range_scan returning early. */
   for (uint64_t ri = 0; ri < nr; ri++) {
     const uint64_t rid = regions[ri];

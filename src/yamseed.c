@@ -148,7 +148,7 @@ static xrng_t xrng;
 static uint64_t total_insertions = 0;
 static uint64_t *per_motif_count = NULL;
 
-/* ---- Motif struct (slim — no PWM scoring; PPM-only) ---- */
+/* ---- Motif struct (slim; no PWM scoring, PPM-only) ---- */
 
 typedef struct motif_t {
   char     name[MAX_NAME_SIZE];
@@ -978,10 +978,10 @@ static int overlaps_any(const ivl_t *ivls, const uint64_t n_ivls,
     if (ivls[mid].s >= s) hi = mid;
     else                  lo = mid + 1;
   }
-  /* Right neighbor: ivls[lo].s >= s. Collision iff its start lands inside
-     [s, e + gap) — i.e. ivls[lo].s < e + gap (equivalently e + gap > .s). */
+  /* Right neighbour: ivls[lo].s >= s. Collision iff its start lands inside
+     [s, e + gap), i.e. ivls[lo].s < e + gap (equivalently e + gap > .s). */
   if (lo < n_ivls && e + gap > ivls[lo].s) return 1;
-  /* Left neighbor: ivls[lo-1].s < s and (by non-overlap invariant) its .e
+  /* Left neighbour: ivls[lo-1].s < s and (by non-overlap invariant) its .e
      is the largest end below s. Collision iff its end is within gap of s. */
   if (lo > 0 && ivls[lo - 1].e + gap > s) return 1;
   return 0;
@@ -1514,19 +1514,19 @@ static void do_bed_insertion(unsigned char *seq, const uint64_t L, const char *n
     /* Center motif at BED midpoint. */
     fprintf(stderr,
       "Warning: BED region %s:%" PRIu64 "-%" PRIu64 " width %" PRIu64
-      " != motif '%s' width %" PRIu64 "; centering at midpoint.\n",
+      " != motif '%s' width %" PRIu64 "; centring at midpoint.\n",
       name, bs, be, be - bs, m->name, w);
     const uint64_t mid = (bs + be) / 2;
     const uint64_t half = w / 2;
     if (mid < half) {
       fprintf(stderr,
-        "Warning: BED region too close to sequence start to center motif '%s'; skipping.\n", m->name);
+        "Warning: BED region too close to sequence start to centre motif '%s'; skipping.\n", m->name);
       return;
     }
     start = mid - half;
     if (start + w > L) {
       fprintf(stderr,
-        "Warning: BED region centered position exceeds seq '%s' length; skipping.\n", name);
+        "Warning: BED region centred position exceeds seq '%s' length; skipping.\n", name);
       return;
     }
   }
@@ -1574,7 +1574,7 @@ static void usage(void) {
     "            of sequence length. Excludes -f/-x/-X.\n"
     " -x <str>   BED mode: col-4 = motif name (must match a loaded motif),\n"
     "            col-6 = strand. If end-start != motif width, motif is\n"
-    "            centered at the BED-range midpoint. Excludes -f/-n/-X.\n"
+    "            centred at the BED-range midpoint. Excludes -f/-n/-X.\n"
     " -X <str>   Single-range shortcut: seqname:start-end[:strand].\n"
     "            Requires exactly one motif loaded. Excludes -f/-n/-x.\n"
     " -M <int>   Minimum spacing (bp) between -f/-n insertions (default: 0).\n"

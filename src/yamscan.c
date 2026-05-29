@@ -1296,7 +1296,7 @@ static void parse_meme_name(const char *line, const uint64_t motif_i) {
   /* Capture identifier AND any altname after it ("MOTIF id altname [...]"),
      collapsing whitespace runs to single spaces. trim_motif_name (called
      when args.trim_names) will later truncate at the first space, so the
-     default behavior (id only) is preserved; with -r the full name is kept. */
+     default behaviour (id only) is preserved; with -r the full name is kept. */
   uint64_t i = 5, j = 0;
   int prev_space = 1;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n' && j < MAX_NAME_SIZE - 1) {
@@ -1325,7 +1325,7 @@ static void read_meme(void) {
   while ((read = getline(&line, &len, files.m)) != -1) {
     line_num++;
     if (check_line_contains(line, "Background letter frequencies\0")) {
-      /* Only honor the first occurrence; concatenated MEME files (e.g.
+      /* Only honour the first occurrence; concatenated MEME files (e.g.
          JASPAR2026_CORE_*_meme.txt) repeat the header per chunk. */
       if (!bkg_let_freqs_L) bkg_let_freqs_L = line_num;
       else if (!warned_bkg) {

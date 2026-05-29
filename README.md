@@ -676,7 +676,7 @@ Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
             of sequence length. Excludes -f/-x/-X.
  -x <str>   BED mode: col-4 = motif name (must match a loaded motif),
             col-6 = strand. If end-start != motif width, motif is
-            centered at the BED-range midpoint. Excludes -f/-n/-X.
+            centred at the BED-range midpoint. Excludes -f/-n/-X.
  -X <str>   Single-range shortcut: seqname:start-end[:strand].
             Requires exactly one motif loaded. Excludes -f/-n/-x.
  -M <int>   Minimum spacing (bp) between -f/-n insertions (default: 0).

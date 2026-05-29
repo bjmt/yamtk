@@ -579,7 +579,7 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
 
 static void parse_meme_name(const char *line, const uint64_t motif_i) {
   /* Capture identifier AND any altname; trim_motif_name (run when args.trim_names)
-     truncates at the first space later, so default behavior is unchanged. */
+     truncates at the first space later, so default behaviour is unchanged. */
   uint64_t i = 5, j = 0;
   int prev_space = 1;
   motif_t *m = cur_set->motifs[motif_i];
@@ -608,7 +608,7 @@ static void read_meme(FILE *f, int read_bkg) {
   while ((r = getline(&line, &len, f)) != -1) {
     line_num++;
     if (check_line_contains(line, "Background letter frequencies\0")) {
-      /* Only honor the first occurrence; concatenated MEME files (e.g.
+      /* Only honour the first occurrence; concatenated MEME files (e.g.
          JASPAR2026_CORE_*_meme.txt) repeat the header per chunk. */
       if (!bkg_L) bkg_L = line_num;
       else if (!warned_bkg) {
