@@ -1,3 +1,20 @@
+CHANGES IN VERSION 2.3.1 (unreleased)
+-------------------------------------
+
+* yamtk cmp: faster output stage at tight -q thresholds. After a query's
+  BH q-values are computed, the per-query result array is now compacted
+  in place so that only rows with q-value within -q remain in the prefix
+  used by write_results, and the subsequent qsort and output loop see
+  the compacted prefix instead of all target_set.n rows. The hot single-
+  threaded post-processing phase that was otherwise growing into the
+  dominant cost at high thread counts shrinks accordingly. When -q 1.0
+  is in effect the compaction is detected as a no-op and skipped
+  entirely, so existing callers (including scripts/yamcmp_bench.sh,
+  which uses -q 1.0) see no regression. Measured on a 500q x 5000t
+  synthetic fixture at -q 0.01: 1.04x at -j 1, 1.18x at -j 4, and 1.29x
+  at -j 8. Output is byte-identical to 2.3.0 at every -q value tested.
+
+
 CHANGES IN VERSION 2.3.0 (2026-05-28)
 --------------------------------------
 

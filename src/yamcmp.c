@@ -1376,6 +1376,7 @@ static void bh_qvalues(const double *p, uint64_t n, double *q) {
 /* ---- Per-query worker output storage ---- */
 
 static pair_result_t **query_results = NULL;   /* [q_i] -> array of length target_set.n */
+static uint64_t *query_passing_count = NULL;   /* [q_i] -> count of rows with qvalue <= args.qvalue_filter, packed to the front of query_results[q_i] */
 static pthread_mutex_t pb_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t pb_counter = 0;                /* progress: completed queries */
 
@@ -1441,6 +1442,23 @@ static void *cmp_sub_process(void *arg) {
     bh_qvalues(pvals, target_set.n, qvals);
     for (uint64_t ti = 0; ti < target_set.n; ti++) rows[ti].qvalue = qvals[ti];
     free(pvals); free(qvals);
+    /* Compact: pack rows with qvalue <= filter to the front so write_results
+       can sort and iterate over the shorter prefix only. Per-query, single
+       thread per query, so writing query_passing_count[qi] is race-free.
+       At -q 1.0 every row passes (BH q-values are clamped to [0,1] in
+       bh_qvalues), so the loop is a no-op and we skip it. */
+    if (args.qvalue_filter >= 1.0) {
+      query_passing_count[qi] = target_set.n;
+    } else {
+      uint64_t k = 0;
+      for (uint64_t ti = 0; ti < target_set.n; ti++) {
+        if (rows[ti].qvalue <= args.qvalue_filter) {
+          if (k != ti) rows[k] = rows[ti];
+          k++;
+        }
+      }
+      query_passing_count[qi] = k;
+    }
     /* Free the per-query PMF caches after we're done with this query */
     free_pmf_cache(q->pmf_fwd, q->pmf_wq); q->pmf_fwd = NULL;
     free_pmf_cache(q->pmf_rc,  q->pmf_wq); q->pmf_rc  = NULL;
@@ -1469,10 +1487,10 @@ static void write_results(FILE *o, int argc, char **argv) {
   for (uint64_t qi = 0; qi < query_set.n; qi++) {
     motif_t *q = query_set.motifs[qi];
     pair_result_t *rows = query_results[qi];
-    qsort(rows, target_set.n, sizeof(pair_result_t), cmp_pair);
-    for (uint64_t ri = 0; ri < target_set.n; ri++) {
+    uint64_t n_pass = query_passing_count[qi];
+    qsort(rows, n_pass, sizeof(pair_result_t), cmp_pair);
+    for (uint64_t ri = 0; ri < n_pass; ri++) {
       pair_result_t *r = &rows[ri];
-      if (r->qvalue > args.qvalue_filter) continue;
       motif_t *t = target_set.motifs[r->target_i];
       /* Build the aligned-consensus substrings for the overlap region */
       const double (*qppm)[4] = (r->orientation == 0) ? q->ppm : q->ppm_rc;
@@ -1692,6 +1710,13 @@ int main_cmp(int argc, char **argv) {
       badexit("Error: Failed to alloc result rows.");
     }
   }
+  query_passing_count = calloc(query_set.n, sizeof(*query_passing_count));
+  if (!query_passing_count) {
+    for (uint64_t k = 0; k < query_set.n; k++) free(query_results[k]);
+    free(query_results); query_results = NULL;
+    free(threads);
+    badexit("Error: Failed to alloc passing-count array.");
+  }
 
   if (args.v) fprintf(stderr, "Comparing %" PRIu64 " queries x %" PRIu64 " targets ...\n",
     query_set.n, target_set.n);
@@ -1718,6 +1743,7 @@ int main_cmp(int argc, char **argv) {
   /* Free per-query result rows */
   for (uint64_t qi = 0; qi < query_set.n; qi++) free(query_results[qi]);
   free(query_results); query_results = NULL;
+  free(query_passing_count); query_passing_count = NULL;
 
   free_motif_set(&query_set);
   free_motif_set(&target_set);
