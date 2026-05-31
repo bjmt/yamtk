@@ -1,45 +1,125 @@
 # yamtk: Yet Another Motif ToolKit
 
-* Motif scanning: [yamtk scan](#yamscan)
-* Deduplicate overlapping motif hits: [yamtk dedup](#yamdedup)
-* Motif enrichment: [yamtk enr](#yamenr)
-* De novo motif discovery: [yamtk me](#yamme)
-* PWM refinement against positive sequences: [yamtk ref](#yamref)
-* Motif-vs-database comparison: [yamtk cmp](#yamcmp)
-* Seed sequences with sampled motifs: [yamtk seed](#yamseed)
-* Sequence manipulation: [yamtk seq](#yamseq)
-* GC/length-matched background sequences: [yamtk bkg](#yambkg)
-* Convert motifs between formats: [yamtk conv](#yamconv)
-* Higher-order sequence shuffling: [yamtk shuf](#yamshuf)
-* Miscellaneous utility scripts: [Extra scripts](#extra-scripts)
+yamtk is a small (and reasonably fast) toolkit for working with DNA/RNA
+sequence motifs from the command line, with as few dependencies as I could
+manage. It started life as a quicker stand-in for the MEME suite's `fimo`, and
+over time grew into a collection of related tools covering scanning, enrichment,
+de novo discovery, refinement, database comparison, format conversion, and a
+handful of sequence utilities. Every tool ships as a subcommand of a single
+`yamtk` binary, reads FASTA/FASTQ (optionally gzipped), and writes plain TSV or
+FASTA to stdout. As a rough sense of the speed, on the Arabidopsis genome `yamtk
+scan` finishes in about seven seconds where `fimo` takes over four minutes (see
+[Benchmarking](#benchmarking)).
+
+## Tools
+
+**Scanning and post-processing**
+* [`yamtk scan`](#yamscan): scan motifs against sequences
+* [`yamtk dedup`](#yamdedup): remove overlapping motif hits (or any ranges)
+
+**Enrichment and discovery**
+* [`yamtk enr`](#yamenr): test motif enrichment between two sequence sets
+* [`yamtk me`](#yamme): discover motifs de novo
+
+**Motif manipulation**
+* [`yamtk ref`](#yamref): refine a seed PWM against positive sequences
+* [`yamtk cmp`](#yamcmp): compare motifs against a database
+* [`yamtk conv`](#yamconv): convert motifs between formats
+
+**Sequence manipulation**
+* [`yamtk seed`](#yamseed): plant motif samples into sequences for benchmarks
+* [`yamtk seq`](#yamseq): common FASTA manipulations
+* [`yamtk bkg`](#yambkg): GC/length-matched background sequences
+* [`yamtk shuf`](#yamshuf): higher-order sequence shuffling
+
+**Reference**
+* [Quick start](#quick-start)
+* [Installation](#installation)
+* [Common conventions](#common-conventions)
+* [Typical workflows](#typical-workflows)
+* [Extra scripts](#extra-scripts)
+* [Compatible motif formats](#compatible-motif-formats)
+* [Motivation](#motivation)
+
+## Quick start
+
+Scan a set of motifs against a FASTA file:
+
+```sh
+$ yamtk scan -t 0.04 -m test/motif.jaspar -s test/dna.fa
+##yamscan v2.3.0 [ -t 0.04 -m test/motif.jaspar -s test/dna.fa ]
+##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
+##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
+1	30	34	+	1-motifA	0.0078125	4.874	73.4	CTCGC
+1	31	35	-	1-motifA	0.0341796875	2.482	37.4	TCGCG
+2	4	8	+	1-motifA	0.0166015625	3.860	58.2	GTCGA
+2	16	20	-	1-motifA	0.0078125	4.874	73.4	GCGAG
+```
+
+The output is tab-separated, one hit per line, with a couple of `##` header
+lines recording the run and the input statistics. Most of the other tools follow
+roughly the same shape (see [Common conventions](#common-conventions)).
 
 ## Installation
 
-Requires a C compiler (tested with gcc/clang), GNU Make, and [Zlib](https://zlib.net).
+Requires a C compiler (tested with gcc/clang), GNU Make, and
+[Zlib](https://zlib.net).
 
 ```sh
 git clone https://github.com/bjmt/yamtk  # Or download a recent release
 cd yamtk
-make
+make release   # optimized build; plain `make` gives a debug-friendly one
 ```
 
-This will create the final binary within the project folder. Use `make install`
-to move it to `/usr/local/bin`.
+This creates the `yamtk` binary within the project folder. Use `make install` to
+copy it to `/usr/local/bin` (override with `PREFIX=` or `BINDIR=` if you'd
+rather it went elsewhere), and `make check` if you want to run the test suite.
 
-## Motivation
+## Common conventions
 
-I occasionally find myself needing to scan motifs against the Arabidopsis
-genome from the command line. Usually having the MEME suite installed locally,
-I resort to using [fimo](https://meme-suite.org/meme/tools/fimo). Inevitably
-the wait time exceeds my limited patience. Eventually I decided to perform my
-own re-write of fimo, only this time I would only include features I need in
-addition to making sure it could run fast enough to satisfy me. This effort led
-to creating a faster replacement, yamscan, and then later a smattering of
-additional related programs/utilities as my needs demanded.
+A few things hold across every subcommand, so the individual tool sections below
+mostly don't repeat them:
 
-I would also like to mention that the fast performance of these programs was
-made possible by making use of several functions from Dr. Heng Li's amazing
-[klib](https://github.com/attractivechaos/klib) C library.
+* **Input.** Sequences are read as FASTA or FASTQ, optionally gzipped. Motif
+  files may be MEME, JASPAR, HOMER, or HOCOMOCO, and the format is auto-detected
+  (see [Compatible motif formats](#compatible-motif-formats)). A `-` passed to an
+  input flag reads from stdin.
+* **Output.** Data goes to stdout (redirect with `-o`), while diagnostics go to
+  stderr. Tabular output is tab-separated and prefixed with `##` comment and
+  header lines. The exit code is 0 on success, 1 on failure.
+* **Coordinates.** `yamtk scan` reports 1-based, closed coordinates. BED input
+  and output are 0-based and half-open, as usual for BED.
+* **Shared flags.** Recurring across most tools: `-o` output file, `-j` threads,
+  `-g` progress bar, `-s` RNG seed (pass one for reproducible runs), `-r` to keep
+  full names rather than trimming to the first word, and `-v` / `-w` / `-h` for
+  verbose, very-verbose, and help. Pass `-h` to any subcommand for its full
+  option list.
+* **Alphabet and limits.** Only DNA/RNA is handled (alphabet ACGTU, with N
+  standing in for anything else). Motifs are 1 to 50 columns wide, and sequence
+  shuffling supports k up to 9.
+
+## Typical workflows
+
+The tools are meant to compose, and a couple of pipelines come up often enough
+to be worth showing.
+
+Scan, add Benjamini-Hochberg Q-values, and then remove overlapping hits (in that
+order, since the Q-values really should be computed before any deduplication):
+
+```sh
+yamtk scan -t 0.0001 -m motifs.meme -s genome.fa \
+  | scripts/add_qvals.sh \
+  | yamtk dedup -i- \
+  > hits.tsv
+```
+
+Or test motif enrichment in peaks against a GC/length-matched genomic
+background:
+
+```sh
+yamtk bkg -i peaks.fa -g genome.fa -s 1 > bkg.fa
+yamtk enr -i peaks.fa -n bkg.fa -m motifs.meme > enrichment.tsv
+```
 
 ## yamscan
 
@@ -48,7 +128,6 @@ A regular DNA/RNA scanner with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa[.gz]
 
  -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO). 1-50 bases wide.
@@ -80,11 +159,24 @@ Usage:  yamtk scan [options] [ -m motifs.txt | -1 CONSENSUS ] -s sequences.fa[.g
 
 ### Output
 
-yamscan reports basic information about matches, including coordinates,
-scores, P-values, percent of the scores from the max, and the actual match.
-Additional information about the motifs and sequences is included in the
-header, which can be used for calculating Q-values after the fact. The
-coordinates are 1-based.
+yamscan reports one tab-separated row per match. Additional information about
+the motifs and sequences is included in the `##` header line, which can be used
+for calculating Q-values after the fact. The columns are:
+
+| Column | Description |
+|--------|-------------|
+| seq_name | Sequence name (or BED range name with `-x`) |
+| start | Match start, 1-based |
+| end | Match end, 1-based and inclusive |
+| strand | `+` or `-` |
+| motif | Motif name |
+| pvalue | P-value of the match score |
+| score | Log-odds match score |
+| score_pct | Score as a percent of the motif's maximum possible score |
+| match | Matched bases, always on the forward strand |
+
+With `-x` the output gains two leading columns, `bed_range` and `bed_name`,
+identifying the restricting range.
 
 Example output:
 
@@ -135,7 +227,7 @@ $ yamtk scan -s test/dna.fa -x test/dna.bed
 2:11-48(-)	B	2	2	38	50.00	0
 ```
 
-This mode shows the internal PWM representation of motifs, as well P-values
+This mode shows the internal PWM representation of motifs, as well as P-values
 for the min and max possible scores (with some in-between scores). Basic
 information about sequences is output, including size, GC percent, and the
 number of non-DNA/RNA letters found. If a BED file is also provided then the
@@ -177,8 +269,8 @@ motif		3	28	32	+	3.69903	0.0195		GTCTA
 
 yamscan (also manually setting the nsites value found in the motif file):
 ```sh
-$ yamtk scan -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme
-##yamscan v2.3.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -n 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
+$ yamtk scan -b 0.25,0.25,0.25,0.25 -p 1 -N 175 -s test/dna.fa -t 0.02 -m test/motif.meme
+##yamscan v2.3.0 [ -b 0.25,0.25,0.25,0.25 -p 1 -N 175 -s test/dna.fa -t 0.02 -m test/motif.meme ]
 ##MotifCount=1 MotifSize=5 SeqCount=3 SeqSize=158 GC=45.57% Ns=0 MaxPossibleHits=292
 ##seq_name	start	end	strand	motif	pvalue	score	score_pct	match
 1	30	34	+	motif	0.0078125	4.877	73.4	CTCGC
@@ -237,7 +329,7 @@ dumbly scores every possible match for all motifs across all sequences). I have
 found after some brief testing that when scanning hundreds of motifs across
 sequences in the Mbp-Gbp range several-fold speed-ups can be achieved. (In my
 limited testing I also noticed that for smaller scanning jobs MOODS can itself
-be several times slower due to the it's large startup cost -- an additional
+be several times slower due to its large startup cost, an additional
 tradeoff to keep in mind.) Alternatively, if CPU time is meaningless to you and
 you have access to a large number of cores you can surpass even these
 impressive scanning times by making liberal use of yamscan's `-j` flag. See
@@ -269,7 +361,6 @@ memory at a time.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk dedup [options] -i [ results.txt[.gz] | ranges.bed[.gz] ]
 
  -i <str>   yamscan TSV output or a BED file ('-' = stdin; >=6 columns:
@@ -352,7 +443,6 @@ Benjamini-Hochberg FDR-corrected q-values.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk enr [options] -i positives.fa[.gz] -m motifs.txt
 
  -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).
@@ -393,7 +483,7 @@ For peak-based enrichment (this is the usual AME/STREME workflow) you can
 pass a BED file of peak regions via `-x`. Each region in the BED then
 becomes one independent **unit** for the statistical test:
 
-- `-T seqs` asks "of N peaks, how many contain ≥1 motif hit?"
+- `-T seqs` asks "of N peaks, how many contain >= 1 motif hit?"
 - `-T sites` counts hits inside peaks and uses the sum of peak widths
   (× strands) as the position denominator.
 - `-T ranksum` collects one max PWM score per peak.
@@ -447,7 +537,7 @@ $ yamtk enr -i positives.fa -n negatives.fa -m motifs.meme
 ```
 
 Use a shuffled-positive null (k=2, deterministic seed) and report only
-significant motifs (q ≤ 0.05) with 4 threads:
+significant motifs (q <= 0.05) with 4 threads:
 
 ```sh
 $ yamtk enr -i positives.fa -m motifs.meme -k 2 -s 42 -q 0.05 -j 4
@@ -488,7 +578,6 @@ together with a MEME probability-matrix file.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk me [options] -i positives.fa[.gz]
 
  -i <str>   Positives FASTA/FASTQ ('-' = stdin, requires -n).
@@ -529,7 +618,7 @@ yamtk me -i chip_peaks.fa -k 6 -K 15 -N 10 -s 1 -v
 | width | Motif width in bp |
 | consensus | Argmax consensus sequence |
 | nsites | Aligned sites from last refinement pass |
-| seqs_pos / seqs_neg | Positive / negative sequences with ≥1 hit |
+| seqs_pos / seqs_neg | Positive / negative sequences with >= 1 hit |
 | sites_pos / sites_neg | Total hit count in positives / negatives |
 | n_pos / n_neg | Total sequences in each set |
 | pvalue | One-tailed Fisher's exact p-value (per-sequence presence) |
@@ -546,7 +635,6 @@ afterwards. The output is a MEME motif file holding the refined PWM(s).
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk ref [options] [ -m motifs.txt | -1 CONSENSUS ] -i positives.fa[.gz]
 
  -m <str>   Seed motif file (MEME/JASPAR/HOMER/HOCOMOCO).
@@ -605,7 +693,6 @@ q-values, one row per query-target pair that passes the q-value filter.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk cmp [options] -m queries.meme -t targets.meme
 
  -m <str>   Query motif file (MEME/JASPAR/HOMER/HOCOMOCO).
@@ -644,6 +731,89 @@ loosen the q-value threshold:
 $ yamtk cmp -m queries.meme -t small_db.meme -e -q 1 -o cmp.tsv
 ```
 
+## yamconv
+
+Convert motifs between the MEME, JASPAR, HOMER, and HOCOMOCO formats. The input
+format is auto-detected (using the same detector as the rest of yamtk), and the
+output format is chosen with `-t`. Internally the motifs are stored as PPMs; the
+PCM-style outputs (JASPAR, HOCOMOCO) are scaled back to integer counts using an
+`nsites` value, preserved from the source where available and falling back to
+`-N` otherwise. Same-format conversion is allowed too, where it simply acts as a
+normalizer.
+
+### Usage
+
+```
+Usage:  yamtk conv -m motifs.txt -t <fmt> [options]
+
+ -m <str>   Input motif file (MEME/JASPAR/HOMER/HOCOMOCO; '-' = stdin).
+ -t <str>   Target format: meme | jaspar | homer | hocomoco.
+ -o <str>   Output file (default: stdout).
+ -T <dbl>   IC threshold (bits) for flank trimming. When set, low-IC
+            flanking columns are trimmed before output. Suggested: 0.5.
+ -N <int>   Fallback nsites for PCM output when the source has none
+            (HOMER input, or MEME without nsites=) (default: 1000).
+ -p <int>   Pseudocount applied during PCM->PPM ingestion of JASPAR/
+            HOCOMOCO sources (default: 0; pass >0 to soften zero
+            probabilities for downstream log-transformed scoring).
+ -b A,C,G,T Background for the HOMER threshold (default: uniform).
+ -r         Do not trim motif names to the first word.
+ -v / -w / -h   Verbose / very-verbose / help.
+```
+
+### Examples
+
+```sh
+# MEME -> JASPAR (count nsites preserved from the source's nsites= field)
+yamtk conv -m motifs.meme -t jaspar > motifs.jaspar
+
+# JASPAR -> MEME (counts -> probabilities, light pseudocount applied)
+yamtk conv -m JASPAR2024_CORE.jaspar -t meme > JASPAR.meme
+
+# HOMER -> HOCOMOCO with explicit nsites=200 (HOMER carries no nsites)
+yamtk conv -m my_motifs.homer -t hocomoco -N 200 > my_motifs.hocomoco
+
+# Same-format normalizer: round-trip through the parser/writer
+yamtk conv -m maybe_messy.meme -t meme > tidy.meme
+
+# Trim low-IC flanks before emitting
+yamtk conv -m discovered.meme -t meme -T 0.5 > trimmed.meme
+```
+
+### Format-specific notes
+
+**MEME output.** Emits MEME version 4 with `ALPHABET= ACGT`, a strand line,
+the Background block, and one `MOTIF` + `letter-probability matrix` pair
+per motif. The `nsites=` value is preserved from the source when known
+(MEME parses `nsites=` from the matrix header line; JASPAR/HOCOMOCO use
+the column-sum of counts); otherwise the `-N` fallback is used.
+
+**JASPAR output.** Standard four-row format with `A [ ... ]` / `C [ ... ]`
+/ `G [ ... ]` / `T [ ... ]`. Integer counts come from `round(p * nsites)`.
+
+**HOMER output.** First line is `>consensus<TAB>motif_name<TAB>threshold`.
+The consensus is an IUPAC string: any base with `p >= 0.25` joins the
+consensus set, mapped to its standard IUPAC code (single base -> ACGT;
+two bases -> M/R/W/S/Y/K; three bases -> V/H/D/B; four -> N). If no base
+clears the bar, the column falls back to argmax. The threshold is the
+motif's max possible log-odds score against the background
+(`sum_i log2(max_b(p_ib) / bkg_b)`), a sensible self-consistent default;
+override `-b` for non-uniform backgrounds, and tune the threshold
+externally for your actual scanning workload.
+
+**HOCOMOCO output.** Per-position count rows (no row labels). Counts come
+from `round(p * nsites)`; the source's column-sum nsites is preserved
+when known.
+
+### IC flank trimming (`-T`)
+
+When `-T <dbl>` is set, columns at either flank are dropped for as long as their
+information content (in bits, against a uniform background) stays below the
+threshold. Trimming stops at the first column to clear the bar, and a minimum
+width of 3 is enforced. This is the same routine that `yamtk ref` uses, and I
+find it handy for tidying up the noisy edges of de novo motifs before converting
+them.
+
 ## yamseed
 
 Generate a synthetic benchmark FASTA by inserting motif samples into your input
@@ -657,7 +827,6 @@ sequence (`-n`), BED-driven placement (`-x`), and a single-range shortcut (`-X`)
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk seed [options] [ -m motifs.txt | -1 CONSENSUS ] -i seqs.fa[.gz]
 
  -m <str>   Motif file (MEME/JASPAR/HOMER/HOCOMOCO).
@@ -809,7 +978,6 @@ subcommand with an `-a <action>` selector. The supported actions are:
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk seq -a <action> [options] -i seqs.fa[.gz]
 
  -i <str>   Input FASTA/FASTQ ('-' = stdin).
@@ -873,7 +1041,6 @@ than the shuffled-positive one.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk bkg [options] -i targets.fa[.gz] { -p pool.fa | -g genome.fa }
 
  -i <str>   Target FASTA/FASTQ ('-' = stdin).
@@ -970,90 +1137,6 @@ Pool    GC bins (step=10%): 30-40%=2 40-50%=21 50-60%=27
 Attempts: total=181, mean=3.6/pick, max=13/pick (limit -A 8).
 ```
 
-## yamconv
-
-Convert motifs between the MEME, JASPAR, HOMER, and HOCOMOCO formats. The input
-format is auto-detected (using the same detector as the rest of yamtk), and the
-output format is chosen with `-t`. Internally the motifs are stored as PPMs; the
-PCM-style outputs (JASPAR, HOCOMOCO) are scaled back to integer counts using an
-`nsites` value, preserved from the source where available and falling back to
-`-N` otherwise. Same-format conversion is allowed too, where it simply acts as a
-normalizer.
-
-### Usage
-
-```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
-Usage:  yamtk conv -m motifs.txt -t <fmt> [options]
-
- -m <str>   Input motif file (MEME/JASPAR/HOMER/HOCOMOCO; '-' = stdin).
- -t <str>   Target format: meme | jaspar | homer | hocomoco.
- -o <str>   Output file (default: stdout).
- -T <dbl>   IC threshold (bits) for flank trimming. When set, low-IC
-            flanking columns are trimmed before output. Suggested: 0.5.
- -N <int>   Fallback nsites for PCM output when the source has none
-            (HOMER input, or MEME without nsites=) (default: 1000).
- -p <int>   Pseudocount applied during PCM->PPM ingestion of JASPAR/
-            HOCOMOCO sources (default: 0; pass >0 to soften zero
-            probabilities for downstream log-transformed scoring).
- -b A,C,G,T Background for the HOMER threshold (default: uniform).
- -r         Do not trim motif names to the first word.
- -v / -w / -h   Verbose / very-verbose / help.
-```
-
-### Examples
-
-```sh
-# MEME -> JASPAR (count nsites preserved from the source's nsites= field)
-yamtk conv -m motifs.meme -t jaspar > motifs.jaspar
-
-# JASPAR -> MEME (counts -> probabilities, light pseudocount applied)
-yamtk conv -m JASPAR2024_CORE.jaspar -t meme > JASPAR.meme
-
-# HOMER -> HOCOMOCO with explicit nsites=200 (HOMER carries no nsites)
-yamtk conv -m my_motifs.homer -t hocomoco -N 200 > my_motifs.hocomoco
-
-# Same-format normalizer: round-trip through the parser/writer
-yamtk conv -m maybe_messy.meme -t meme > tidy.meme
-
-# Trim low-IC flanks before emitting
-yamtk conv -m discovered.meme -t meme -T 0.5 > trimmed.meme
-```
-
-### Format-specific notes
-
-**MEME output.** Emits MEME version 4 with `ALPHABET= ACGT`, a strand line,
-the Background block, and one `MOTIF` + `letter-probability matrix` pair
-per motif. The `nsites=` value is preserved from the source when known
-(MEME parses `nsites=` from the matrix header line; JASPAR/HOCOMOCO use
-the column-sum of counts); otherwise the `-N` fallback is used.
-
-**JASPAR output.** Standard four-row format with `A [ ... ]` / `C [ ... ]`
-/ `G [ ... ]` / `T [ ... ]`. Integer counts come from `round(p * nsites)`.
-
-**HOMER output.** First line is `>consensus<TAB>motif_name<TAB>threshold`.
-The consensus is an IUPAC string: any base with `p >= 0.25` joins the
-consensus set, mapped to its standard IUPAC code (single base -> ACGT;
-two bases -> M/R/W/S/Y/K; three bases -> V/H/D/B; four -> N). If no base
-clears the bar, the column falls back to argmax. The threshold is the
-motif's max possible log-odds score against the background
-(`sum_i log2(max_b(p_ib) / bkg_b)`) -- a sensible self-consistent default;
-override `-b` for non-uniform backgrounds, and tune the threshold
-externally for your actual scanning workload.
-
-**HOCOMOCO output.** Per-position count rows (no row labels). Counts come
-from `round(p * nsites)`; the source's column-sum nsites is preserved
-when known.
-
-### IC flank trimming (`-T`)
-
-When `-T <dbl>` is set, columns at either flank are dropped for as long as their
-information content (in bits, against a uniform background) stays below the
-threshold. Trimming stops at the first column to clear the bar, and a minimum
-width of 3 is enforced. This is the same routine that `yamtk ref` uses, and I
-find it handy for tidying up the noisy edges of de novo motifs before converting
-them.
-
 ## yamshuf
 
 A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
@@ -1061,7 +1144,6 @@ A regular DNA/RNA sequence shuffler with a focus on simplicity and speed.
 ### Usage
 
 ```
-yamtk v2.3.0  Copyright (C) 2026  Benjamin Jean-Marie Tremblay
 Usage:  yamtk shuf [options] -i sequences.fa[.gz]
 
  -i <str>   Input FASTA/FASTQ ('-' = stdin). Non-ACGTU chars become N
@@ -1349,4 +1431,19 @@ HOCOMOCO motifs have a header line starting with `>` followed by the motif
 name. Only mononucleotide count matrices (PCM) can be used. The counts are
 split into four columns (A,C,G,T/U). These counts need not be integers. The
 headers cannot contain the tab character.
+
+## Motivation
+
+I occasionally find myself needing to scan motifs against the Arabidopsis
+genome from the command line. Usually having the MEME suite installed locally,
+I resort to using [fimo](https://meme-suite.org/meme/tools/fimo). Inevitably
+the wait time exceeds my limited patience. Eventually I decided to perform my
+own re-write of fimo, only this time I would only include features I need in
+addition to making sure it could run fast enough to satisfy me. This effort led
+to creating a faster replacement, yamscan, and then later a smattering of
+additional related programs/utilities as my needs demanded.
+
+I would also like to mention that the fast performance of these programs was
+made possible by making use of several functions from Dr. Heng Li's amazing
+[klib](https://github.com/attractivechaos/klib) C library.
 
