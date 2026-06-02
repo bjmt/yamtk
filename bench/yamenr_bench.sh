@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 #
-# yamscan_bench.sh — micro-benchmark for yamtk scan.
+# yamenr_bench.sh — micro-benchmark for yamtk enr.
 #
-# Generates a deterministic synthetic FASTA + a small multi-motif MEME
-# file (cached under /tmp), then runs `yamtk scan` at several thread
-# counts and reports wall clock + bp/s. Optionally diffs against a
-# prior run's TSV to surface per-thread deltas.
+# Generates a deterministic positives FASTA + multi-motif MEME (cached
+# under /tmp), runs `yamtk enr` at several thread counts (shuffled
+# negatives, deterministic seed), and reports wall clock + bp/s + peak
+# MB. Throughput unit = bp/s of positives (negatives are an equal-size
+# shuffle, so total work is ~2x bp/s).
 #
 # Usage:
-#   bash scripts/yamscan_bench.sh                 [ -- save current state ]
-#   bash scripts/yamscan_bench.sh > baseline.tsv  [ -- capture baseline ]
-#   bash scripts/yamscan_bench.sh --baseline baseline.tsv
+#   bash bench/yamenr_bench.sh
+#   bash bench/yamenr_bench.sh > baseline.tsv
+#   bash bench/yamenr_bench.sh --baseline baseline.tsv
 #
 # Run from the repo root.
 
 set -euo pipefail
 
 YAMTK="${YAMTK:-./yamtk}"
-BENCH_DIR="${BENCH_DIR:-/tmp/yamscan_bench}"
-FA="$BENCH_DIR/seqs.fa"
+BENCH_DIR="${BENCH_DIR:-/tmp/yamenr_bench}"
+FA="$BENCH_DIR/pos.fa"
 MM="$BENCH_DIR/motifs.meme"
 TRIALS=3
 JS=(1 2 4 8)
@@ -30,8 +31,7 @@ while [ $# -gt 0 ]; do
         --trials)   TRIALS="$2";   shift 2 ;;
         --js)       IFS=',' read -ra JS <<<"$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,15p' "$0" >&2
-            exit 0 ;;
+            sed -n '2,15p' "$0" >&2; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -43,20 +43,18 @@ fi
 
 mkdir -p "$BENCH_DIR"
 
-# ---- Generate fixture once, cache thereafter ----
 if [ ! -s "$FA" ]; then
     echo "# generating $FA (one-time)..." >&2
     python3 - >"$FA" <<'PY'
 import random
 random.seed(0x5EAF00D)
 b = 'ACGT'
-# 50k seqs * 500 bp = 25 MB raw bases. Enough work for stable timing
-# (~7-10 s/run at -j 1 on Apple silicon), but small enough that the
-# full 12-trial sweep finishes in under 2 minutes.
-for i in range(50000):
+# 10k seqs * 500 bp = 5 MB. Smaller than yamscan_bench because yamenr
+# does two passes (pos + shuffled neg) plus per-motif stats, so an
+# all-trials sweep needs to stay under ~3 minutes.
+for i in range(10000):
     s = ''.join(random.choice(b) for _ in range(500))
-    print(f'>s{i}')
-    print(s)
+    print(f'>s{i}'); print(s)
 PY
 fi
 if [ ! -s "$MM" ]; then
@@ -95,7 +93,7 @@ letter-probability matrix: alength= 4 w= 6 nsites= 100 E= 0
  0.91 0.03 0.03 0.03
  0.91 0.03 0.03 0.03
 
-MOTIF wide  ACGTACGTACGTAC
+MOTIF wide ACGTACGTACGTAC
 letter-probability matrix: alength= 4 w= 14 nsites= 100 E= 0
  0.91 0.03 0.03 0.03
  0.03 0.91 0.03 0.03
@@ -126,43 +124,31 @@ letter-probability matrix: alength= 4 w= 8 nsites= 100 E= 0
 EOF
 fi
 
-# ---- Total bp for throughput ----
 TOTAL_BP=$(awk '/^>/{next} {n+=length($0)} END{print n}' "$FA")
+cat "$FA" >/dev/null  # warm cache
 
-# ---- Warm up disk cache ----
-cat "$FA" >/dev/null
-
-# Parse the "Approx. peak memory usage: X (KB|MB|GB)" line yamtk emits
-# under -v. Strip locale-dependent grouping commas (LC_NUMERIC=en_US adds
-# them). Returns peak memory in MB as a float (or "-" if not found).
 parse_peak_mb() {
     awk '
         /Approx. peak memory usage:/ {
-            # match e.g. "Approx. peak memory usage: 1,234.56 MB."
-            n=split($0, parts, ":")
-            val=parts[2]
-            gsub(/,/, "", val)
-            gsub(/\.$/, "", val)
+            n=split($0, parts, ":"); val=parts[2]
+            gsub(/,/, "", val); gsub(/\.$/, "", val)
             gsub(/^[ \t]+|[ \t]+$/, "", val)
-            # val now like "1234.56 MB" or "1234.56 KB" / "GB"
-            split(val, kv, " ")
-            num=kv[1]+0
-            unit=kv[2]
+            split(val, kv, " "); num=kv[1]+0; unit=kv[2]
             if (unit == "GB")      printf "%.2f", num * 1024
             else if (unit == "KB") printf "%.4f", num / 1024
             else                   printf "%.2f", num
             exit
-        }
-    ' "$1"
+        }' "$1"
 }
 
-# ---- Run ----
 STDERR_LOG="$BENCH_DIR/last.stderr"
 echo -e "j\ttrial\twall_s\tbp_per_s\tpeak_mb"
 for j in "${JS[@]}"; do
     for ((t=1; t<=TRIALS; t++)); do
         start=$(python3 -c 'import time; print(time.time())')
-        "$YAMTK" scan -m "$MM" -s "$FA" -j "$j" -v -o /dev/null 2>"$STDERR_LOG"
+        # Use shuffled negatives with a fixed seed for determinism.
+        "$YAMTK" enr -i "$FA" -m "$MM" -k 2 -s 42 -j "$j" -v \
+                     -o /dev/null 2>"$STDERR_LOG"
         end=$(python3 -c 'import time; print(time.time())')
         wall=$(python3 -c "print(f'{$end - $start:.4f}')")
         bps=$(python3 -c "print(int($TOTAL_BP / ($end - $start)))")
@@ -172,12 +158,10 @@ for j in "${JS[@]}"; do
     done
 done | tee "$BENCH_DIR/last.tsv"
 
-# ---- Summary: median per -j ----
-echo -e "\n# Median per -j (bp/s, peak MB):" >&2
+echo -e "\n# Median per -j (positives bp/s, peak MB):" >&2
 python3 - "$BENCH_DIR/last.tsv" <<'PY' >&2
 import sys, statistics, collections
-d_bps = collections.defaultdict(list)
-d_mem = collections.defaultdict(list)
+d_bps = collections.defaultdict(list); d_mem = collections.defaultdict(list)
 with open(sys.argv[1]) as f:
     for ln in f:
         if ln.startswith('#'): continue
@@ -191,17 +175,15 @@ for j in sorted(d_bps):
     print(f"  j={j}  median {int(statistics.median(d_bps[j])):,} bp/s   {mb:6.1f} MB")
 PY
 
-# ---- Compare against baseline ----
 if [ -n "$BASELINE" ]; then
     if [ ! -s "$BASELINE" ]; then
         echo "error: baseline '$BASELINE' missing or empty" >&2; exit 2
     fi
-    echo -e "\n# Delta vs $BASELINE (per j, median bp/s, median peak MB):" >&2
+    echo -e "\n# Delta vs $BASELINE (median bp/s, median peak MB):" >&2
     python3 - "$BASELINE" "$BENCH_DIR/last.tsv" <<'PY' >&2
 import sys, statistics, collections
 def parse(path):
-    bps = collections.defaultdict(list)
-    mem = collections.defaultdict(list)
+    bps = collections.defaultdict(list); mem = collections.defaultdict(list)
     with open(path) as f:
         for ln in f:
             if ln.startswith('#'): continue

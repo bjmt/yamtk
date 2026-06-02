@@ -11,7 +11,7 @@
 # auto-extend (-E) so all three swept parameters are exercised.
 #
 # Usage:
-#   bash scripts/yamref_param_sweep.sh [yamtk-binary]
+#   bash bench/yamref_param_sweep.sh [yamtk-binary]
 #
 # Defaults to ./yamtk if no argument given. Run from repo root.
 

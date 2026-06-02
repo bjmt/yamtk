@@ -8,9 +8,9 @@
 # n_targets) per wall-second.
 #
 # Usage:
-#   bash scripts/yamcmp_bench.sh
-#   bash scripts/yamcmp_bench.sh > baseline.tsv
-#   bash scripts/yamcmp_bench.sh --baseline baseline.tsv
+#   bash bench/yamcmp_bench.sh
+#   bash bench/yamcmp_bench.sh > baseline.tsv
+#   bash bench/yamcmp_bench.sh --baseline baseline.tsv
 
 set -euo pipefail
 
