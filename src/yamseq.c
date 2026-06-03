@@ -28,6 +28,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+#include <locale.h>
 #include <zlib.h>
 #include "kseq.h"
 #include "khash.h"
@@ -69,7 +70,8 @@ typedef enum {
   ACTION_SUBSET,
   ACTION_MASK,
   ACTION_SUBSAMPLE,
-  ACTION_HIST
+  ACTION_HIST,
+  ACTION_FORMAT
 } action_t;
 
 static action_t parse_action(const char *s) {
@@ -83,6 +85,7 @@ static action_t parse_action(const char *s) {
   if (strcmp(s, "mask")      == 0) return ACTION_MASK;
   if (strcmp(s, "subsample") == 0) return ACTION_SUBSAMPLE;
   if (strcmp(s, "hist")      == 0) return ACTION_HIST;
+  if (strcmp(s, "format")    == 0) return ACTION_FORMAT;
   return ACTION_NONE;
 }
 
@@ -97,6 +100,7 @@ static const char *action_name(action_t a) {
     case ACTION_MASK:      return "mask";
     case ACTION_SUBSAMPLE: return "subsample";
     case ACTION_HIST:      return "hist";
+    case ACTION_FORMAT:    return "format";
     default:               return "<none>";
   }
 }
@@ -109,6 +113,8 @@ typedef struct args_t {
   double   sub_f;        /* -f p Bernoulli probability for subsample; <0 = unset */
   double   bin_step;     /* -b step for hist (fraction in (0, 1]) */
   int      use_bin_step;
+  uint64_t line_len;     /* -l output FASTA line width for format (0 = unwrapped) */
+  int      use_line_len;
   uint64_t seed;
   int      use_seed;
   int      mask_hard;
@@ -125,6 +131,8 @@ static args_t args = {
   .sub_f        = -1.0,
   .bin_step     = DEFAULT_GC_HIST_STEP,
   .use_bin_step = 0,
+  .line_len     = FASTA_LINE_LEN,
+  .use_line_len = 0,
   .seed         = 0,
   .use_seed     = 0,
   .mask_hard    = 0,
@@ -193,6 +201,9 @@ static void usage(void) {
     "           Input order is preserved in the output.\n"
     "  hist     Per-bin TSV histogram of per-sequence GC fractions, with\n"
     "           seq_count and bp_count columns. Bin step set by -b.\n"
+    "  format   Re-emit input FASTA: rewrap lines, trim names to the first\n"
+    "           word. Width set by -l (0 = unwrapped). -v/-w report the\n"
+    "           character composition.\n"
     "\n"
     " -i <str>   Input FASTA/FASTQ ('-' = stdin).\n"
     " -o <str>   Output (default: stdout).\n"
@@ -200,12 +211,13 @@ static void usage(void) {
     " -n <int>   Count: copies per input (dup) or reservoir size (subsample).\n"
     " -f <dbl>   Per-sequence keep probability for subsample (0,1).\n"
     " -b <dbl>   GC bin step for hist, in (0, 1] (default: %.2f).\n"
+    " -l <int>   Output FASTA line width for format (0 = unwrapped; default: %d).\n"
     " -s <uint>  RNG seed for subsample (default: time-seeded).\n"
     " -N         Hard-mask (replace with N) instead of soft-mask. mask only.\n"
     " -r         Do not trim sequence names to the first word.\n"
     " -g         Show progress bar.\n"
     " -v / -w / -h   Verbose / very-verbose / help.\n"
-    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_GC_HIST_STEP
+    , YAMTK_VERSION, YAMTK_YEAR, DEFAULT_GC_HIST_STEP, FASTA_LINE_LEN
   );
 }
 
@@ -300,6 +312,47 @@ static inline uint64_t xrand_below(xrng_t *r, uint64_t k) {
 
 static xrng_t xrng;
 
+/* ---- Peak memory / elapsed-time reporting (shared with other subcommands) ---- */
+
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+static long peak_mem(void) { return 0; }
+#else
+#include <sys/resource.h>
+static long peak_mem(void) {
+  struct rusage r_mem;
+  getrusage(RUSAGE_SELF, &r_mem);
+#ifdef __linux__
+  return r_mem.ru_maxrss * 1024;
+#else
+  return r_mem.ru_maxrss;
+#endif
+}
+#endif
+
+static void print_peak_mb(void) {
+  long bytes = peak_mem();
+  if (bytes > (1 << 30)) {
+    fprintf(stderr, "Approx. peak memory usage: %'.2f GB.\n",
+      (((double) bytes / 1024.0) / 1024.0) / 1024.0);
+  } else if (bytes > (1 << 20)) {
+    fprintf(stderr, "Approx. peak memory usage: %'.2f MB.\n",
+      ((double) bytes / 1024.0) / 1024.0);
+  } else if (bytes) {
+    fprintf(stderr, "Approx. peak memory usage: %'.2f KB.\n",
+      (double) bytes / 1024.0);
+  }
+}
+
+static void print_time(const uint64_t s, const char *what) {
+  if (s > 7200) {
+    fprintf(stderr, "Needed %'.2f hours to %s.\n", ((double) s / 60.0) / 60.0, what);
+  } else if (s > 120) {
+    fprintf(stderr, "Needed %'.2f minutes to %s.\n", (double) s / 60.0, what);
+  } else if (s > 1) {
+    fprintf(stderr, "Needed %'" PRIu64 " seconds to %s.\n", s, what);
+  }
+}
+
 /* ---- FASTA output ---- */
 
 static void write_seq(const unsigned char *seq, const uint64_t L, const char *name,
@@ -309,8 +362,17 @@ static void write_seq(const unsigned char *seq, const uint64_t L, const char *na
   } else {
     fprintf(files.o, ">%s\n", name);
   }
-  for (uint64_t i = 0; i < L; i += FASTA_LINE_LEN) {
-    fprintf(files.o, "%.*s\n", FASTA_LINE_LEN, seq + i);
+  if (L == 0) return;
+  if (args.line_len == 0) {
+    /* Unwrapped: whole sequence on one line. */
+    fwrite(seq, 1, L, files.o);
+    fputc('\n', files.o);
+    return;
+  }
+  for (uint64_t i = 0; i < L; i += args.line_len) {
+    const uint64_t chunk = (L - i < args.line_len) ? L - i : args.line_len;
+    fwrite(seq + i, 1, chunk, files.o);
+    fputc('\n', files.o);
   }
 }
 
@@ -670,6 +732,73 @@ static void emit_stats_row(const unsigned char *seq, const uint64_t L, const cha
     idx, name, L, gc_pct, n_n);
 }
 
+/* ---- Action: format ----
+   Re-emit the input FASTA, rewrapping lines (write_seq honours args.line_len)
+   and trimming names to the first word unless -r. With -v/-w, accumulate a
+   per-character frequency table and print a composition report to stderr. */
+
+static uint64_t comp_freq[256] = {0};   /* file-wide accumulator */
+
+static void tally_into(uint64_t freq[256], const unsigned char *seq, const uint64_t L) {
+  for (uint64_t i = 0; i < L; i++) freq[seq[i]]++;
+}
+
+static void report_composition(FILE *out, const uint64_t freq[256],
+                               const uint64_t nseq, const char *label) {
+  uint64_t total = 0;
+  for (int c = 0; c < 256; c++) total += freq[c];
+
+  const uint64_t n_a = freq['A'] + freq['a'];
+  const uint64_t n_c = freq['C'] + freq['c'];
+  const uint64_t n_g = freq['G'] + freq['g'];
+  const uint64_t n_t = freq['T'] + freq['t'];
+  const uint64_t n_u = freq['U'] + freq['u'];
+  const uint64_t acgtu = n_a + n_c + n_g + n_t + n_u;
+  const uint64_t other = total - acgtu;
+
+  /* Soft mask = lowercase letters; hard mask = N/n/-/. */
+  uint64_t soft = 0;
+  for (int c = 'a'; c <= 'z'; c++) soft += freq[c];
+  const uint64_t hard = freq['N'] + freq['n'] + freq['-'] + freq['.'];
+
+  /* Most frequent character that is not A/C/G/T/U (either case). */
+  int top_c = -1;
+  uint64_t top_n = 0;
+  for (int c = 0; c < 256; c++) {
+    if (c=='A'||c=='a'||c=='C'||c=='c'||c=='G'||c=='g'||
+        c=='T'||c=='t'||c=='U'||c=='u') continue;
+    if (freq[c] > top_n) { top_n = freq[c]; top_c = c; }
+  }
+
+  const double denom = total ? (double) total : 1.0;
+
+  /* Header line, then an indented block of one item per line. */
+  if (label)
+    fprintf(out, "[%s] %" PRIu64 " bp:\n", label, total);
+  else
+    fprintf(out, "Composition (%" PRIu64 " sequence(s), %" PRIu64 " bp):\n",
+      nseq, total);
+
+  fprintf(out, "  bases:        A=%" PRIu64 " C=%" PRIu64 " G=%" PRIu64
+    " T=%" PRIu64 " U=%" PRIu64 "\n", n_a, n_c, n_g, n_t, n_u);
+  fprintf(out, "  other:        %" PRIu64 " (%.1f%%)\n",
+    other, 100.0 * (double) other / denom);
+  fprintf(out, "  soft-masked:  %" PRIu64 " (%.1f%%)\n",
+    soft,  100.0 * (double) soft  / denom);
+  fprintf(out, "  hard-masked:  %" PRIu64 " (%.1f%%)\n",
+    hard,  100.0 * (double) hard  / denom);
+
+  /* Call out a dominant unknown character (more than 1% of all bases). */
+  if (top_c >= 0 && total && (double) top_n / denom > 0.01) {
+    if (top_c >= 32 && top_c < 127)
+      fprintf(out, "  top unknown:  '%c' = %" PRIu64 " (%.1f%%)\n",
+        (char) top_c, top_n, 100.0 * (double) top_n / denom);
+    else
+      fprintf(out, "  top unknown:  '\\x%02X' = %" PRIu64 " (%.1f%%)\n",
+        (unsigned) top_c, top_n, 100.0 * (double) top_n / denom);
+  }
+}
+
 /* ---- Action: hist ----
    Per-sequence GC fraction binned into uniform-width bins of width
    args.bin_step. All-N / empty sequences contribute to n_skipped
@@ -796,6 +925,12 @@ static void validate_args(void) {
       action_name(args.action));
     badexit("");
   }
+  /* -l only with format */
+  if (args.use_line_len && args.action != ACTION_FORMAT) {
+    fprintf(stderr, "Error: -l is only valid with -a format (got -a %s).\n",
+      action_name(args.action));
+    badexit("");
+  }
   /* -N only with mask */
   if (args.mask_hard && args.action != ACTION_MASK) {
     fprintf(stderr, "Error: -N is only valid with -a mask (got -a %s).\n",
@@ -808,10 +943,13 @@ static void validate_args(void) {
 
 int main_seq(int argc, char **argv) {
 
+  struct timespec ts_program;
+  clock_gettime(CLOCK_MONOTONIC, &ts_program);
+
   int opt;
   int use_stdout = 1;
 
-  while ((opt = getopt(argc, argv, "a:i:o:x:n:f:b:s:Nrgvwh")) != -1) {
+  while ((opt = getopt(argc, argv, "a:i:o:x:n:f:b:l:s:Nrgvwh")) != -1) {
     switch (opt) {
       case 'a':
         if (args.action != ACTION_NONE) badexit("Error: -a specified more than once.");
@@ -885,6 +1023,13 @@ int main_seq(int argc, char **argv) {
         args.use_bin_step = 1;
         break;
       }
+      case 'l':
+        /* Permit 0 (unwrapped); str_to_uint64_t accepts it. */
+        if (str_to_uint64_t(optarg, &args.line_len)) {
+          badexit("Error: Failed to parse -l value.");
+        }
+        args.use_line_len = 1;
+        break;
       case 's':
         if (str_to_uint64_t(optarg, &args.seed)) {
           badexit("Error: Failed to parse -s value.");
@@ -917,6 +1062,10 @@ int main_seq(int argc, char **argv) {
   if (!files.i_open) badexit("Error: -i must be specified.");
   validate_args();
   if (use_stdout) files.o = stdout;
+
+  if (setlocale(LC_NUMERIC, "en_US") == NULL && args.v) {
+    fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
+  }
 
   /* BED setup for subset / mask */
   uint64_t *seq_regions_buf = NULL;
@@ -958,6 +1107,7 @@ int main_seq(int argc, char **argv) {
   }
 
   /* Stream sequences */
+  time_t time1 = time(NULL);
   kseq_t *kseq = kseq_init(files.i);
   int ret_val;
   uint64_t idx = 0;
@@ -1051,6 +1201,19 @@ int main_seq(int argc, char **argv) {
           }
         }
         break;
+      case ACTION_FORMAT:
+        if (args.v) {
+          if (args.w) {
+            uint64_t f[256] = {0};
+            tally_into(f, seq, L);
+            report_composition(stderr, f, 1, name);   /* per-seq line */
+            for (int c = 0; c < 256; c++) comp_freq[c] += f[c];
+          } else {
+            tally_into(comp_freq, seq, L);
+          }
+        }
+        write_seq(seq, L, name, kseq->comment.s, kseq->comment.l);
+        break;
       default:
         /* Other actions wired in subsequent commits */
         break;
@@ -1096,11 +1259,24 @@ int main_seq(int argc, char **argv) {
     kept = reservoir_filled;
   }
 
+  /* File-wide composition report for format. */
+  if (args.action == ACTION_FORMAT && args.v) {
+    report_composition(stderr, comp_freq, idx, NULL);
+  }
+
+  time_t time2 = time(NULL);
   if (args.v) {
     if (args.action == ACTION_SUBSAMPLE)
       fprintf(stderr, "Processed %" PRIu64 " sequence(s); kept %" PRIu64 ".\n", idx, kept);
     else
       fprintf(stderr, "Processed %" PRIu64 " sequence(s).\n", idx);
+    struct timespec ts_end;
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double elapsed = (double)(ts_end.tv_sec - ts_program.tv_sec)
+                   + (double)(ts_end.tv_nsec - ts_program.tv_nsec) / 1e9;
+    print_time((uint64_t) difftime(time2, time1), "process sequences");
+    fprintf(stderr, "Total runtime: %.3fs\n", elapsed);
+    print_peak_mb();
   }
 
   free_bed();

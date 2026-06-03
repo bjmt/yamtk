@@ -15,6 +15,9 @@ assert_exit_nonzero "seq -a dup without -n fails" \
 # -N only with mask
 assert_exit_nonzero "seq -N without -a mask fails" \
     "$YAMTK" seq -a rc -N -i "$TESTDIR/dna.fa"
+# -l only with format
+assert_exit_nonzero "seq -l without -a format fails" \
+    "$YAMTK" seq -a rc -l 80 -i "$TESTDIR/dna.fa"
 # unknown action fails
 assert_exit_nonzero "seq -a foo (unknown action) fails" \
     "$YAMTK" seq -a foo -i "$TESTDIR/dna.fa"

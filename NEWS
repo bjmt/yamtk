@@ -1,3 +1,21 @@
+CHANGES IN VERSION 2.3.2 (unreleased)
+-------------------------------------
+
+* yamtk seq: new action -a format. Reads a FASTA and writes it back out,
+  fixing up inconsistent line widths and trimming sequence names to the
+  first word (use -r to keep the full header). The output width is set by
+  the new -l option (default 60; -l 0 emits each sequence on a single
+  line). With -v, a file-wide character-composition report is printed to
+  stderr (total bp, A/C/G/T/U counts, non-ACGTU "other" with a callout
+  for any dominant unknown character, and soft-mask and hard-mask
+  counts); -w adds the same report per sequence. The -l option is only
+  valid with -a format.
+
+* yamtk seq: verbose mode (-v/-w) now closes with the approximate peak
+  memory usage and total runtime, matching the other subcommands. This
+  applies to every action, not just format.
+
+
 CHANGES IN VERSION 2.3.1 (2026-06-02)
 --------------------------------------
 

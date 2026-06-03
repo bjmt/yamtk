@@ -974,6 +974,7 @@ subcommand with an `-a <action>` selector. The supported actions are:
 | `mask` | Soft-mask (lowercase) BED regions in place; `-N` flag switches to hard mask (replace with `N`). Requires `-x`. |
 | `subsample` | Random subset of input sequences. Either `-n N` (reservoir: exact count, buffers N records) or `-f p` (per-sequence Bernoulli, streams). Input order is preserved. `-s` for seed. |
 | `hist` | Per-bin TSV histogram of per-sequence GC fractions with `seq_count` and `bp_count` columns. Bin step set by `-b <fraction>` (default `0.05`). All-N sequences are skipped. |
+| `format` | Re-emit the input FASTA with consistent line widths and names trimmed to the first word (`-r` keeps the full header). Width set by `-l <int>` (default `60`; `-l 0` = one line per sequence). With `-v` a file-wide character-composition report goes to stderr; `-w` adds it per sequence. |
 
 ### Usage
 
@@ -986,6 +987,7 @@ Usage:  yamtk seq -a <action> [options] -i seqs.fa[.gz]
  -n <int>   Count: copies per input (dup) or reservoir size (subsample).
  -f <dbl>   Per-sequence keep probability for subsample (0,1).
  -b <dbl>   GC bin step for hist, in (0, 1] (default: 0.05).
+ -l <int>   Output FASTA line width for format (0 = unwrapped; default: 60).
  -s <uint>  RNG seed for subsample (default: time-seeded).
  -N         Hard-mask (replace with N) instead of soft-mask. mask only.
  -r         Do not trim sequence names to the first word.
@@ -1022,6 +1024,13 @@ yamtk seq -a subsample -f 0.5 -s 42 -i big.fa > halved.fa
 yamtk seq -a hist -i genome.fa
 # ... or 10%-wide bins
 yamtk seq -a hist -b 0.1 -i genome.fa
+
+# Tidy up a FASTA: consistent line width, names cut to the first word
+yamtk seq -a format -i messy.fa > clean.fa
+# ... at 80 columns, with a composition report on stderr
+yamtk seq -a format -l 80 -v -i messy.fa > clean.fa
+# ... or unwrapped, one sequence per line
+yamtk seq -a format -l 0 -i messy.fa > clean.fa
 ```
 
 As an aside, `yamtk seq -a stats -i big.fa | wc -l` is a quick way to
