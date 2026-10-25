@@ -792,7 +792,7 @@ static inline void shuf_swap(unsigned char *seq, const uint64_t i, const uint64_
 
 static int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {
   for (uint64_t i=0, l=len-1; i<l; i++)
-    shuf_swap(seq, i, i + xrand_r(&xrng)%(l-i));
+    shuf_swap(seq, i, i + xrand_r(&xrng)%(len-i));  /* j in [i, len-1] */
   return 0;
 }
 
@@ -818,14 +818,13 @@ static inline uint64_t cumsum_and_pick(const uint64_t *kmers) {
 static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t k,
                           uint64_t *kmer_tab, unsigned char *invalid_vertex,
                           uint64_t *euler_path, uint64_t *next_index) {
+  /* Altschul-Erickson (as in uShuffle): keeps every k-mer count, with the
+     first and last k-1 letters fixed. See shuffle_euler() in yamshuf.c. */
   for (uint64_t i=0; i<k-1; i++) seq[i]=index2dna[shuf_char2index[seq[i]]];
-  seq[size-1]=index2dna[shuf_char2index[seq[size-1]]];
-  uint64_t last_edge=chars2kmer(seq,k,size-k);
-  kmer_tab[last_edge]--;
   for (uint64_t i=0,j=0; i<pow5[k-1]; i++,j+=5)
     if (!COUNT_EDGES(j,kmer_tab)) invalid_vertex[i]=1;
-  /* Root the exit-edge tree where the reserved last edge starts (offset size-k). */
-  const uint64_t final_vertex=chars2kmer(seq,k-1,size-k);
+  /* Root the exit-edge tree at the last (k-1)-mer, where the walk must end. */
+  const uint64_t final_vertex=chars2kmer(seq,k-1,size-k+1);
   invalid_vertex[final_vertex]=1;
   if (k>2) {
     for (uint64_t i=0,j=0,jmax=pow5[k-2]; i<pow5[k-1]; i++,j++) {
@@ -842,9 +841,9 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
   for (uint64_t i=0,edge; i<pow5[k-1]; i++) {
     if (i==final_vertex) continue;
     edge=i*5+euler_path[i];
-    if (edge!=last_edge&&kmer_tab[edge]) kmer_tab[edge]--;
+    if (kmer_tab[edge]) kmer_tab[edge]--;
   }
-  for (uint64_t cv,ne,ki,i=k-2; i<size-2; i++) {
+  for (uint64_t cv,ne,ki,i=k-2; i<size-1; i++) {
     cv=chars2kmer(seq,k-1,(i+2)-k);
     ki=cv*5;
     if (LIKELY(COUNT_EDGES(ki,kmer_tab))) {

@@ -1191,10 +1191,10 @@ a Fisher-Yates shuffle of the input sequences. For higher values of k, there
 are three available methods. The default method (Euler) involves constructing
 a k-mer edge graph from the k-mer counts of the input sequences and finding a
 random Eulerian walk through all of the available k-mers (thus ending up with
-the exact same number of k-mers in the final shuffled sequences). Note that
-the first k-1 and last k letters of each sequence stay in place (uShuffle
-only keeps the last k-1 fixed, so the two won't give quite the same set of
-possible outputs). The `-m`
+the exact same number of k-mers in the final shuffled sequences). This is the
+same approach as uShuffle (Jiang et al. 2008), and it picks evenly from every
+sequence with the same k-mer counts (which means the first and last k-1
+letters never move, since all such sequences share them). The `-m`
 flag triggers the use of the Markov method, where a Markov chain is constructed
 from the k-mer counts in the sequences and the resulting probabilities are used
 for generating new sequences of equal length (thus ending up with new sequences

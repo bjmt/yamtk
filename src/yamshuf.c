@@ -371,8 +371,9 @@ static inline void swap(unsigned char *seq, const uint64_t i, const uint64_t j) 
 /* ---- Shuffle algorithms ---- */
 
 static int shuffle_fisher_yates(unsigned char *seq, const uint64_t len) {
+  // Pick j from [i, len - 1], so every letter (including the last) can move.
   for (uint64_t i = 0, l = len - 1; i < l; i++) {
-    swap(seq, i, i + xrand_r(&xrng) % (l - i));
+    swap(seq, i, i + xrand_r(&xrng) % (len - i));
   }
   return 0;
 }
@@ -385,8 +386,10 @@ static inline void swap_k(unsigned char *seq, const uint64_t i, const uint64_t j
 
 static int shuffle_linear(unsigned char *seq, const uint64_t size, const uint64_t k) {
   const uint64_t n_blocks = size / k;
+  // Pick r from [i, n_blocks - 1]. (Leaving out r = i would make this Sattolo's
+  // algorithm, which only ever gives single-cycle permutations.)
   for (uint64_t r, i = 0; i + 1 < n_blocks; i++) {
-    r = i + 1 + xrand_r(&xrng) % (n_blocks - i - 1);
+    r = i + xrand_r(&xrng) % (n_blocks - i);
     swap_k(seq, i * k, r * k, k);
   }
   return 0;
@@ -858,17 +861,13 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
 
   const char *index2xna = is_dna ? index2dna : index2rna;
 
-  // Initialize new sequence with starting vertex and final edge.
+  // Initialize new sequence with starting vertex. (This is the Altschul-Erickson
+  // method, as in uShuffle: the output keeps every k-mer count, and the first and
+  // last k-1 letters are fixed since any such sequence must share them.)
 
   for (uint64_t i = 0; i < k - 1; i++) {
     seq[i] = index2xna[char2index[seq[i]]];
   }
-  seq[size - 1] = index2xna[char2index[seq[size - 1]]];
-
-  // Remove the final edge from the edge pool.
-
-  uint64_t last_edge = chars2kmer(seq, k, size - k);
-  kmer_tab[last_edge]--;
 
   // Initialize unavailable vertices.
 
@@ -876,11 +875,10 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
     if (!(COUNT_EDGES(j, kmer_tab))) invalid_vertex[i] = 1;
   }
 
-  // Reserve the final vertex. The walk over the remaining edges has to end where
-  // the reserved last edge starts (the (k-1)-mer at offset size - k), not at the
-  // final (k-1)-mer of the sequence.
+  // Reserve the final vertex (the last (k-1)-mer), which the walk has to end on.
+  // It's the root of the tree of last-exit edges, so it gets no exit edge itself.
 
-  const uint64_t final_vertex = chars2kmer(seq, k - 1, size - k);
+  const uint64_t final_vertex = chars2kmer(seq, k - 1, size - k + 1);
   invalid_vertex[final_vertex] = 1;
 
   // For k > 2, prefill an array containing the indices to the next vertex from an edge.
@@ -913,12 +911,12 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
   for (uint64_t i = 0, edge; i < pow5[k - 1]; i++) {
     if (i == final_vertex) continue;
     edge = i * 5 + euler_path[i];
-    if (edge != last_edge && kmer_tab[edge]) kmer_tab[edge]--;
+    if (kmer_tab[edge]) kmer_tab[edge]--;
   }
 
   // Walk through Eulerian path, using up all available edges.
 
-  for (uint64_t current_vertex, next_edge, kmer_index, i = k - 2; i < size - 2; i++) {
+  for (uint64_t current_vertex, next_edge, kmer_index, i = k - 2; i < size - 1; i++) {
     current_vertex = chars2kmer(seq, k - 1, (i + 2) - k);
     kmer_index = current_vertex * 5;
     if (LIKELY(COUNT_EDGES(kmer_index, kmer_tab))) {
