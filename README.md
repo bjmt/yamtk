@@ -588,7 +588,7 @@ Usage:  yamtk me [options] -i positives.fa[.gz]
  -K <int>   Max motif width (default: 15, max 30).
  -N <int>   Max motifs to discover (default: 10).
  -t <dbl>   Per-motif stopping p-value at discovery (default: 0.001).
- -P <dbl>   Hit-scoring p-value threshold (default: 0.001).
+ -P <dbl>   Hit-scoring p-value threshold (default: 1e-4).
  -D <dbl>   Cross-width dedup overlap threshold (default: 0.5).
  -q <dbl>   BH q-value filter on surviving motifs (default: 0.001).
  -S <int>   Shuffle k-mer size for default negatives (default: 2, max 9).

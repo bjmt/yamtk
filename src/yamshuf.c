@@ -876,9 +876,11 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
     if (!(COUNT_EDGES(j, kmer_tab))) invalid_vertex[i] = 1;
   }
 
-  // Reserve the final vertex.
+  // Reserve the final vertex. The walk over the remaining edges has to end where
+  // the reserved last edge starts (the (k-1)-mer at offset size - k), not at the
+  // final (k-1)-mer of the sequence.
 
-  const uint64_t final_vertex = chars2kmer(seq, k - 1, size - k + 1);
+  const uint64_t final_vertex = chars2kmer(seq, k - 1, size - k);
   invalid_vertex[final_vertex] = 1;
 
   // For k > 2, prefill an array containing the indices to the next vertex from an edge.

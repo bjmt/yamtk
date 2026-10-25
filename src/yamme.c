@@ -823,7 +823,8 @@ static int shuffle_euler(unsigned char *seq, const uint64_t size, const uint64_t
   kmer_tab[last_edge]--;
   for (uint64_t i=0,j=0; i<pow5[k-1]; i++,j+=5)
     if (!COUNT_EDGES(j,kmer_tab)) invalid_vertex[i]=1;
-  const uint64_t final_vertex=chars2kmer(seq,k-1,size-k+1);
+  /* Root the exit-edge tree where the reserved last edge starts (offset size-k). */
+  const uint64_t final_vertex=chars2kmer(seq,k-1,size-k);
   invalid_vertex[final_vertex]=1;
   if (k>2) {
     for (uint64_t i=0,j=0,jmax=pow5[k-2]; i<pow5[k-1]; i++,j++) {
