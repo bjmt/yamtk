@@ -1,5 +1,5 @@
-CHANGES IN VERSION 2.3.2 (unreleased)
--------------------------------------
+CHANGES IN VERSION 2.3.2 (2026-10-25)
+--------------------------------------
 
 * yamtk seq: new action -a format. Reads a FASTA and writes it back out,
   fixing up inconsistent line widths and trimming sequence names to the
