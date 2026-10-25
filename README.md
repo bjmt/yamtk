@@ -1245,28 +1245,45 @@ thus I cannot benchmark it with the above sequence sizes).
 
 ### Limitations of the Euler and Markov methods
 
-yamshuf is a rather limited program in that it only recognizes a
-five letter alphabet (ACGTN or ACGUN; all other characters are recognized as
-N). This allows the program to use hard-coded constants and graph structures.
-This is in contrast to other tools such as uShuffle (and my own programs
+The Euler and Markov methods only recognize a five letter alphabet (ACGTN or
+ACGUN). Any other character is read as N, and lower-case letters are read as
+upper-case, so for example `acgtRY` comes out as `ACGTNN`. (The Fisher-Yates
+method used for k = 1 and the linear method don't have this restriction, as
+they only move the input letters around and so leave them as they are.) This
+allows the program to use hard-coded constants and graph structures, in
+contrast to other tools such as uShuffle (and my own programs
 [universalmotif](https://bioconductor.org/packages/universalmotif) and
 [sequence-utils](https://github.com/bjmt/sequence-utils)) which are generically
 coded to allow for any alphabet, but in turn (likely) allow for fewer compiler
-optimizations. Additionally, yamshuf constructs a k-mer edge graph for the
-complete set of possible k-mers for any k, even if some k-mers are absent in
-the input sequences. This means that for increasing values of k, the graph
-structure increases exponentially. As a result shuffling with high values of k
-is impractical. uShuffle gets around this by building a k-mer edge graph using
-only available k-mers, thus allowing for much higher values of k when shuffling
-short sequences (for longer sequences, so many k-mers will likely be present
-that it becomes affected by the same issue of impractically large edge graphs).
+optimizations.
+
+Additionally, yamshuf builds a table of every possible k-mer for a given k,
+even if most of them are absent from the input. This table grows exponentially
+with k (5<sup>k</sup> entries), which is why k is capped at 9 for these two
+methods. Memory use stays modest even at the cap (around 25 MB at k = 9);
+the real cost is that the table has to be cleared and walked through for every
+sequence. A single long sequence is therefore fine even at high k, but many
+short sequences can get slow. For example, on my MacbookPro M1:
+
+| k | 1,000 sequences of 200 bp | 1 sequence of 2 Mbp |
+|---|---|---|
+| 6 | 0.06 s | 0.11 s |
+| 8 | 0.82 s | 0.15 s |
+| 9 | 4.06 s | 0.18 s |
+
+uShuffle gets around this by building its graph using only the k-mers that are
+actually present. Since a sequence of length L can't have more than L - k + 1
+distinct k-mers, the size of its graph is tied to the length of the sequence
+rather than to k, which allows for much higher values of k.
 
 If there is not a requirement that the shuffled sequences have the exact same
 k-mer counts as the input sequences, then none of these limitations apply when
 using the linear method (`-l`). This is because yamshuf merely moves around
 chunks of the input sequences without needing to count k-mers or build any
 edge graph. (In fact, the higher the value of k, the fewer chunks there are
-to move around, thus increasing the speed of the shuffling.)
+to move around, thus increasing the speed of the shuffling.) Note however that
+if the sequence length isn't a multiple of k, the leftover letters at the end
+stay in place.
 
 ## Extra scripts
 
