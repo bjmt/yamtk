@@ -1,2 +1,2 @@
 ##motif	rank	width	consensus	nsites	seqs_pos	seqs_neg	sites_pos	sites_neg	n_pos	n_neg	pvalue	qvalue
-motif_1	1	6	ACGTAC	34	17	0	34	0	20	20	1.28476213e-08	1.28476213e-08
+motif_1	1	6	ACGTAC	34	17	0	34	0	20	20	5.13904852e-08	5.13904852e-08

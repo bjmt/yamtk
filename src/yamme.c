@@ -227,8 +227,9 @@ static seq_set_t neg_set = {0};
 typedef struct {
   motif_t   motif;
   uint8_t **covered;    /* [si][byte] bitmask over positives */
-  double    pvalue;
+  double    pvalue;     /* Bonferroni-adjusted for the seed search (n_tests) */
   double    qvalue;
+  double    n_tests;    /* number of seeds searched to find this motif */
   uint64_t  sites_pos;
   uint64_t  sites_neg;
   uint64_t  seqs_pos;
@@ -1025,8 +1026,43 @@ static int cmp_seed(const void *a, const void *b) {
 
 /* Enumerate top-K seeds of width w by per-sequence Fisher's p-value.
    Returns 0 on success. Sets *out_seeds (caller frees) and *out_n. */
-static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, uint64_t *out_n) {
-  *out_seeds = NULL; *out_n = 0;
+/* Tarone's correction factor for the seed search. A k-mer found in x
+   sequences overall (positives + negatives) can at best get the Fisher p-value
+   it would have with all x in the positives, and most k-mers (especially at
+   longer widths) are too rare to ever reach significance. Only the ones that
+   could are counted: the smallest m with #{min_p <= alpha/m} <= m.
+   (Tarone 1990, Biometrics 46:515-522.) Returns 0 on alloc failure. */
+static int cmp_double(const void *a, const void *b) {
+  const double x = *(const double *)a, y = *(const double *)b;
+  return (x > y) - (x < y);
+}
+
+static uint64_t tarone_n_tests(const uint64_t *support, uint64_t n, double alpha) {
+  if (n == 0) return 1;
+  const uint64_t n_pos = pos_set.n, n_neg = neg_set.n, n_tot = n_pos + n_neg;
+  double *minp_x = malloc(sizeof(double) * (n_tot + 1));
+  double *minp   = malloc(sizeof(double) * n);
+  if (!minp_x || !minp) { free(minp_x); free(minp); return 0; }
+  for (uint64_t x = 0; x <= n_tot; x++) {
+    uint64_t a = x < n_pos ? x : n_pos;
+    minp_x[x] = fishers_exact_log_greater(a, x - a, n_pos - a, n_neg - (x - a));
+  }
+  for (uint64_t i = 0; i < n; i++) minp[i] = minp_x[support[i] < n_tot ? support[i] : n_tot];
+  free(minp_x);
+  qsort(minp, n, sizeof(double), cmp_double);
+  uint64_t m = 1, cnt = n;
+  for (;; m++) {
+    const double cut = alpha / (double)m;
+    while (cnt > 0 && minp[cnt - 1] > cut) cnt--;
+    if (cnt <= m) break;
+  }
+  free(minp);
+  return m;
+}
+
+static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, uint64_t *out_n,
+                           uint64_t *out_n_tested) {
+  *out_seeds = NULL; *out_n = 0; *out_n_tested = 0;
   const unsigned char *tbl = args.mask ? char2maskindex : char2index;
 
   khash_t(seed_h) *pos_h = kh_init(seed_h);
@@ -1128,6 +1164,11 @@ static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, ui
     kh_destroy(seed_h, pos_h); kh_destroy(seed_h, neg_h); return 1;
   }
 
+  uint64_t *support = malloc(sizeof(uint64_t) * n_cands);
+  if (!support) {
+    free(cands); kh_destroy(seed_h, pos_h); kh_destroy(seed_h, neg_h); return 1;
+  }
+
   uint64_t ci = 0;
   khint_t k;
   for (k = kh_begin(pos_h); k != kh_end(pos_h); k++) {
@@ -1138,6 +1179,7 @@ static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, ui
     khint_t nh    = kh_get(seed_h, neg_h, kmer);
     if (nh != kh_end(neg_h)) nc = kh_val(neg_h, nh);
     cands[ci].kmer = kmer;
+    support[ci]    = pc + nc;
     cands[ci].pval = fishers_exact_log_greater(pc, nc,
                        n_pos > pc ? n_pos - pc : 0,
                        n_neg > nc ? n_neg - nc : 0);
@@ -1149,8 +1191,12 @@ static int enumerate_seeds(thread_ctx_t *ctx, uint64_t w, seed_t **out_seeds, ui
 
   qsort(cands, n_cands, sizeof(seed_t), cmp_seed);
 
-  *out_seeds = cands;
-  *out_n     = (n_cands < TOP_K_SEEDS) ? n_cands : TOP_K_SEEDS;
+  *out_seeds    = cands;
+  *out_n        = (n_cands < TOP_K_SEEDS) ? n_cands : TOP_K_SEEDS;
+  *out_n_tested = tarone_n_tests(support, n_cands,
+                    args.stop_pval / (double)(args.max_w - args.min_w + 1));
+  free(support);
+  if (*out_n_tested == 0) { free(cands); *out_seeds = NULL; *out_n = 0; return 1; }
   return 0;
 }
 
@@ -1426,7 +1472,7 @@ static void mask_positions(thread_ctx_t *ctx, uint8_t **covered) {
 /* Push an accepted motif onto the thread's local results list.  Results are
    merged (and renamed) by the main thread after all workers complete. */
 static int add_result_local(thread_ctx_t *ctx, const motif_t *motif,
-                            uint8_t **covered, double pvalue,
+                            uint8_t **covered, double pvalue, double n_tests,
                             uint64_t sites_pos, uint64_t sites_neg,
                             uint64_t seqs_pos,  uint64_t seqs_neg,
                             uint64_t discovery_seq) {
@@ -1443,6 +1489,7 @@ static int add_result_local(thread_ctx_t *ctx, const motif_t *motif,
   r->covered       = covered;
   r->pvalue        = pvalue;
   r->qvalue        = 1.0;
+  r->n_tests       = n_tests;
   r->sites_pos     = sites_pos;
   r->sites_neg     = sites_neg;
   r->seqs_pos      = seqs_pos;
@@ -1467,8 +1514,14 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
 
   uint64_t intra = 0;  /* intra-width acceptance counter for deterministic merge */
   for (int ki = 0; ki < args.n_motifs; ki++) {
-    seed_t *seeds = NULL; uint64_t n_seeds = 0;
-    if (enumerate_seeds(ctx, w, &seeds, &n_seeds)) badexit("Error: enumerate_seeds failed.");
+    seed_t *seeds = NULL; uint64_t n_seeds = 0, n_tested = 0;
+    if (enumerate_seeds(ctx, w, &seeds, &n_seeds, &n_tested)) badexit("Error: enumerate_seeds failed.");
+    /* Seeds are the best of every distinct k-mer in the positives (and this
+       happens again at every width), so the raw p-value of whatever wins is
+       far too optimistic. Correct for the size of that search (Bonferroni,
+       but only over the k-mers that could ever be significant; see
+       tarone_n_tests()). */
+    const double n_tests = (double)n_tested * (double)(args.max_w - args.min_w + 1);
     if (n_seeds == 0) { free(seeds); break; }
     if (args.w && !args.progress) {
       char pre[16]; w_prefix(ctx, pre, sizeof(pre));
@@ -1534,6 +1587,8 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
 
       uint64_t sp, sn, ep, en;
       double pval = evaluate_motif(ctx, &motif, w, &sp, &sn, &ep, &en, covered);
+      pval *= n_tests;
+      if (pval > 1.0) pval = 1.0;
 
       if (pval > args.stop_pval) {
         if (args.w && !args.progress) {
@@ -1546,7 +1601,7 @@ static void discover_for_width(thread_ctx_t *ctx, const uint64_t w) {
         continue;
       }
 
-      if (add_result_local(ctx, &motif, covered, pval, sp, sn, ep, en, intra)) {
+      if (add_result_local(ctx, &motif, covered, pval, n_tests, sp, sn, ep, en, intra)) {
         for (uint64_t sj = 0; sj < pos_set.n; sj++) free(covered[sj]);
         free(covered);
         badexit("Error: Failed to add result.");
@@ -1698,7 +1753,8 @@ static void rebuild_coverage(void) {
     double pval = evaluate_motif(ctx, &r->motif, r->motif.size,
                                  &sites_pos, &sites_neg,
                                  &seqs_pos,  &seqs_neg, r->covered);
-    r->pvalue    = pval;
+    pval *= r->n_tests;
+    r->pvalue    = pval > 1.0 ? 1.0 : pval;
     r->sites_pos = sites_pos;
     r->sites_neg = sites_neg;
     r->seqs_pos  = seqs_pos;
@@ -1907,7 +1963,8 @@ static void usage(void) {
     " -k <int>   Min motif width (default: %d, min 3).\n"
     " -K <int>   Max motif width (default: %d, max %d).\n"
     " -N <int>   Max motifs to discover (default: %d).\n"
-    " -t <dbl>   Per-motif stopping p-value at discovery (default: %g).\n"
+    " -t <dbl>   Per-motif stopping p-value at discovery, corrected for the\n"
+    "            seed search (default: %g).\n"
     " -P <dbl>   Hit-scoring p-value threshold (default: %g).\n"
     " -D <dbl>   Cross-width dedup overlap threshold (default: %g).\n"
     " -q <dbl>   BH q-value filter on surviving motifs (default: %g).\n"

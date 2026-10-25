@@ -587,7 +587,8 @@ Usage:  yamtk me [options] -i positives.fa[.gz]
  -k <int>   Min motif width (default: 6, min 3).
  -K <int>   Max motif width (default: 15, max 30).
  -N <int>   Max motifs to discover (default: 10).
- -t <dbl>   Per-motif stopping p-value at discovery (default: 0.001).
+ -t <dbl>   Per-motif stopping p-value at discovery, corrected for the
+            seed search (default: 0.001).
  -P <dbl>   Hit-scoring p-value threshold (default: 1e-4).
  -D <dbl>   Cross-width dedup overlap threshold (default: 0.5).
  -q <dbl>   BH q-value filter on surviving motifs (default: 0.001).
@@ -621,8 +622,16 @@ yamtk me -i chip_peaks.fa -k 6 -K 15 -N 10 -s 1 -v
 | seqs_pos / seqs_neg | Positive / negative sequences with >= 1 hit |
 | sites_pos / sites_neg | Total hit count in positives / negatives |
 | n_pos / n_neg | Total sequences in each set |
-| pvalue | One-tailed Fisher's exact p-value (per-sequence presence) |
+| pvalue | One-tailed Fisher's exact p-value (per-sequence presence), corrected for the seed search (see below) |
 | qvalue | Benjamini-Hochberg FDR q-value |
+
+(Note that each seed is the best of the many k-mers tried at that width, so its
+raw p-value is far too optimistic on its own. The reported p-value is therefore
+multiplied by the number of k-mers that could have been significant, across all
+widths, following Tarone's method: k-mers too rare to ever reach the cutoff
+aren't counted. This keeps `yamtk me` from reporting motifs in random sequences,
+while costing much less power than a plain Bonferroni correction over every
+k-mer would.)
 
 ## yamref
 
