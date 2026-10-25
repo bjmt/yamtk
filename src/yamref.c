@@ -1351,13 +1351,16 @@ static void convert_ppm_to_motif(motif_t *motif, int ppm[][4], const uint64_t w,
   set_threshold_pval(motif, args.hit_pval);
 
   if (motif->threshold == INT_MAX) {
+    /* -t can't be reached (common for short motifs), so clamp to the best
+       p-value the motif can reach rather than loosening any further. */
+    const double best_pval = score2pval(motif, motif->max_score) * 1.00005;
     if (args.w)
-      fprintf(stderr, "  threshold@p=%g unreachable for [%s]; retrying at p=0.01\n",
-        args.hit_pval, motif->name);
+      fprintf(stderr, "  threshold@p=%g unreachable for [%s]; clamping to best p=%g\n",
+        args.hit_pval, motif->name, best_pval);
     motif->threshold = 0;
     motif->max_score = 0;
     motif->min_score = 0;
-    set_threshold_pval(motif, 0.01);
+    set_threshold_pval(motif, best_pval);
   }
 }
 

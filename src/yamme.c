@@ -1238,16 +1238,19 @@ static void convert_ppm_to_motif(thread_ctx_t *ctx, motif_t *motif, int ppm[][4]
   set_threshold_pval(motif, args.hit_pval);
 
   if (motif->threshold == INT_MAX) {
-    /* Fallback: relax to top 1% */
+    /* -P can't be reached (e.g. short motifs: a 6-mer can do no better than
+       ~2.4e-4 under a uniform background). Clamp to the best p-value the
+       motif can reach, rather than loosening any further than that. */
+    const double best_pval = score2pval(motif, motif->max_score) * 1.00005;
     if (args.w && !args.progress) {
       char pre[16]; w_prefix(ctx, pre, sizeof(pre));
-      fprintf(stderr, "        %s  (threshold@p=%g unreachable; retrying at p=0.01)\n",
-              pre, args.hit_pval);
+      fprintf(stderr, "        %s  (threshold@p=%g unreachable; clamping to best p=%g)\n",
+              pre, args.hit_pval, best_pval);
     }
     motif->threshold = 0;
     motif->max_score = 0;
     motif->min_score = 0;
-    set_threshold_pval(motif, 0.01);
+    set_threshold_pval(motif, best_pval);
   }
 }
 

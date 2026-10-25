@@ -641,7 +641,7 @@ Usage:  yamtk ref [options] [ -m motifs.txt | -1 CONSENSUS ] -i positives.fa[.gz
  -1 <str>   Seed from a single IUPAC consensus string (e.g. CACGTG).
  -i <str>   Positives FASTA/FASTQ ('-' = stdin).
  -o <str>   MEME output file (default: stdout).
- -t <dbl>   Hit-scoring p-value (default: 0.001).
+ -t <dbl>   Hit-scoring p-value (default: 1e-4).
  -n <int>   Refinement passes (default: 2; 0 = trim/extend only).
  -e <int>   Extend by N flanking positions per side on pass 1 (default: 0).
  -E         Auto-extend: grow flanks 1 column at a time until both sides'
@@ -1182,7 +1182,10 @@ a Fisher-Yates shuffle of the input sequences. For higher values of k, there
 are three available methods. The default method (Euler) involves constructing
 a k-mer edge graph from the k-mer counts of the input sequences and finding a
 random Eulerian walk through all of the available k-mers (thus ending up with
-the exact same number of k-mers in the final shuffled sequences). The `-m`
+the exact same number of k-mers in the final shuffled sequences). Note that
+the first k-1 and last k letters of each sequence stay in place (uShuffle
+only keeps the last k-1 fixed, so the two won't give quite the same set of
+possible outputs). The `-m`
 flag triggers the use of the Markov method, where a Markov chain is constructed
 from the k-mer counts in the sequences and the resulting probabilities are used
 for generating new sequences of equal length (thus ending up with new sequences
