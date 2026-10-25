@@ -15,6 +15,40 @@ CHANGES IN VERSION 2.3.2 (unreleased)
   memory usage and total runtime, matching the other subcommands. This
   applies to every action, not just format.
 
+* yamtk shuf (and the shuffled negatives in enr and me): fixed the Euler
+  method (the default for k > 1) not always keeping k-mer counts. The tree
+  of last-exit edges was rooted one base too late, so in roughly a quarter
+  to a third of shuffles the output gained a k-mer that wasn't in the input
+  (and lost one that was), and some inputs made the shuffle loop forever.
+  The bug was hidden whenever a sequence ended in a homopolymer.
+
+* yamtk shuf (and enr/me): every shuffling method now samples evenly from
+  all valid outputs. The Euler method used to hold back the input's last
+  k-mer, so it only reached sequences ending in that same k-mer; it now
+  follows the Altschul-Erickson method as uShuffle does, keeping only the
+  first and last k-1 letters fixed. Fisher-Yates (k = 1) could never move
+  the last letter of a sequence, and the linear method (-l) could never
+  leave a block in place (making it Sattolo's algorithm, which only gives
+  single-cycle permutations). Shuffled output for a given seed is
+  therefore different from 2.3.1.
+
+* yamtk me, yamtk ref: when a motif can't reach the hit p-value (which is
+  always the case for 6 bp motifs at the default of 1e-4), the threshold
+  is now clamped to the best p-value the motif can reach. Previously it
+  quietly fell back to p = 0.01, which pulled in so many off-target hits
+  during refinement that planted motifs washed out.
+
+* yamtk me: the reported p-value (and the -t cutoff) is now corrected for
+  the size of the seed search, using Tarone's method so that only k-mers
+  common enough to ever be significant are counted. Without this, me
+  reported motifs in random sequences with nothing planted (about 0.4 per
+  run on 50 x 200 bp sets); it now reports none in the same benchmarks,
+  while still finding a motif planted in 30% of sequences every time.
+
+* README: fixed the documented defaults for yamtk me -P and yamtk ref -t
+  (both 1e-4, not 0.001), and corrected the limitations section for the
+  Euler and Markov shuffles.
+
 
 CHANGES IN VERSION 2.3.1 (2026-06-02)
 --------------------------------------
