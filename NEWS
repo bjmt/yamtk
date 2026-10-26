@@ -60,6 +60,13 @@ CHANGES IN VERSION 2.3.3 (unreleased)
 
 * yamtk version prints to stdout rather than stderr.
 
+* bkg: in pool mode, candidates of equal length within a GC bin were left
+  in whatever order qsort produced, which differs between glibc and macOS,
+  so a seeded run picked different sequences on different platforms. Ties
+  are now broken by pool order, making the output identical everywhere
+  (on macOS this changes which sequence some seeds pick; the golden test
+  output was regenerated).
+
 * Twelve regression cases under test/cases/regression/audit* cover the
   above, with their inputs under test/fixtures/audit/.
 

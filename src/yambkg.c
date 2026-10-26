@@ -334,6 +334,11 @@ static int cmp_pool_idx_by_len(const void *a, const void *b) {
   const uint64_t lb = pool.sizes[ib];
   if (la < lb) return -1;
   if (la > lb) return 1;
+  /* Break length ties by pool order: qsort is not stable and glibc and macOS
+     order ties differently, which changed which sequence a seeded pick
+     landed on between platforms. */
+  if (ia < ib) return -1;
+  if (ia > ib) return 1;
   return 0;
 }
 
