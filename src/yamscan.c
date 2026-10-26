@@ -707,10 +707,11 @@ static void badexit(const char *msg) {
 }
 
 static inline int str_to_double(char *str, double *res) {
-  /* Replace atof */
+  /* Replace atof. Non-finite values (nan, inf) are rejected, since every
+     caller feeds the result into log2() or a p-value. */
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
-  if (str == tmp || errno != 0 || *tmp != '\0') {
+  if (str == tmp || errno != 0 || *tmp != '\0' || !isfinite(*res)) {
     return 1;
   } else {
     return 0;
@@ -721,7 +722,7 @@ static inline int str_to_int(char *str, int *res) {
   /* Replace atoi */
   char *tmp; errno = 0;
   long int res_long = strtol(str, &tmp, 10); 
-  if (res_long > INT_MAX) return 1;
+  if (res_long > INT_MAX || res_long < INT_MIN) return 1;
   *res = (int) res_long;
   if (str == tmp || errno != 0 || *tmp != '\0') {
     return 1;
@@ -731,8 +732,11 @@ static inline int str_to_int(char *str, int *res) {
 }
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
-  /* Replace atoll */
+  /* Replace atoll. strtoull() silently wraps negative input, so reject it. */
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;
   *res = (uint64_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') {
     return 1;
@@ -866,6 +870,12 @@ static int check_and_load_bkg(double *bkg) {
   if (bkg[0] == -1.0 || bkg[1] == -1.0 || bkg[2] == -1.0 || bkg[3] == -1.0) {
     fprintf(stderr, "Error: Too few background values found (need 4)."); return 1;
   }
+  for (int i = 0; i < 4; i++) {
+    if (!isfinite(bkg[i]) || bkg[i] < 0.0) {
+      fprintf(stderr, "Error: Background values must be finite and non-negative (got %g).",
+        bkg[i]); return 1;
+    }
+  }
   double min = 0; VEC_MIN(bkg, min, 4);
   if (min < MIN_BKG_VALUE) {
     if (args.v) {
@@ -893,6 +903,9 @@ static void parse_user_bkg(const char *bkg_usr) {
   ERASE_ARRAY(bc, USER_BKG_MAX_SIZE);
   while (bkg_usr[i] != '\0') {
     if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') {
+      if (j >= USER_BKG_MAX_SIZE - 1) {
+        badexit("Error: Background value is too long.");
+      }
       bc[j] = bkg_usr[i];
       j++;
     } else if (bkg_usr[i] == ',') {
@@ -1087,6 +1100,11 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
   }
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
     if (line[i] != ' ' && line[i] != '\t') {
+      if (j >= MOTIF_VALUE_MAX_CHAR - 1) {
+        if (args.w) fprintf(stderr, "\n");
+        fprintf(stderr, "Error: Value too long in motif [%s].\n  Line: %s", motif->name, line);
+        return 1;
+      }
       pos_i[j] = line[i];
       j++;
       prev_line_was_space = 0;
@@ -1261,6 +1279,10 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
         ERASE_ARRAY(bkg_char, MEME_BKG_MAX_SIZE);
         let_i = 3; j = 0;
       } else if (check_char_is_one_of(line[i], "0123456789.\0")) {
+        if (j >= MEME_BKG_MAX_SIZE - 1) {
+          fprintf(stderr, "Error: Background value too long in MEME file (L%" PRIu64 ").",
+            line_num); return 1;
+        }
         bkg_char[j] = line[i]; 
         j++;
       } else {
@@ -1480,7 +1502,7 @@ static void read_homer(void) {
       parse_homer_name(line, motif_i);
       pos_i = 0;
     } else if (count_nonempty_chars(line) && ready_to_start) {
-      if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
+      if (pos_i >= MAX_MOTIF_SIZE / 5 && pos_i < -1) {
         free(line);
         fprintf(stderr, "Error: Motif [%s] is too large (max=%'" PRIu64 ").\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
@@ -1662,6 +1684,11 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
   }
   for (uint64_t j = i; j < right_bracket; j++) {
     if (line[j] != ' ' && line[j] != '\t') {
+      if (k >= MOTIF_VALUE_MAX_CHAR - 1) {
+        if (args.w) fprintf(stderr, "\n");
+        fprintf(stderr, "Error: Value too long in motif [%s].\n  Line: %s", motif->name, line);
+        return 1;
+      }
       prob_c[k] = line[j];
       k++; prev_line_was_space = 0;
     } else {
@@ -1687,7 +1714,7 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
   }
   if (!prev_line_was_space) {
     pos_i++;
-    if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
+    if (pos_i + 1 > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
       fprintf(stderr, "Error: Motif [%s] has too many columns (max %" PRIu64 ").",
         motif->name, MAX_MOTIF_SIZE / 5); return 1;
     }
@@ -1857,7 +1884,7 @@ static void read_hocomoco(void) {
       if (args.w) fprintf(stderr, "    Found motif: %s (size=", motifs[motif_i]->name);
       pos_i = 0;
     } else if (count_nonempty_chars(line) && ready_to_start) {
-      if (pos_i > MAX_MOTIF_SIZE / 5 && pos_i < -1) {
+      if (pos_i >= MAX_MOTIF_SIZE / 5 && pos_i < -1) {
         free(line);
         fprintf(stderr, "Error: Motif [%s] is too large (max=%'" PRIu64 ").\n",
           motifs[motif_i]->name, MAX_MOTIF_SIZE / 5);
@@ -2313,7 +2340,22 @@ static void find_seq_dupes(void) {
     if (args.dedup) {
       for (uint64_t i = 0; i < seq_info.n; i++) {
         if (is_dup[i]) {
-          int success = dedup_char_array(seq_names[i], SEQ_NAME_MAX_CHAR, i + 1);
+          /* Sequence names are allocated at their exact length, so grow the
+             buffer before appending the "__N<i>" suffix. */
+          const size_t new_alloc = strlen(seq_names[i]) + 32;
+          if (new_alloc > SEQ_NAME_MAX_CHAR) {
+            fprintf(stderr,
+              "Error: Failed to deduplicate sequence #%" PRIu64 ", name is too large.", i + 1);
+            free(is_dup);
+            badexit("");
+          }
+          char *renamed = realloc(seq_names[i], new_alloc);
+          if (renamed == NULL) {
+            free(is_dup);
+            badexit("Error: Failed to allocate memory for sequence name deduplication.");
+          }
+          seq_names[i] = renamed;
+          int success = dedup_char_array(seq_names[i], new_alloc, i + 1);
           if (!success) {
             fprintf(stderr,
               "Error: Failed to deduplicate sequence #%" PRIu64 ", name is too large.", i + 1);
@@ -2975,6 +3017,11 @@ static void print_seq_stats(FILE *whereto) {
 /* ---- Consensus motif ---- */
 
 static void add_consensus_motif(const char *consensus) {
+  if (strlen(consensus) > MAX_MOTIF_SIZE / 5) {
+    fprintf(stderr, "Error: Consensus sequence is too large (%zu>max=%" PRIu64 ").",
+      strlen(consensus), MAX_MOTIF_SIZE / 5);
+    badexit("");
+  }
   if (add_motif()) badexit("");
   ERASE_ARRAY(motifs[0]->name, MAX_NAME_SIZE);
   uint64_t i = 0;
@@ -3166,7 +3213,7 @@ int main_scan(int argc, char **argv) {
         if (str_to_int(optarg, &args.pseudocount)) {
           badexit("Error: Failed to parse -p value.");
         }
-        if (!args.pseudocount) {
+        if (args.pseudocount <= 0) {
           badexit("Error: -p must be a positive integer.");
         }
         break;
@@ -3174,7 +3221,7 @@ int main_scan(int argc, char **argv) {
         if (str_to_int(optarg, &args.nsites)) {
           badexit("Error: Failed to parse -N value.");
         }
-        if (!args.nsites) {
+        if (args.nsites <= 0) {
           badexit("Error: -N must be a positive integer.");
         }
         break;

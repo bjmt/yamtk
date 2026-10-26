@@ -174,6 +174,9 @@ static void badexit(const char *msg) {
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;  /* strtoull() would silently wrap a negative value */
   *res = (uint64_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') return 1;
   return 0;
@@ -1017,8 +1020,10 @@ int main_seq(int argc, char **argv) {
         if (optarg == tmp || errno != 0 || *tmp != '\0') {
           badexit("Error: Failed to parse -b value.");
         }
-        if (args.bin_step <= 0.0 || args.bin_step > 1.0) {
-          badexit("Error: -b must be in (0, 1].");
+        /* Written as a negated range test so that nan fails it too; the floor
+           keeps the bin count (ceil(1 / step)) within int range. */
+        if (!(args.bin_step >= 1e-6 && args.bin_step <= 1.0)) {
+          badexit("Error: -b must be in (0, 1] (and at least 1e-6).");
         }
         args.use_bin_step = 1;
         break;

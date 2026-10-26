@@ -454,12 +454,20 @@ static void enr_bed_bind_seqs(enr_bed_t *b, const seq_set_t *s, const char *labe
   /* Build a name->index map for the seq_set. */
   khash_t(seq_str_h) *h = kh_init(seq_str_h);
   if (!h) badexit("Error: hash init failed.");
+  /* Key on the first word of each name: BED names are trimmed at the first
+     space, and with -r the stored FASTA names still carry their comment. */
+  char **keys = malloc(sizeof(*keys) * s->n);
+  if (!keys) { kh_destroy(seq_str_h, h); badexit("Error: alloc failed."); }
   int absent;
   for (uint64_t i = 0; i < s->n; i++) {
-    khint_t k = kh_put(seq_str_h, h, s->names[i], &absent);
+    const size_t wl = strcspn(s->names[i], " \t");
+    keys[i] = malloc(wl + 1);
+    if (!keys[i]) { kh_destroy(seq_str_h, h); badexit("Error: alloc failed."); }
+    memcpy(keys[i], s->names[i], wl); keys[i][wl] = '\0';
+    khint_t k = kh_put(seq_str_h, h, keys[i], &absent);
     if (absent == -1) { kh_destroy(seq_str_h, h); badexit("Error: hash put failed."); }
     if (absent == 0) {
-      fprintf(stderr, "Error: Duplicate sequence name '%s' in %s set.\n", s->names[i], label);
+      fprintf(stderr, "Error: Duplicate sequence name '%s' in %s set.\n", keys[i], label);
       kh_destroy(seq_str_h, h); badexit("");
     }
     kh_val(h, k) = i;
@@ -482,6 +490,8 @@ static void enr_bed_bind_seqs(enr_bed_t *b, const seq_set_t *s, const char *labe
     }
   }
   kh_destroy(seq_str_h, h);
+  for (uint64_t i = 0; i < s->n; i++) free(keys[i]);
+  free(keys);
 }
 
 /* Streaming-mode helper: build name -> region-list linked structure. */
@@ -662,19 +672,23 @@ static void badexit(const char *msg) {
 static inline int str_to_double(char *str, double *res) {
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
-  return (str == tmp || errno != 0 || *tmp != '\0');
+  /* nan/inf are rejected: every caller feeds the value into log2() or a p-value. */
+  return (str == tmp || errno != 0 || *tmp != '\0' || !isfinite(*res));
 }
 
 static inline int str_to_int(char *str, int *res) {
   char *tmp; errno = 0;
   long int r = strtol(str, &tmp, 10);
-  if (r > INT_MAX) return 1;
+  if (r > INT_MAX || r < INT_MIN) return 1;
   *res = (int)r;
   return (str == tmp || errno != 0 || *tmp != '\0');
 }
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;  /* strtoull() would silently wrap a negative value */
   *res = (uint64_t)strtoull(str, &tmp, 10);
   return (str == tmp || errno != 0 || *tmp != '\0');
 }
@@ -720,6 +734,12 @@ static int check_and_load_bkg(double *bkg) {
   if (bkg[0]==-1.0||bkg[1]==-1.0||bkg[2]==-1.0||bkg[3]==-1.0) {
     fprintf(stderr, "Error: Too few background values found (need 4)."); return 1;
   }
+  for (int i = 0; i < 4; i++) {
+    if (!isfinite(bkg[i]) || bkg[i] < 0.0) {
+      fprintf(stderr, "Error: Background values must be finite and non-negative (got %g).",
+        bkg[i]); return 1;
+    }
+  }
   double mn = 0; VEC_MIN(bkg, mn, 4);
   if (mn < MIN_BKG_VALUE) {
     if (args.v)
@@ -741,7 +761,10 @@ static void parse_user_bkg(const char *bkg_usr) {
   double b[] = {-1.0,-1.0,-1.0,-1.0};
   ERASE_ARRAY(bc, USER_BKG_MAX_SIZE);
   while (bkg_usr[i] != '\0') {
-    if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') { bc[j]=bkg_usr[i]; j++; }
+    if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') {
+      if (j >= USER_BKG_MAX_SIZE - 1) badexit("Error: Background value is too long.");
+      bc[j]=bkg_usr[i]; j++;
+    }
     else if (bkg_usr[i] == ',') {
       if (bi > 2) badexit("Error: Too many background values (need 4).");
       if (str_to_double(bc, &b[bi])) {
@@ -819,6 +842,9 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
   for (; line[i]==' '||line[i]=='\t'; i++) {}
   while (line[i]!='\0'&&line[i]!='\r'&&line[i]!='\n') {
     if (line[i]!=' '&&line[i]!='\t') {
+      if (j >= MOTIF_VALUE_MAX_CHAR-1) {
+        fprintf(stderr, "Error: Value too long in motif [%s].", motif->name); return 1;
+      }
       pos_i[j++]=line[i]; prev_space=0;
     } else {
       if (!prev_space) {
@@ -908,7 +934,10 @@ static int add_motif(void) {
   if (motif_info.n > motif_info.n_alloc) {
     motif_t **tmp = realloc(motifs,
       sizeof(*motifs)*motif_info.n_alloc + sizeof(*motifs)*ALLOC_CHUNK_SIZE);
-    if (!tmp) { fprintf(stderr, "Error: Failed to allocate memory for motifs."); return 1; }
+    if (!tmp) {
+      motif_info.n--;  /* keep n in step with what is actually allocated */
+      fprintf(stderr, "Error: Failed to allocate memory for motifs."); return 1;
+    }
     motifs = tmp;
     motif_info.n_alloc += ALLOC_CHUNK_SIZE;
   }
@@ -1066,7 +1095,12 @@ static int get_meme_bkg(const char *line, const uint64_t ln) {
       if      (line[i]=='C') { if (!empty||li!=0){fprintf(stderr,"Error: MEME bkg parse error (L%" PRIu64 ").",ln);return 1;} if(str_to_double(bc,&bp[li])){fprintf(stderr,"Error: Bad bkg value.");return 1;} ERASE_ARRAY(bc,MEME_BKG_MAX_SIZE);li=1;j=0; }
       else if (line[i]=='G') { if (!empty||li!=1){fprintf(stderr,"Error: MEME bkg parse error (L%" PRIu64 ").",ln);return 1;} if(str_to_double(bc,&bp[li])){fprintf(stderr,"Error: Bad bkg value.");return 1;} ERASE_ARRAY(bc,MEME_BKG_MAX_SIZE);li=2;j=0; }
       else if (line[i]=='T'||line[i]=='U') { if (!empty||li!=2){fprintf(stderr,"Error: MEME bkg parse error (L%" PRIu64 ").",ln);return 1;} if(str_to_double(bc,&bp[li])){fprintf(stderr,"Error: Bad bkg value.");return 1;} ERASE_ARRAY(bc,MEME_BKG_MAX_SIZE);li=3;j=0; }
-      else if (check_char_is_one_of(line[i],"0123456789.\0")) { bc[j++]=line[i]; }
+      else if (check_char_is_one_of(line[i],"0123456789.\0")) {
+        if (j >= MEME_BKG_MAX_SIZE-1) {
+          fprintf(stderr,"Error: Background value too long in MEME file (L%" PRIu64 ").",ln);return 1;
+        }
+        bc[j++]=line[i];
+      }
       else { fprintf(stderr,"Error: Unexpected char in MEME background (L%" PRIu64 ").",ln);return 1; }
       empty=0;
     } else { empty=1; }
@@ -1192,7 +1226,7 @@ static void read_homer(void) {
       motifs[mi]->file_line_num=ln;
       parse_homer_name(line,mi); pi=0;
     } else if (count_nonempty_chars(line)&&ready) {
-      if (pi>MAX_MOTIF_SIZE/5&&pi<(uint64_t)-1) {
+      if (pi>=MAX_MOTIF_SIZE/5&&pi<(uint64_t)-1) {
         fprintf(stderr,"Error: Motif [%s] too large.",motifs[mi]->name);
         free(line); badexit("");
       }
@@ -1233,7 +1267,12 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
   char pc[MOTIF_VALUE_MAX_CHAR]; ERASE_ARRAY(pc, MOTIF_VALUE_MAX_CHAR);
   for (i=lb+1; line[i]==' '||line[i]=='\t'; i++) {}
   for (uint64_t j2=i; j2<rb; j2++) {
-    if (line[j2]!=' '&&line[j2]!='\t') { pc[k++]=line[j2]; prev_sp=0; }
+    if (line[j2]!=' '&&line[j2]!='\t') {
+      if (k >= MOTIF_VALUE_MAX_CHAR-1) {
+        fprintf(stderr,"Error: Value too long in JASPAR motif [%s].",motif->name); return 1;
+      }
+      pc[k++]=line[j2]; prev_sp=0;
+    }
     else {
       if (!prev_sp) {
         pi++;
@@ -1251,6 +1290,9 @@ static int add_jaspar_row(motif_t *motif, const char *line) {
   }
   if (!prev_sp) {
     pi++;
+    if (pi+1>MAX_MOTIF_SIZE/5&&pi<(uint64_t)-1) {
+      fprintf(stderr,"Error: Motif [%s] too many columns.",motif->name); return 1;
+    }
     if (str_to_int(pc,&tmp)) {
       fprintf(stderr,"Error: Bad count in JASPAR motif [%s]: %s",motif->name,pc); return 1;
     }
@@ -1358,7 +1400,7 @@ static void read_hocomoco(void) {
       if (args.w) fprintf(stderr,"    Found motif: %s (size=",motifs[mi]->name);
       pi=0;
     } else if (count_nonempty_chars(line)&&ready) {
-      if (pi>MAX_MOTIF_SIZE/5&&pi<(uint64_t)-1) {
+      if (pi>=MAX_MOTIF_SIZE/5&&pi<(uint64_t)-1) {
         fprintf(stderr,"Error: Motif [%s] too large.",motifs[mi]->name);
         free(line); badexit("");
       }
@@ -1468,6 +1510,7 @@ static void load_seq_set(kseq_t *kseq, seq_set_t *set, const char *label) {
       set->sizes = t3;
       set->n_alloc += ALLOC_CHUNK_SIZE;
     }
+    set->names[set->n-1] = NULL;  /* so badexit() below never frees an unset slot */
     set->seqs[set->n-1] = (unsigned char *)kseq->seq.s;
     kseq->seq.s = NULL;
     set->sizes[set->n-1] = kseq->seq.l;
@@ -2006,11 +2049,18 @@ static void score_one_seq_all_motifs_bed(const unsigned char *seq, const uint64_
   uint64_t *seq_hits  = is_pos ? seq_hits_pos  : seq_hits_neg;
   uint64_t *site_hits = is_pos ? site_hits_pos : site_hits_neg;
   uint64_t *positions = is_pos ? stream_pos_positions : stream_neg_positions;
-  (void) L;  /* bounds were validated at bed bind / read time when possible;
-                in streaming we accept the BED start/end as-is, and out-of-bounds
-                is handled by score_range_scan returning early. */
   for (uint64_t ri = 0; ri < nr; ri++) {
     const uint64_t rid = regions[ri];
+    /* Streaming mode has no bind step, so check the region against the
+       streamed sequence length here (the non-streaming path does this in
+       enr_bed_bind_seqs). */
+    if (bed->ends[rid] > L) {
+      fprintf(stderr,
+        "Error: %s BED region '%s:%" PRIu64 "-%" PRIu64 "' exceeds seq length %" PRIu64 ".\n",
+        is_pos ? "positive" : "negative", bed->seq_names[rid],
+        bed->starts[rid], bed->ends[rid], L);
+      badexit("");
+    }
     int do_fwd, do_rc;
     strand_mask_for(bed->strands[rid], &do_fwd, &do_rc);
     for (uint64_t mi = 0; mi < motif_info.n; mi++) {
@@ -2307,11 +2357,11 @@ int main_enr(int argc, char **argv) {
         break;
       case 'p':
         if (str_to_int(optarg, &args.pseudocount)) badexit("Error: Failed to parse -p value.");
-        if (!args.pseudocount) badexit("Error: -p must be a positive integer.");
+        if (args.pseudocount <= 0) badexit("Error: -p must be a positive integer.");
         break;
       case 'N':
         if (str_to_int(optarg, &args.nsites)) badexit("Error: Failed to parse -N value.");
-        if (!args.nsites) badexit("Error: -N must be a positive integer.");
+        if (args.nsites <= 0) badexit("Error: -N must be a positive integer.");
         break;
       case 'd':
         if (args.dedup) badexit("Error: -d specified more than once.");

@@ -486,6 +486,7 @@ static void write_fasta(FILE *o, const char *name, const unsigned char *seq, uin
 
 /* ---- Reverse complement (in place on a writable copy) ---- */
 static void rc_inplace(unsigned char *seq, uint64_t L) {
+  if (L == 0) return;  /* j = L - 1 would wrap, and the buffer may be NULL */
   for (uint64_t i = 0, j = L - 1; i < j; i++, j--) {
     const unsigned char a = seq[i], b = seq[j];
     seq[i] = rc_tab[b] ? rc_tab[b] : b;

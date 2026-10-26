@@ -1,3 +1,69 @@
+CHANGES IN VERSION 2.3.3 (unreleased)
+-------------------------------------
+
+* Motif parsers (scan, enr, ref, cmp, seed, conv): a single matrix value,
+  JASPAR count or MEME background value longer than 255 characters used to
+  overflow a fixed-size stack buffer. The same copy loop took the -b
+  argument in scan, enr, me, ref and cmp, and scan -1 copied the consensus
+  into the motif name before checking its length. All of these now stop
+  with an error instead.
+
+* MEME reader (conv, ref, cmp, seed): a letter-probability matrix block
+  that appears before any MOTIF line is now reported as an error rather
+  than indexing the motif table at -1.
+
+* scan, enr: a 51-column HOMER or HOCOMOCO motif, or a JASPAR row whose
+  last count sits right before the closing bracket, was let through the
+  width check and wrote one column past the PWM (silently corrupting the
+  reverse-complement scores). The guard is now the same as for MEME input.
+
+* Every subcommand rejects nan and inf wherever a number is parsed, so a
+  HOMER "nan" value or -b nan can no longer reach log2(). Background
+  values must be finite and non-negative, -p and -N must be positive
+  (negatives were accepted and divided by zero), str_to_int now rejects
+  values below INT_MIN, and the unsigned option parsers reject a leading
+  minus sign (seq -a dup -n -1 previously ran forever).
+
+* scan -d: renaming a duplicate sequence name appended the __N suffix past
+  the end of the name's buffer. The buffer is grown first now.
+
+* enr: a FASTA header longer than the limit crashed in the cleanup path
+  instead of printing the error; in -l streaming mode a -x/-X BED region
+  that ran past the end of its sequence was scored anyway (reading past
+  the buffer), and is now rejected as in the non-streaming path; with -r
+  the BED names could not be matched against headers that carry a
+  description, and are now matched on the first word.
+
+* bkg: reverse-complementing a zero-length window (-g with -r, an empty
+  target and -N 1) dereferenced an unallocated buffer.
+
+* shuf -x: the output writer read the scratch copy as a C string although
+  it is not NUL-terminated; it now writes by length.
+
+* dedup: the overlap key joined strand, motif and sequence name with no
+  separator, so for example motif M1 on sequence 1chr collided with motif
+  M11 on sequence chr and the two were deduplicated together.
+
+* ref, cmp: LC_NUMERIC was taken from the environment, so under a
+  comma-decimal locale both failed to parse their own motif files. They
+  now pin the numeric locale like the other subcommands.
+
+* conv: JASPAR and HOCOMOCO output rescaled every column to the depth of
+  the first column. Each column's own count sum is now preserved through
+  the conversion (and through -T trimming).
+
+* ref: with -n 0 the summary and the written nsites= reported the integer
+  PPM scale (1000) instead of the seed's hit count.
+
+* seq -a hist: -b nan passed the range check and -b 1e-300 overflowed the
+  bin count; the step must now be in [1e-6, 1].
+
+* yamtk version prints to stdout rather than stderr.
+
+* Twelve regression cases under test/cases/regression/audit* cover the
+  above, with their inputs under test/fixtures/audit/.
+
+
 CHANGES IN VERSION 2.3.2 (2026-10-25)
 --------------------------------------
 

@@ -273,7 +273,7 @@ static void badexit(const char *msg) {
 static inline int str_to_int(char *str, int *res) {
   char *tmp; errno = 0;
   long int res_long = strtol(str, &tmp, 10);
-  if (res_long > INT_MAX) return 1;
+  if (res_long > INT_MAX || res_long < INT_MIN) return 1;
   *res = (int) res_long;
   if (str == tmp || errno != 0 || *tmp != '\0') return 1;
   return 0;
@@ -281,6 +281,9 @@ static inline int str_to_int(char *str, int *res) {
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;  /* strtoull() would silently wrap a negative value */
   *res = (uint64_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') return 1;
   return 0;
@@ -289,7 +292,8 @@ static inline int str_to_uint64_t(char *str, uint64_t *res) {
 static inline int str_to_double(char *str, double *res) {
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
-  if (str == tmp || errno != 0 || *tmp != '\0') return 1;
+  /* nan/inf are rejected: every caller feeds the value into a probability. */
+  if (str == tmp || errno != 0 || *tmp != '\0' || !isfinite(*res)) return 1;
   return 0;
 }
 
@@ -394,6 +398,9 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
   while (line[i] == ' ' || line[i] == '\t') i++;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
     if (line[i] != ' ' && line[i] != '\t') {
+      if (j >= MOTIF_VALUE_MAX_CHAR - 1) {
+        fprintf(stderr, "Error: Value too long in motif [%s].", motif->name); return 1;
+      }
       pos_i[j] = line[i]; j++; prev_was_space = 0;
     } else {
       if (!prev_was_space) {
@@ -573,6 +580,9 @@ static void read_meme(void) {
       parse_meme_name(line, motif_i);
       pos_i = 0;
     } else if (check_line_contains(line, "letter-probability matrix\0")) {
+      if (motif_i == (uint64_t)-1) {
+        free(line); badexit("Error: MEME matrix found before any MOTIF line.");
+      }
       if (pos_i != 0) { free(line); badexit("Error: Malformed MEME motif."); }
       l_p_m_L = line_num;
       live_motif = 1;
@@ -693,6 +703,9 @@ static int add_jaspar_row(motif_t *motif, const char *line, double counts[MAX_MO
   while (i < right_bracket && (line[i] == ' ' || line[i] == '\t')) i++;
   for (uint64_t j = i; j < right_bracket; j++) {
     if (line[j] != ' ' && line[j] != '\t') {
+      if (k >= MOTIF_VALUE_MAX_CHAR - 1) {
+        fprintf(stderr, "Error: Value too long in JASPAR motif [%s].", motif->name); return 1;
+      }
       prob_c[k] = line[j]; k++; prev_was_space = 0;
     } else {
       if (!prev_was_space) {

@@ -244,13 +244,14 @@ static void badexit(const char *msg) {
 static inline int str_to_double(char *str, double *res) {
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
-  return (str == tmp || errno != 0 || *tmp != '\0');
+  /* nan/inf are rejected: every caller feeds the value into a score or p-value. */
+  return (str == tmp || errno != 0 || *tmp != '\0' || !isfinite(*res));
 }
 
 static inline int str_to_int(char *str, int *res) {
   char *tmp; errno = 0;
   long int r = strtol(str, &tmp, 10);
-  if (r > INT_MAX) return 1;
+  if (r > INT_MAX || r < INT_MIN) return 1;
   *res = (int)r;
   return (str == tmp || errno != 0 || *tmp != '\0');
 }
@@ -260,6 +261,12 @@ static inline int str_to_int(char *str, int *res) {
 static int check_and_load_bkg(double *bkg) {
   if (bkg[0]==-1.0||bkg[1]==-1.0||bkg[2]==-1.0||bkg[3]==-1.0) {
     fprintf(stderr, "Error: Too few background values found (need 4)."); return 1;
+  }
+  for (int i = 0; i < 4; i++) {
+    if (!isfinite(bkg[i]) || bkg[i] < 0.0) {
+      fprintf(stderr, "Error: Background values must be finite and non-negative (got %g).",
+        bkg[i]); return 1;
+    }
   }
   double mn = 0; VEC_MIN(bkg, mn, 4);
   if (mn < MIN_BKG_VALUE) {
@@ -282,7 +289,10 @@ static void parse_user_bkg(const char *bkg_usr) {
   double b[] = {-1.0,-1.0,-1.0,-1.0};
   ERASE_ARRAY(bc, USER_BKG_MAX_SIZE);
   while (bkg_usr[i] != '\0') {
-    if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') { bc[j]=bkg_usr[i]; j++; }
+    if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') {
+      if (j >= USER_BKG_MAX_SIZE - 1) badexit("Error: Background value is too long.");
+      bc[j]=bkg_usr[i]; j++;
+    }
     else if (bkg_usr[i] == ',') {
       if (bi > 2) badexit("Error: Too many background values (need 4).");
       if (str_to_double(bc, &b[bi])) {
@@ -460,6 +470,9 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
   while (line[i] == ' ' || line[i] == '\t') i++;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
     if (line[i] != ' ' && line[i] != '\t') {
+      if (j >= MOTIF_VALUE_MAX_CHAR - 1) {
+        fprintf(stderr, "Error: Value too long in motif [%s].", motif->name); return 1;
+      }
       pos_i[j] = line[i]; j++; prev_was_space = 0;
     } else {
       if (!prev_was_space) {
@@ -554,6 +567,10 @@ static int get_meme_bkg(const char *line, const uint64_t line_num) {
         ERASE_ARRAY(bkg_char, MEME_BKG_MAX_SIZE);
         let_i = expect + 1; j = 0;
       } else if (check_char_is_one_of(line[i], "0123456789.\0")) {
+        if (j >= MEME_BKG_MAX_SIZE - 1) {
+          fprintf(stderr, "Error: Background value too long in MEME file (L%" PRIu64 ").",
+            line_num); return 1;
+        }
         bkg_char[j] = line[i]; j++;
       } else {
         fprintf(stderr, "Error: Unexpected char (%c) in MEME background (L%" PRIu64 ").",
@@ -636,6 +653,9 @@ static void read_meme(FILE *f, int read_bkg) {
       parse_meme_name(line, motif_i);
       pos_i = 0;
     } else if (check_line_contains(line, "letter-probability matrix\0")) {
+      if (motif_i == (uint64_t)-1) {
+        free(line); badexit("Error: MEME matrix found before any MOTIF line.");
+      }
       if (pos_i != 0) { free(line); badexit("Error: Malformed MEME motif."); }
       l_p_m_L = line_num;
       live_motif = 1;
@@ -767,6 +787,9 @@ static int add_jaspar_row(motif_t *motif, const char *line, double counts[MAX_MO
   while (i < right_bracket && (line[i] == ' ' || line[i] == '\t')) i++;
   for (uint64_t j = i; j < right_bracket; j++) {
     if (line[j] != ' ' && line[j] != '\t') {
+      if (k >= MOTIF_VALUE_MAX_CHAR - 1) {
+        fprintf(stderr, "Error: Value too long in JASPAR motif [%s].", motif->name); return 1;
+      }
       prob_c[k] = line[j]; k++; prev_was_space = 0;
     } else {
       if (!prev_was_space) {
@@ -1253,7 +1276,7 @@ static double align_score(const double q_ppm[MAX_MOTIF_WIDTH][4], int wq,
   int t_start = (d_in_q >= 0) ? 0 : -d_in_q;
   int t_end   = (wq - d_in_q < wt) ? wq - d_in_q : wt;
   int L = t_end - t_start;
-  if (L <= 0) { *out_L = 0; return 0.0; }
+  if (L <= 0) { *out_L = 0; *out_q_start = 0; *out_t_start = 0; return 0.0; }
   int q_start = d_in_q + t_start;
   double s = 0.0;
   const metric_t *m = &METRICS[args.metric_idx];
@@ -1549,7 +1572,8 @@ int main_cmp(int argc, char **argv) {
   const char *output_path = NULL;
   pthread_t *threads = NULL;
 
-  setlocale(LC_NUMERIC, "");
+  if (setlocale(LC_NUMERIC, "en_US") == NULL && args.v)
+    fprintf(stderr, "Warning: setlocale(LC_NUMERIC, \"en_US\") failed.\n");
 
   struct timespec ts_program;
   clock_gettime(CLOCK_MONOTONIC, &ts_program);

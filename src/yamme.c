@@ -453,19 +453,23 @@ static void badexit(const char *msg) {
 static inline int str_to_double(char *str, double *res) {
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
-  return (str == tmp || errno != 0 || *tmp != '\0');
+  /* nan/inf are rejected: every caller feeds the value into log2() or a p-value. */
+  return (str == tmp || errno != 0 || *tmp != '\0' || !isfinite(*res));
 }
 
 static inline int str_to_int(char *str, int *res) {
   char *tmp; errno = 0;
   long int r = strtol(str, &tmp, 10);
-  if (r > INT_MAX) return 1;
+  if (r > INT_MAX || r < INT_MIN) return 1;
   *res = (int)r;
   return (str == tmp || errno != 0 || *tmp != '\0');
 }
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;  /* strtoull() would silently wrap a negative value */
   *res = (uint64_t)strtoull(str, &tmp, 10);
   return (str == tmp || errno != 0 || *tmp != '\0');
 }
@@ -475,6 +479,12 @@ static inline int str_to_uint64_t(char *str, uint64_t *res) {
 static int check_and_load_bkg(double *bkg) {
   if (bkg[0]==-1.0||bkg[1]==-1.0||bkg[2]==-1.0||bkg[3]==-1.0) {
     fprintf(stderr, "Error: Too few background values found (need 4)."); return 1;
+  }
+  for (int i = 0; i < 4; i++) {
+    if (!isfinite(bkg[i]) || bkg[i] < 0.0) {
+      fprintf(stderr, "Error: Background values must be finite and non-negative (got %g).",
+        bkg[i]); return 1;
+    }
   }
   double mn = 0; VEC_MIN(bkg, mn, 4);
   if (mn < MIN_BKG_VALUE) {
@@ -497,7 +507,10 @@ static void parse_user_bkg(const char *bkg_usr) {
   double b[] = {-1.0,-1.0,-1.0,-1.0};
   ERASE_ARRAY(bc, USER_BKG_MAX_SIZE);
   while (bkg_usr[i] != '\0') {
-    if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') { bc[j]=bkg_usr[i]; j++; }
+    if (bkg_usr[i] != ',' && bkg_usr[i] != ' ') {
+      if (j >= USER_BKG_MAX_SIZE - 1) badexit("Error: Background value is too long.");
+      bc[j]=bkg_usr[i]; j++;
+    }
     else if (bkg_usr[i] == ',') {
       if (bi > 2) badexit("Error: Too many background values (need 4).");
       if (str_to_double(bc, &b[bi])) {
@@ -2206,7 +2219,7 @@ int main_me(int argc, char **argv) {
   if (n_thread_ctxs < 1) n_thread_ctxs = 1;
   if (n_thread_ctxs > n_widths) n_thread_ctxs = n_widths;
   if (n_thread_ctxs < 1) n_thread_ctxs = 1;
-  thread_ctxs = malloc(sizeof(thread_ctx_t) * n_thread_ctxs);
+  thread_ctxs = calloc(n_thread_ctxs, sizeof(thread_ctx_t));  /* zeroed: badexit may free partially set up contexts */
   if (!thread_ctxs) badexit("Error: Failed to alloc thread contexts.");
   for (int t = 0; t < n_thread_ctxs; t++) {
     if (init_thread_ctx(&thread_ctxs[t], t)) badexit("Error: init_thread_ctx failed.");

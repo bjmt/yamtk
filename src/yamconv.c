@@ -49,6 +49,7 @@ typedef struct motif_t {
   uint64_t size;
   uint64_t file_line_num;
   uint64_t nsites;                          /* 0 = unknown */
+  double   col_sums[MAX_MOTIF_WIDTH];       /* per-column count sum from a PCM source; 0 = unknown */
   double   pwm_probs[MAX_MOTIF_WIDTH][4];   /* 0=A 1=C 2=G 3=T */
   int      dropped;
 } motif_t;
@@ -136,7 +137,7 @@ static void badexit(const char *msg) {
 static inline int str_to_int(char *str, int *res) {
   char *tmp; errno = 0;
   long int res_long = strtol(str, &tmp, 10);
-  if (res_long > INT_MAX) return 1;
+  if (res_long > INT_MAX || res_long < INT_MIN) return 1;
   *res = (int) res_long;
   if (str == tmp || errno != 0 || *tmp != '\0') return 1;
   return 0;
@@ -144,6 +145,9 @@ static inline int str_to_int(char *str, int *res) {
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;  /* strtoull() would silently wrap a negative value */
   *res = (uint64_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') return 1;
   return 0;
@@ -152,7 +156,8 @@ static inline int str_to_uint64_t(char *str, uint64_t *res) {
 static inline int str_to_double(char *str, double *res) {
   char *tmp; errno = 0;
   *res = strtod(str, &tmp);
-  if (str == tmp || errno != 0 || *tmp != '\0') return 1;
+  /* nan/inf are rejected: every caller feeds the value into a probability. */
+  if (str == tmp || errno != 0 || *tmp != '\0' || !isfinite(*res)) return 1;
   return 0;
 }
 
@@ -211,6 +216,7 @@ static void init_motif(motif_t *motif) {
   motif->size = 0;
   motif->file_line_num = 0;
   motif->nsites = 0;
+  memset(motif->col_sums, 0, sizeof(motif->col_sums));
   motif->dropped = 0;
   memset(motif->pwm_probs, 0, sizeof(motif->pwm_probs));
 }
@@ -273,6 +279,9 @@ static int get_line_probs(const motif_t *motif, const char *line, double *probs,
   while (line[i] == ' ' || line[i] == '\t') i++;
   while (line[i] != '\0' && line[i] != '\r' && line[i] != '\n') {
     if (line[i] != ' ' && line[i] != '\t') {
+      if (j >= MOTIF_VALUE_MAX_CHAR - 1) {
+        fprintf(stderr, "Error: Value too long in motif [%s].\n", motif->name); return 1;
+      }
       pos_i[j] = line[i]; j++; prev_was_space = 0;
     } else {
       if (!prev_was_space) {
@@ -333,11 +342,14 @@ static int add_motif_ppm_column(motif_t *motif, const char *line, const uint64_t
 
 static int add_motif_pcm_column(motif_t *motif, const double counts[4], const uint64_t pos) {
   double col = counts[0] + counts[1] + counts[2] + counts[3];
-  if (col <= 0.0) col = 1.0;
   if (pos >= MAX_MOTIF_WIDTH) {
     fprintf(stderr, "Error: Motif [%s] exceeds max width (%d).\n", motif->name, MAX_MOTIF_WIDTH);
     return 1;
   }
+  /* Remember the column's own depth so PCM output can reproduce it: columns
+     of a JASPAR/HOCOMOCO matrix need not all sum to the same count. */
+  motif->col_sums[pos] = col > 0.0 ? col : 0.0;
+  if (col <= 0.0) col = 1.0;
   /* Pseudocounted PPM (matches yamseed/yamscan); preserves raw nsites
      separately so PCM round-trips emit the original counts. */
   for (int i = 0; i < 4; i++) {
@@ -452,6 +464,9 @@ static void read_meme(void) {
       parse_meme_name(line, motif_i);
       pos_i = 0;
     } else if (check_line_contains(line, "letter-probability matrix\0")) {
+      if (motif_i == (uint64_t)-1) {
+        free(line); badexit("Error: MEME matrix found before any MOTIF line.");
+      }
       if (pos_i != 0) { free(line); badexit("Error: Malformed MEME motif."); }
       l_p_m_L = line_num;
       live_motif = 1;
@@ -574,6 +589,9 @@ static int add_jaspar_row(motif_t *motif, const char *line, double counts[MAX_MO
   while (i < right_bracket && (line[i] == ' ' || line[i] == '\t')) i++;
   for (uint64_t j = i; j < right_bracket; j++) {
     if (line[j] != ' ' && line[j] != '\t') {
+      if (k >= MOTIF_VALUE_MAX_CHAR - 1) {
+        fprintf(stderr, "Error: Value too long in JASPAR motif [%s].\n", motif->name); return 1;
+      }
       prob_c[k] = line[j]; k++; prev_was_space = 0;
     } else {
       if (!prev_was_space) {
@@ -782,6 +800,7 @@ static void ic_trim_motif(motif_t *m, double min_ic) {
   if (left == 0 && right == m->size) return;
   for (uint64_t i = 0; i < new_size; i++) {
     for (int j = 0; j < 4; j++) m->pwm_probs[i][j] = m->pwm_probs[i + left][j];
+    m->col_sums[i] = m->col_sums[i + left];
   }
   m->size = new_size;
 }
@@ -931,7 +950,8 @@ static void write_jaspar(void) {
     for (int b = 0; b < 4; b++) {
       fprintf(f, "%c [", bases[b]);
       for (uint64_t i = 0; i < m->size; i++) {
-        long c = (long) (m->pwm_probs[i][b] * (double) ns + 0.5);
+        const double depth = m->col_sums[i] > 0.0 ? m->col_sums[i] : (double) ns;
+        long c = (long) (m->pwm_probs[i][b] * depth + 0.5);
         fprintf(f, " %4ld", c);
       }
       fprintf(f, " ]\n");
@@ -964,10 +984,11 @@ static void write_hocomoco(void) {
     uint64_t ns = emit_nsites(m);
     fprintf(f, ">%s\n", m->name);
     for (uint64_t i = 0; i < m->size; i++) {
-      long c0 = (long) (m->pwm_probs[i][0] * (double) ns + 0.5);
-      long c1 = (long) (m->pwm_probs[i][1] * (double) ns + 0.5);
-      long c2 = (long) (m->pwm_probs[i][2] * (double) ns + 0.5);
-      long c3 = (long) (m->pwm_probs[i][3] * (double) ns + 0.5);
+      const double depth = m->col_sums[i] > 0.0 ? m->col_sums[i] : (double) ns;
+      long c0 = (long) (m->pwm_probs[i][0] * depth + 0.5);
+      long c1 = (long) (m->pwm_probs[i][1] * depth + 0.5);
+      long c2 = (long) (m->pwm_probs[i][2] * depth + 0.5);
+      long c3 = (long) (m->pwm_probs[i][3] * depth + 0.5);
       fprintf(f, "%ld %ld %ld %ld\n", c0, c1, c2, c3);
     }
   }

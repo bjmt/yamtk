@@ -1,0 +1,9 @@
+MEME version 5
+
+ALPHABET= ACGT
+
+letter-probability matrix: alength= 4 w= 3 nsites= 10 E= 0
+ 0.25 0.25 0.25 0.25
+ 0.25 0.25 0.25 0.25
+ 0.25 0.25 0.25 0.25
+

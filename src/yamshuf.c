@@ -339,7 +339,7 @@ static void badexit(const char *msg) {
 static inline int str_to_int(char *str, int *res) {
   char *tmp; errno = 0;
   long int res_long = strtol(str, &tmp, 10); 
-  if (res_long > INT_MAX) return 1;
+  if (res_long > INT_MAX || res_long < INT_MIN) return 1;
   *res = (int) res_long;
   if (str == tmp || errno != 0 || *tmp != '\0') {
     return 1;
@@ -481,6 +481,9 @@ static uint64_t count_nonempty_chars(const char *line) {
 
 static inline int str_to_uint64_t(char *str, uint64_t *res) {
   char *tmp; errno = 0;
+  const char *s = str;
+  while (*s == ' ' || *s == '\t') s++;
+  if (*s == '-') return 1;  /* strtoull() would silently wrap a negative value */
   *res = (uint64_t) strtoull(str, &tmp, 10);
   if (str == tmp || errno != 0 || *tmp != '\0') {
     return 1;
@@ -946,8 +949,12 @@ static void write_seq(const unsigned char *seq, const uint64_t size, const char 
   } else {
     fprintf(files.o, ">%s\n", name);
   }
+  /* Write by length rather than with "%.*s": the -x scratch buffer is not
+     NUL-terminated, so a trailing partial line must not be read as a string. */
   for (uint64_t i = 0; i < size; i += FASTA_LINE_LEN) {
-    fprintf(files.o, "%.*s\n", FASTA_LINE_LEN, seq + i);
+    const uint64_t n_out = (size - i < FASTA_LINE_LEN) ? size - i : FASTA_LINE_LEN;
+    fwrite(seq + i, 1, n_out, files.o);
+    fputc('\n', files.o);
   }
 }
 

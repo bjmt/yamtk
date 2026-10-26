@@ -464,13 +464,16 @@ static inline uint64_t dedup_and_purge_feat(const uint64_t i) {
 }
 
 static inline uint64_t find_matching_feat(const char *seq, const char *motif, const char strand) {
-  uint64_t feat_index = 0, hash_key_i = 1, j, hash_key_n = 2 + MAX_NAME_SIZE + SEQ_NAME_MAX_CHAR;
+  uint64_t feat_index = 0, hash_key_i = 1, j, hash_key_n = 3 + MAX_NAME_SIZE + SEQ_NAME_MAX_CHAR;
   char hash_key[hash_key_n];
   hash_key[0] = strand;
   for (j = 0; hash_key_i < hash_key_n && j < MAX_NAME_SIZE; hash_key_i++, j++) {
     if (motif[j] == '\0') break;
     hash_key[hash_key_i] = motif[j];
   }
+  /* Separate motif and sequence name, otherwise "M1" + "1chr" and "M11" + "chr"
+     would hash to the same key. A tab cannot occur inside either field. */
+  hash_key[hash_key_i++] = '\t';
   for (j = 0; hash_key_i < hash_key_n && j < SEQ_NAME_MAX_CHAR; hash_key_i++, j++) {
     if (seq[j] == '\0') break;
     hash_key[hash_key_i] = seq[j];

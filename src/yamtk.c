@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     if (strcmp(argv[1], "version") == 0) {
-        fprintf(stderr, "v%s\n", YAMTK_VERSION);
+        printf("v%s\n", YAMTK_VERSION);
         return EXIT_SUCCESS;
     } else if (strcmp(argv[1], "help") == 0) {
         help();
